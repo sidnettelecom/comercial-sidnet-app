@@ -396,13 +396,9 @@ h2.sec{font:700 17px/1.2 var(--f-display);margin:2px 0 12px}
     </fieldset>
     <fieldset>
       <legend>Integração com o CRM</legend>
-      <div class="f"><label for="cfgCrmUrl">Endereço do CRM</label><input id="cfgCrmUrl" class="mono" inputmode="url" autocapitalize="none"></div>
-      <div class="two">
-        <div class="f"><label for="cfgEmpresa">Empresa</label><select id="cfgEmpresa"><option value="3">Sidnet</option><option value="2">AG Link Telecom</option><option value="10">Gd Net Fibra</option><option value="1">Gns Telecom</option><option value="4">Live Net</option></select></div>
-        <div class="f"><label for="cfgCrmUser">Seu usuário no CRM</label><input id="cfgCrmUser" autocapitalize="none" placeholder="ex.: lucas"></div>
-      </div>
+      <div class="f"><label for="cfgCrmUrl">Endereço do servidor do app</label><input id="cfgCrmUrl" class="mono" inputmode="url" autocapitalize="none" placeholder="https://app.sidnet.com.br"></div>
       <div class="f"><label for="cfgChave">Chave de acesso do app</label><input id="cfgChave" class="mono" autocapitalize="none" placeholder="vazio = modo demonstração"></div>
-      <span class="hint">Cada vendedor entra uma vez com o próprio usuário. O app guarda uma chave de acesso, não a senha, e manda os cadastros sozinho quando tiver internet.</span>
+      <span class="hint">O supervisor gera a sua chave no painel. Com a chave, o app manda os cadastros sozinho quando tiver internet, e o servidor coloca no CRM.</span>
     </fieldset>
     <fieldset>
       <legend>Envio pelo WhatsApp (opcional)</legend>
@@ -482,8 +478,8 @@ function load(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d}ca
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}
 var $=function(id){return document.getElementById(id)};
 var DEF_PLANOS=["PLANO PROMOCIONAL 600MB"];var PRECOS={"PLANO PROMOCIONAL 600MB":109.90};
-var cfg=load(K.cfg,{vend:"VENDEDOR DEMO",sup:"",wa:"",planos:DEF_PLANOS,crmUrl:"https://crm.sidnet.com.br",empresa:"3",crmUser:"demo"});
-if(!cfg.crmUrl)cfg.crmUrl="https://crm.sidnet.com.br";if(!cfg.empresa)cfg.empresa="3";
+var cfg=load(K.cfg,{vend:"VENDEDOR DEMO",sup:"",wa:"",planos:DEF_PLANOS,crmUrl:"",empresa:"3",crmUser:""});
+if(!cfg.empresa)cfg.empresa="3";
 if(!cfg.planos||!cfg.planos.length)cfg.planos=DEF_PLANOS;
 var recs=load(K.recs,[]);
 var editingId=null;
@@ -519,14 +515,14 @@ $("btnNet").addEventListener("click",function(){demoOff=!demoOff;this.textConten
 /* ---------- ajustes ---------- */
 function renderCfg(){
   $("who").textContent=cfg.vend?(cfg.vend+(cfg.sup?" · Sup. "+cfg.sup:"")):"Configure seu nome em Ajustes";
-  $("cfgVend").value=cfg.vend||"";$("cfgCrmUrl").value=cfg.crmUrl||"";$("cfgEmpresa").value=cfg.empresa||"3";$("cfgCrmUser").value=cfg.crmUser||"";$("cfgChave").value=cfg.chave||"";$("cfgSup").value=cfg.sup||"";$("cfgWa").value=cfg.wa?fmtTel(cfg.wa):"";$("cfgPlanos").value=cfg.planos.join("\n");
+  $("cfgVend").value=cfg.vend||"";$("cfgCrmUrl").value=cfg.crmUrl||"";$("cfgChave").value=cfg.chave||"";$("cfgSup").value=cfg.sup||"";$("cfgWa").value=cfg.wa?fmtTel(cfg.wa):"";$("cfgPlanos").value=cfg.planos.join("\n");
   var sel=$("plano"),cur=sel.value;sel.innerHTML='<option value="">Escolha o plano…</option>'+cfg.planos.map(function(p){return'<option>'+esc(p)+'</option>'}).join("");
   if(cur&&cfg.planos.indexOf(cur)<0){var o=document.createElement("option");o.textContent=cur;sel.appendChild(o)}sel.value=cur;
 }
 $("cfgWa").addEventListener("input",function(){this.value=fmtTel(this.value)});
 $("cfg").addEventListener("submit",function(e){e.preventDefault();
   var pl=$("cfgPlanos").value.split("\n").map(up).filter(Boolean);
-  cfg={vend:up($("cfgVend").value),sup:up($("cfgSup").value),wa:dig($("cfgWa").value),planos:pl.length?pl:DEF_PLANOS,crmUrl:$("cfgCrmUrl").value.trim(),empresa:$("cfgEmpresa").value,crmUser:$("cfgCrmUser").value.trim(),chave:$("cfgChave").value.trim()};DEMO=!cfg.chave;$("demoBar").hidden=!DEMO;
+  cfg={vend:up($("cfgVend").value),sup:up($("cfgSup").value),wa:dig($("cfgWa").value),planos:pl.length?pl:DEF_PLANOS,crmUrl:$("cfgCrmUrl").value.trim().replace(/\/$/,""),empresa:cfg.empresa,crmUser:cfg.crmUser,chave:$("cfgChave").value.trim()};DEMO=!cfg.chave;$("demoBar").hidden=!DEMO;
   save(K.cfg,cfg);renderCfg();toast("Ajustes salvos")});
 
 /* ---------- abas ---------- */
@@ -948,19 +944,21 @@ function renderMapa(r){
 function pillCrm(r){var c=r.crm||{st:"fila"};
   if(c.st==="ok")return'<span class="pill ok">No CRM '+esc(c.crmId)+'</span>';
   if(c.st==="go")return'<span class="pill go">Enviando…</span>';
+  if(c.st==="srv")return'<span class="pill go">No servidor</span>';
   if(c.st==="er")return'<span class="pill er">Erro no envio</span>';
   return'<span class="pill q">Na fila</span>'}
 function renderCrmBox(){
   if(!atual||$("sheet").hidden&&!atual)return;var c=atual.crm||{st:"fila"},b=$("crmBox");
   b.className="crmbox "+(c.st==="ok"?"ok":c.st==="er"?"er":"q");
   if(c.st==="ok")b.innerHTML='<b>Cadastrado no CRM · '+esc(c.crmId)+'</b><span class="small">Enviado em '+esc(c.em)+'. A partir daqui o CRM segue o fluxo dele.</span>';
+  else if(c.st==="srv")b.innerHTML='<b>Recebido pelo servidor</b><span class="small">Já saiu do celular. O servidor está colocando no CRM e o número aparece aqui.</span>';
   else if(c.st==="go")b.innerHTML='<b>Enviando para o CRM…</b><span class="small">Pode fechar esta tela.</span>';
   else if(c.st==="er")b.innerHTML='<b>O CRM não aceitou</b><span class="small">'+esc(c.msg||"")+' Corrija e salve de novo.</span>';
   else b.innerHTML='<b>Salvo no celular, na fila do CRM</b><span class="small">'+(online()?"Enviando em instantes.":"Sem internet agora. Vai sozinho assim que o celular conectar.")+'</span>'+(demoOff?'<button type="button" class="btn sm primary" id="btnVolta" style="justify-self:start;margin-top:6px">Simular: a internet voltou</button>':'');var bv=$("btnVolta");if(bv)bv.addEventListener("click",function(){$("btnNet").click()});
 }
 function renderSync(){
-  var f=recs.filter(function(r){return !r.crm||r.crm.st!=="ok"}).length;
-  $("syncTxt").textContent=enviando?"Enviando ao CRM…":f?(f===1?"1 cadastro aguardando o CRM":f+" cadastros aguardando o CRM"):"Tudo enviado ao CRM";
+  var f=recs.filter(function(r){return !r.crm||(r.crm.st!=="ok"&&r.crm.st!=="srv")}).length;
+  $("syncTxt").textContent=enviando?"Enviando ao CRM…":f?(f===1?"1 cadastro aguardando o CRM":f+" cadastros aguardando o CRM"):(recs.some(function(r){return r.crm&&r.crm.st==="srv"})?"Tudo saiu do celular":"Tudo enviado ao CRM");
 }
 function espera(ms){return new Promise(function(res){setTimeout(res,ms)})}
 var seqDemo=load("cadvendas.seqdemo",2140);
@@ -970,11 +968,21 @@ function enviarCRM(r){
     if(!online())throw new Error("A internet caiu durante o envio. Tenta de novo sozinho.");
     if(r.crm.crmId)return {id:r.crm.crmId};seqDemo++;save("cadvendas.seqdemo",seqDemo);
     return {id:(r.tipo==="upgrade"?"Upgrade #":"Lead #")+seqDemo}})}
-  /* versão real: POST na API do CRM com a chave do vendedor; id_app evita duplicar se repetir */
-  return fetch(cfg.crmUrl.replace(/\/$/,"")+"/api/app-vendas.php",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+(cfg.chave||"")},
-    body:JSON.stringify({id_app:r.id,tipo:r.tipo||"venda",empresa_id:cfg.empresa,campos:Object.fromEntries(p.campos.map(function(c){return[c[0],c[2]]})),atualizar:!!r.crm.crmId})})
-    .then(function(res){return res.json().then(function(j){if(!res.ok||!j.ok)throw new Error(j.erro||("CRM respondeu "+res.status));return j})});
+  /* versão real: POST no servidor do app com a chave do vendedor; o servidor repassa ao CRM. id_app evita duplicar */
+  var reg=Object.assign({},r);delete reg.midias;delete reg.crm;
+  return fetch(cfg.crmUrl+"/api/app-vendas.php?acao=enviar",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+cfg.chave},
+    body:JSON.stringify({id_app:r.id,tipo:r.tipo||"venda",registro:reg,atualizar:!!r.crm.atualizar})})
+    .then(function(res){return res.json().catch(function(){throw new Error("O servidor respondeu "+res.status)}).then(function(j){if(!res.ok||!j.ok){var e=new Error(j.erro||("O servidor respondeu "+res.status));e.fim=res.status===401||res.status===403||res.status===409||res.status===422;throw e}return j})});
 }
+/* cadastros que já estão no servidor e esperam o CRM: pergunta a situação */
+function consultarServidor(){
+  if(DEMO||!online())return;var L=recs.filter(function(r){return r.crm&&r.crm.st==="srv"});if(!L.length)return;
+  fetch(cfg.crmUrl+"/api/app-vendas.php?acao=status&ids="+L.map(function(r){return r.id}).join(","),{headers:{"Authorization":"Bearer "+cfg.chave}})
+    .then(function(res){return res.json()}).then(function(j){if(!j.ok)return;var mud=false;
+      L.forEach(function(r){var s=j.status[r.id];if(!s)return;if(s.st==="ok"){r.crm={st:"ok",crmId:s.crmId,em:agora(),tent:0};mud=true}else if(s.st==="er"){r.crm={st:"er",msg:s.msg,tent:5,srv:true};mud=true}});
+      if(mud){save(K.recs,recs);renderBadge();if(!$("v-hist").hidden)renderLista();if(atual)renderCrmBox()}}).catch(function(){});
+}
+setInterval(consultarServidor,30000);
 var enviando=false;
 function sincronizar(){
   if(enviando||!online()){renderSync();return}
@@ -982,9 +990,9 @@ function sincronizar(){
   if(!fila.length){renderSync();return}
   enviando=true;renderSync();
   (function prox(i){
-    if(i>=fila.length||!online()){enviando=false;save(K.recs,recs);renderBadge();if(!$("v-hist").hidden)renderLista();renderCrmBox();return}
+    if(i>=fila.length||!online()){enviando=false;setTimeout(consultarServidor,8000);save(K.recs,recs);renderBadge();if(!$("v-hist").hidden)renderLista();renderCrmBox();return}
     var r=fila[i];r.crm.st="go";refresh();
-    enviarCRM(r).then(function(j){r.crm={st:"ok",crmId:j.id,em:agora(),tent:0}},function(e){r.crm.st="er";r.crm.msg=e.message;r.crm.tent=(r.crm.tent||0)+1;if(!online())r.crm.st="fila"})
+    enviarCRM(r).then(function(j){r.crm=j.st==="ok"?{st:"ok",crmId:j.crmId||j.id,em:agora(),tent:0}:j.st==="er"?{st:"er",msg:j.msg,tent:5}:{st:"srv",srvId:j.id,em:agora(),tent:0}},function(e){r.crm.st="er";r.crm.msg=e.message;r.crm.tent=e.fim?5:(r.crm.tent||0)+1;if(!online())r.crm.st="fila"})
       .then(function(){save(K.recs,recs);refresh();prox(i+1)});
   })(0);
   function refresh(){renderBadge();if(!$("v-hist").hidden)renderLista();if(atual)renderCrmBox()}
@@ -1007,7 +1015,7 @@ if(DEMO&&!recs.length&&!load("cadvendas.semeado",false)){
 
 /* ---------- início ---------- */
 renderCfg();renderBadge();renderListas();setTimeout(sincronizar,1500);
-try{$("versao").textContent="Versão "+(APP&&APP.version?APP.version()+" (aplicativo Android)":"2.0 demonstração (navegador)")}catch(e){}
+try{$("versao").textContent="Versão "+(APP&&APP.version?APP.version()+" (aplicativo Android)":"2.0 (navegador)")}catch(e){}
 var d=load(K.draft,null);if(d&&d.f){editingId=d.id||null;setForm(d.f)}
 if(!cfg.vend){setTimeout(function(){toast("Primeiro, coloque seu nome em Ajustes")},400)}
 
