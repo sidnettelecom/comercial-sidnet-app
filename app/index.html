@@ -480,6 +480,7 @@ var $=function(id){return document.getElementById(id)};
 var DEF_PLANOS=["PLANO PROMOCIONAL 600MB"];var PRECOS={"PLANO PROMOCIONAL 600MB":109.90};
 var cfg=load(K.cfg,{vend:"VENDEDOR DEMO",sup:"",wa:"",planos:DEF_PLANOS,crmUrl:"",empresa:"3",crmUser:""});
 if(!cfg.empresa)cfg.empresa="3";
+if(!cfg.crmUrl&&/^https:$/.test(location.protocol))cfg.crmUrl=location.origin;
 if(!cfg.planos||!cfg.planos.length)cfg.planos=DEF_PLANOS;
 var recs=load(K.recs,[]);
 var editingId=null;
