@@ -46,4 +46,4 @@ echo
 echo "Pronto. Painel: https://$DOMINIO/painel/"
 echo "Próximos passos:"
 echo "  1. nano $CONF/config.php   (crm_usuario, crm_senha, painel_senha_hash)"
-echo "  2. Abra o painel, carregue os vendedores do CRM e crie a chave de cada vendedor."
+echo "  2. Abra o painel, carregue os vendedores do CRM e crie usuário e senha de cada vendedor."

@@ -13,14 +13,25 @@ celular (app, funciona offline)  →  servidor do app (Debian)  →  CRM (crm.si
 
 1. O vendedor salva o cadastro. No histórico ele fica **Na fila**.
 2. Com internet (ao abrir o app, ao conectar e a cada 20 s), o app manda a fila para o servidor do app
-   com a chave do vendedor. O selo vira **No servidor**: o cadastro já saiu do celular.
+   com o login do vendedor. O selo vira **No servidor**: o cadastro já saiu do celular.
 3. A cada minuto o servidor entra no CRM com um usuário do sistema e preenche a tela
    **Novo Lead** (venda e 2º plano) ou **Upgrades → Lançar à mão** (upgrade), do mesmo jeito que uma pessoa faria.
 4. O app pergunta a situação e o selo vira **No CRM Lead #123**. Se o CRM recusar (ex.: CPF duplicado),
    o motivo aparece no app e no painel, onde dá para tentar de novo, enviar mesmo assim ou descartar.
 
 Cada cadastro tem um `id_app` único: reenviar não cria venda duplicada.
-Sem chave de acesso em Ajustes, o app roda em **modo demonstração** (envio simulado).
+O app só abre com **usuário e senha** do vendedor (criados no painel). Depois do primeiro login com internet,
+dá para entrar sem internet com a mesma senha; o app pede a senha de novo a cada 12 horas.
+
+## Segurança
+
+- Vendedores e gestores entram com usuário e senha (senhas guardadas com `password_hash`).
+- 5 senhas erradas em 15 minutos travam o usuário por 15 minutos (20 por IP).
+- O celular guarda só um token de sessão e uma impressão PBKDF2 da senha (para o login sem internet), nunca a senha.
+- Bloquear um vendedor ou gerar senha nova derruba os logins dele em todos os celulares.
+- Painel: cookie `HttpOnly`/`Secure`/`SameSite=Strict`, CSRF em todo formulário, sai sozinho após 8 h parado.
+- Excluir venda no painel fica registrado em Gestores → Últimas ações, e o celular não consegue reenviar a venda excluída.
+- Esqueceu a senha do painel: `php server/bin/gestor.php senha <usuario>` no servidor.
 
 ## Pastas
 
@@ -42,7 +53,7 @@ sudo nano /etc/comercial-sidnet/config.php
 
 No `config.php`: usuário e senha do CRM só para o app (crie no CRM um usuário como `app.vendas`,
 com acesso ao Novo Lead e aos Upgrades) e a senha do painel. Depois, em `https://app.sidnet.com.br/painel/`:
-carregue os vendedores do CRM, crie cada vendedor e passe a chave para ele colocar em Ajustes no app.
+carregue os vendedores do CRM, crie cada vendedor (o painel gera uma senha provisória) e passe usuário e senha para ele.
 
 Atualizar depois: `sudo git -C /opt/comercial-sidnet pull`.
 Log do repasse: `/var/lib/comercial-sidnet/repasse.log`.
