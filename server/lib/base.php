@@ -224,6 +224,34 @@ function valor_brl(?string $v): string
     return $d === '' ? '0,00' : number_format(((int)$d) / 100, 2, ',', '.');
 }
 
+/**
+ * Texto que vai para o CRM: tira caracteres de controle e os sinais < > " ` que permitiriam
+ * colocar HTML ou script dentro do CRM pelos campos do app. Limita o tamanho.
+ */
+function texto_crm(string $s, int $max = 1000): string
+{
+    $s = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $s) ?? '';
+    $s = str_replace(['<', '>', '"', '`'], '', $s);
+    return mb_substr($s, 0, $max);
+}
+
+/** Cadastro que veio do celular: só chaves simples e valores de texto, cada um com tamanho limitado. */
+function registro_limpo(array $in): array
+{
+    $out = [];
+    foreach ($in as $k => $v) {
+        if (!is_string($k) || !preg_match('/^[A-Za-z0-9_]{1,40}$/', $k) || count($out) >= 120) {
+            continue;
+        }
+        if (is_bool($v)) {
+            $out[$k] = $v ? '1' : '';
+        } elseif (is_int($v) || is_float($v) || is_string($v)) {
+            $out[$k] = mb_substr(preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', (string)$v) ?? '', 0, 2000);
+        }
+    }
+    return $out;
+}
+
 function h(?string $s): string
 {
     return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');

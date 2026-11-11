@@ -50,6 +50,16 @@ function vendedor_definir_acesso(int $id, string $usuario, string $senha): void
     vendedor_derrubar_sessoes($id);
 }
 
+/** Login do celular vale até 7 dias sem uso e no máximo 30 dias; depois o vendedor entra de novo. */
+const SESSAO_INATIVA_DIAS = 7;
+const SESSAO_MAX_DIAS = 30;
+
+function sessoes_vencidas_apagar(): void
+{
+    db()->prepare("DELETE FROM sessoes WHERE ultimo_uso < datetime('now','localtime',?) OR criado_em < datetime('now','localtime',?)")
+        ->execute(['-' . SESSAO_INATIVA_DIAS . ' days', '-' . SESSAO_MAX_DIAS . ' days']);
+}
+
 function vendedor_derrubar_sessoes(int $id): void
 {
     db()->prepare('DELETE FROM sessoes WHERE vendedor_id = ?')->execute([$id]);

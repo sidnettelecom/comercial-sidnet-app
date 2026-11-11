@@ -111,7 +111,7 @@ function campos_lead(array $padrao, array $r, array $venda, array $vendedor, str
     $f['perfil_cliente'] = $tipo === 'segundo' ? 'Cliente atual' : 'Novo cliente';
     $f['tipo_servico'] = 'Instalação';
     $f['observacao'] = observacao($r, $venda['id_app'], $vendedor);
-    return $f;
+    return limpar_campos($f);
 }
 
 function campos_upgrade(array $padrao, array $r, array $venda, array $vendedor): array
@@ -126,6 +126,17 @@ function campos_upgrade(array $padrao, array $r, array $venda, array $vendedor):
     $f['valor_de'] = valor_ponto($r['valAtual'] ?? '');
     $f['valor_para'] = valor_ponto($r['valNovo'] ?? '');
     $f['observacao'] = observacao($r, $venda['id_app'], $vendedor);
+    return limpar_campos($f);
+}
+
+/** Passa todos os textos pelo texto_crm antes de irem ao CRM (o token do formulário fica como veio). */
+function limpar_campos(array $f): array
+{
+    foreach ($f as $k => $v) {
+        if (is_string($v) && $k !== 'csrf_token') {
+            $f[$k] = texto_crm($v, $k === 'observacao' ? 4000 : 300);
+        }
+    }
     return $f;
 }
 
@@ -135,7 +146,7 @@ function repassar(array $venda, array $vendedor): string
     if ($vendedor['crm_vendedor_id'] === '') {
         throw new ErroCrm('O vendedor ' . $vendedor['nome'] . ' não está ligado a um vendedor do CRM. Ajuste no painel.');
     }
-    $r = json_decode($venda['dados'], true) ?: [];
+    $r = registro_limpo(json_decode($venda['dados'], true) ?: []);
     $c = crm();
 
     if ($venda['tipo'] === 'upgrade') {
@@ -204,6 +215,12 @@ function processar_fila(int $limite = 20): array
             if ($e->temporario) {
                 break; // CRM fora do ar: não insiste com o resto agora
             }
+        } catch (Throwable $e) {
+            // cadastro com algo inesperado: marca erro e segue com os outros, sem travar a fila
+            error_log('repasse #' . $v['id'] . ': ' . $e->getMessage());
+            $pdo->prepare("UPDATE vendas SET status='erro', erro=?, tentativas=tentativas+1, atualizado_em=datetime('now','localtime') WHERE id=?")
+                ->execute(['Erro interno ao montar o envio. Veja o log do servidor.', $v['id']]);
+            $feitos[] = "#{$v['id']} {$v['nome']}: ERRO interno";
         }
     }
     return $feitos;
