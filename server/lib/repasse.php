@@ -72,9 +72,30 @@ function campos_lead(array $padrao, array $r, array $venda, array $vendedor, str
     $f['telefone_residencial'] = (string)($r['tel2'] ?? '');
     $f['email'] = strtolower(trim((string)($r['email'] ?? '')));
     if ($tipo === 'venda') $f['data_nascimento'] = data_iso($r['nasc'] ?? '');
-    $f['logradouro'] = up($r['endereco'] ?? '');
+    if ($tipo === 'venda') {
+        // dados pessoais (só na venda nova; no 2º plano o cliente já está no CRM)
+        $f['rg'] = up($r['rg'] ?? '');
+        $f['rg_orgao_emissor'] = up($r['rgOrgao'] ?? '');
+        $f['profissao'] = up($r['profissao'] ?? '');
+        $sexo = up($r['sexo'] ?? '');
+        if (in_array($sexo, ['F', 'M', 'NB', 'O', 'PNI'], true)) $f['sexo'] = $sexo;
+        $civil = trim((string)($r['estadoCivil'] ?? ''));
+        if (in_array($civil, ['Solteiro', 'Casado', 'Divorciado', 'Viúvo'], true)) $f['estado_civil'] = $civil;
+        $mor = up($r['moradia'] ?? '');
+        if (in_array($mor, ['P', 'A'], true)) $f['moradia'] = $mor;
+    }
+    // endereço separado; cadastros antigos do app só têm "endereco" num texto só
+    $cep = so_digitos($r['cep'] ?? '');
+    $f['cep'] = strlen($cep) === 8 ? substr($cep, 0, 5) . '-' . substr($cep, 5) : '';
+    $f['logradouro'] = up(($r['rua'] ?? '') !== '' ? $r['rua'] : ($r['endereco'] ?? ''));
+    $f['numero'] = up($r['numero'] ?? '');
+    $f['bairro'] = up($r['bairro'] ?? '');
+    $f['complemento'] = up($r['complemento'] ?? '');
+    $f['bloco'] = up($r['bloco'] ?? '');
+    $f['apartamento'] = up($r['apartamento'] ?? '');
     $f['cidade'] = up($r['cidade'] ?? '');
-    $f['uf'] = UF_POR_DDD[substr(so_digitos($r['tel1'] ?? ''), 0, 2)] ?? ($cfg['uf_padrao'] ?? 'MG');
+    $uf = up($r['uf'] ?? '');
+    $f['uf'] = preg_match('/^[A-Z]{2}$/', $uf) ? $uf : (UF_POR_DDD[substr(so_digitos($r['tel1'] ?? ''), 0, 2)] ?? ($cfg['uf_padrao'] ?? 'MG'));
     $f['referencia'] = up($r['referencia'] ?? '');
     $f['vendedor_id'] = $vendedor['crm_vendedor_id'];
     $f['origem'] = $cfg['origem'] ?? 'Outros';
@@ -143,7 +164,25 @@ function repassar(array $venda, array $vendedor): string
     throw new ErroCrm($aviso ?: 'O CRM não aceitou o cadastro (HTTP ' . $resp['status'] . ').');
 }
 
-/** Processa a fila. Chamado pelo cron a cada minuto. */
+/**
+ * Processa a fila com trava, para o cron e o envio imediato não mandarem a mesma venda duas vezes.
+ * $esperar: true espera a outra rodada terminar; false desiste se já houver uma rodando.
+ */
+function processar_fila_com_trava(bool $esperar = false): array
+{
+    $trava = fopen(dirname(config()['banco']) . '/repassar.lock', 'c');
+    if (!flock($trava, LOCK_EX | ($esperar ? 0 : LOCK_NB))) {
+        return [];
+    }
+    try {
+        return processar_fila();
+    } finally {
+        flock($trava, LOCK_UN);
+        fclose($trava);
+    }
+}
+
+/** Processa a fila. Chamado pelo cron a cada minuto e logo depois que uma venda chega. */
 function processar_fila(int $limite = 20): array
 {
     $pdo = db();

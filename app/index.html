@@ -222,6 +222,22 @@ h2.sec{font:700 17px/1.2 var(--f-display);margin:2px 0 12px}
       </div>
     </fieldset>
 
+    <fieldset class="only-venda not-segundo">
+      <legend>Dados pessoais</legend>
+      <div class="two">
+        <div class="f" data-k="rg"><label for="rg">RG</label><input id="rg" class="mono" autocapitalize="characters"></div>
+        <div class="f" data-k="rgOrgao"><label for="rgOrgao">Órgão emissor</label><input id="rgOrgao" placeholder="SSP/MG" autocapitalize="characters"></div>
+      </div>
+      <div class="two">
+        <div class="f" data-k="sexo"><label for="sexo">Sexo</label><select id="sexo"><option value="">—</option><option value="F">Feminino</option><option value="M">Masculino</option><option value="NB">Não binário</option><option value="O">Outro</option><option value="PNI">Prefiro não informar</option></select></div>
+        <div class="f" data-k="estadoCivil"><label for="estadoCivil">Estado civil</label><select id="estadoCivil"><option value="">—</option><option>Solteiro</option><option>Casado</option><option>Divorciado</option><option>Viúvo</option></select></div>
+      </div>
+      <div class="two">
+        <div class="f" data-k="profissao"><label for="profissao">Profissão</label><input id="profissao" autocapitalize="characters"></div>
+        <div class="f" data-k="moradia"><label for="moradia">Moradia</label><select id="moradia"><option value="">—</option><option value="P">Própria</option><option value="A">Alugada</option></select></div>
+      </div>
+    </fieldset>
+
     <fieldset class="only-upg">
       <legend>Upgrade do plano</legend>
       <div class="two">
@@ -257,10 +273,41 @@ h2.sec{font:700 17px/1.2 var(--f-display);margin:2px 0 12px}
 
     <fieldset class="only-venda">
       <legend id="endLegend">Endereço de instalação</legend>
-      <div class="f" data-k="endereco">
-        <label for="endereco" class="req">Endereço completo</label>
-        <textarea id="endereco" name="endereco" rows="2" placeholder="Rua, número, bairro ou comunidade" autocapitalize="characters"></textarea>
-        <span class="msg">Informe o endereço.</span>
+      <div class="two">
+        <div class="f" data-k="cep">
+          <label for="cep">CEP</label>
+          <input id="cep" class="mono" inputmode="numeric" placeholder="00000-000" maxlength="9">
+          <span class="hint" id="cepHint">Com internet, preenche rua, bairro e cidade.</span>
+        </div>
+        <div class="f" data-k="uf">
+          <label for="uf">UF</label>
+          <input id="uf" maxlength="2" placeholder="MG" autocapitalize="characters">
+        </div>
+      </div>
+      <div class="f" data-k="rua">
+        <label for="rua" class="req">Rua</label>
+        <input id="rua" placeholder="Rua, avenida ou comunidade" autocapitalize="characters">
+        <span class="msg">Informe a rua.</span>
+      </div>
+      <div class="two">
+        <div class="f" data-k="numero">
+          <label for="numero" class="req">Número</label>
+          <input id="numero" inputmode="text" placeholder="Ou S/N" autocapitalize="characters">
+          <span class="msg">Informe o número (ou S/N).</span>
+        </div>
+        <div class="f" data-k="bairro">
+          <label for="bairro" class="req">Bairro</label>
+          <input id="bairro" autocapitalize="characters">
+          <span class="msg">Informe o bairro.</span>
+        </div>
+      </div>
+      <div class="f" data-k="complemento">
+        <label for="complemento">Complemento</label>
+        <input id="complemento" placeholder="Casa, fundos, loja…" autocapitalize="characters">
+      </div>
+      <div class="two not-orc">
+        <div class="f" data-k="bloco"><label for="bloco">Bloco/Condomínio</label><input id="bloco" autocapitalize="characters"></div>
+        <div class="f" data-k="apartamento"><label for="apartamento">Apto</label><input id="apartamento" autocapitalize="characters"></div>
       </div>
       <div class="f" data-k="cidade">
         <label for="cidade" class="req">Cidade</label>
@@ -607,12 +654,13 @@ function compartilhar(r,txt,outro){
 }
 
 /* ---------- formulário ---------- */
-var F=["nome","apelido","cpf","nasc","endereco","cidade","referencia","local","tel1","tel2","email","plano","provedor","obs","valAtual","valNovo","velNova","valInst","valRot","exRoteadorObs","exCaboObs","exTrocaObs","servico","valOrc","validade"];
+var F=["nome","apelido","cpf","nasc","cidade","referencia","local","tel1","tel2","email","plano","provedor","obs","valAtual","valNovo","velNova","valInst","valRot","exRoteadorObs","exCaboObs","exTrocaObs","servico","valOrc","validade","cep","uf","rua","numero","bairro","complemento","bloco","apartamento","rg","rgOrgao","sexo","estadoCivil","profissao","moradia"];
 var CK=["exRoteador","exCabo","exTroca"];
 function mostraObsServ(){CK.forEach(function(k){var t=$(k+"Obs");var was=t.hidden;t.hidden=!$(k).checked;if(was&&!t.hidden&&document.activeElement===$(k))t.focus()})}
 CK.forEach(function(k){$(k).addEventListener("change",mostraObsServ)});
 function tipoAtual(){return $("tipoUpg").checked?"upgrade":$("tipoSeg").checked?"segundo":$("tipoOrc").checked?"orcamento":"venda"}
 function setTipo(t){t=t==="upgrade"||t==="segundo"||t==="orcamento"?t:"venda";$("tipoUpg").checked=t==="upgrade";$("tipoSeg").checked=t==="segundo";$("tipoOrc").checked=t==="orcamento";$("tipoVenda").checked=t==="venda";if(t==="orcamento"&&!$("validade").value)$("validade").value="15";$("form").dataset.tipo=t;$("cpfLbl").classList.toggle("req",t!=="upgrade");$("endLegend").textContent=t==="segundo"?"Endereço do 2º ponto":t==="orcamento"?"Local do serviço":"Endereço de instalação";$("btnEnviarTxt").textContent=t==="orcamento"?"Salvar e enviar no WhatsApp":"Salvar e enviar ao CRM"}
+function montarEnd(o){var p=[up(o.rua),up(o.numero),up(o.complemento),up(o.bairro)].filter(Boolean);return p.join(", ")}
 function nomeTipo(t){return t==="upgrade"?"Upgrade":t==="segundo"?"2º plano":t==="orcamento"?"Orçamento":"Venda"}
 function ehOrc(r){return r&&r.tipo==="orcamento"}
 document.querySelectorAll('input[name="tipo"]').forEach(function(r){r.addEventListener("change",function(){setTipo(tipoAtual());document.querySelectorAll(".f").forEach(function(f){f.classList.remove("bad")});$("formAlert").hidden=true})});
@@ -622,8 +670,8 @@ function brl(n){return fmtMoney(String(Math.round(n*100)))||"0,00"}
 function totalExtras(r){return moneyVal(r.valInst)+moneyVal(r.valRot)}
 function atualizaTotal(){$("valTotal").textContent="R$ "+brl(totalExtras({valInst:$("valInst").value,valRot:$("valRot").value}))}
 ["valAtual","valNovo","valInst","valRot","valOrc"].forEach(function(id){$(id).addEventListener("input",function(){this.value=fmtMoney(this.value);atualizaTotal()})});
-function getForm(){var o={};F.forEach(function(k){o[k]=$(k).value});var v=document.querySelector('input[name="venc"]:checked');o.venc=v?v.value:"";o.tipo=tipoAtual();o.midias=midias.slice();CK.forEach(function(k){o[k]=$(k).checked});return o}
-function setForm(o){F.forEach(function(k){$(k).value=o&&o[k]||""});CK.forEach(function(k){$(k).checked=!!(o&&o[k])});setTipo(o&&o.tipo||tipoAtual());atualizaTotal();mostraObsServ();midias=(o&&o.midias||[]).slice();renderMidias();
+function getForm(){var o={};F.forEach(function(k){o[k]=$(k).value});var v=document.querySelector('input[name="venc"]:checked');o.venc=v?v.value:"";o.tipo=tipoAtual();o.endereco=montarEnd(o);o.midias=midias.slice();CK.forEach(function(k){o[k]=$(k).checked});return o}
+function setForm(o){if(o&&o.endereco&&!o.rua){o=Object.assign({},o,{rua:o.endereco})}F.forEach(function(k){$(k).value=o&&o[k]||""});CK.forEach(function(k){$(k).checked=!!(o&&o[k])});setTipo(o&&o.tipo||tipoAtual());atualizaTotal();mostraObsServ();midias=(o&&o.midias||[]).slice();renderMidias();
   if(o&&o.plano&&cfg.planos.indexOf(o.plano)<0){var op=document.createElement("option");op.textContent=o.plano;$("plano").appendChild(op);$("plano").value=o.plano}
   document.querySelectorAll('input[name="venc"]').forEach(function(r){r.checked=!!o&&r.value===o.venc});
   document.querySelectorAll(".f").forEach(function(f){f.classList.remove("bad","good")});$("formAlert").hidden=true}
@@ -631,6 +679,11 @@ function rascunho(){save(K.draft,{f:getForm(),id:editingId})}
 $("form").addEventListener("input",rascunho);$("form").addEventListener("change",rascunho);
 $("cpf").addEventListener("input",function(){this.value=fmtCPF(this.value);var f=this.closest(".f");var ok=dig(this.value).length===11&&cpfOk(this.value);f.classList.toggle("good",ok);if(dig(this.value).length===11)f.classList.toggle("bad",!ok);else f.classList.remove("bad")});
 $("nasc").addEventListener("input",function(){this.value=fmtData(this.value)});
+$("cep").addEventListener("input",function(){var d=dig(this.value).slice(0,8);this.value=d.length>5?d.slice(0,5)+"-"+d.slice(5):d;if(d.length===8)buscaCep(d)});
+function buscaCep(d){var h=$("cepHint");if(!navigator.onLine){h.textContent="Sem internet: preencha a rua e o bairro.";return}h.textContent="Buscando CEP…";
+  fetch("https://viacep.com.br/ws/"+d+"/json/").then(function(r){return r.json()}).then(function(j){if(j.erro){h.textContent="CEP não encontrado. Preencha à mão.";return}
+    if(j.logradouro&&!$("rua").value)$("rua").value=up(j.logradouro);if(j.bairro&&!$("bairro").value)$("bairro").value=up(j.bairro);if(j.localidade)$("cidade").value=up(j.localidade);if(j.uf)$("uf").value=j.uf;
+    h.textContent="Endereço preenchido pelo CEP. Confira o número.";rascunho();$("numero").focus()}).catch(function(){h.textContent="Não deu para buscar o CEP. Preencha à mão."})}
 ["tel1","tel2"].forEach(function(id){$(id).addEventListener("input",function(){this.value=fmtTel(this.value)})});
 document.querySelectorAll("#form input,#form textarea,#form select").forEach(function(el){el.addEventListener("input",function(){var f=el.closest(".f");if(f&&f.classList.contains("bad")&&el.id!=="cpf")f.classList.remove("bad")})});
 
@@ -639,7 +692,7 @@ function validar(o){
   if(up(o.nome).split(" ").length<2)erros.nome=1;
   if(o.tipo==="orcamento"){
     if(!telOk(o.tel1))erros.tel1=1;
-    if(!up(o.endereco))erros.endereco=1;
+    if(!up(o.rua))erros.rua=1;if(!up(o.numero))erros.numero=1;
     if(!up(o.cidade))erros.cidade=1;
     if(!up(o.servico))erros.servico=1;
     if(!moneyVal(o.valOrc))erros.valOrc=1;
@@ -660,7 +713,7 @@ function validar(o){
   var dt=parseData(o.nasc);
   if(!dt){erros.nasc="Data inválida. Use dd/mm/aaaa."}else{var a=idade(dt);if(a<18)erros.nasc="O titular precisa ter 18 anos ou mais (tem "+Math.max(a,0)+").";else if(a>110)erros.nasc="Confira o ano de nascimento."}
   }
-  if(!up(o.endereco))erros.endereco=1;
+  if(!up(o.rua))erros.rua=1;if(!up(o.numero))erros.numero=1;if(!up(o.bairro))erros.bairro=1;
   if(!up(o.cidade))erros.cidade=1;
   if(!up(o.referencia))erros.referencia=1;
   if(!telOk(o.tel1))erros.tel1=1;
@@ -732,7 +785,8 @@ function mensagem(r){
   if(!seg){L.push("- POSSUI ALGUM APELIDO? SE SIM QUAL?: "+(up(r.apelido)||"NÃO"));L.push("")}
   L.push("* CPF:");L.push(fmtCPF(r.cpf));L.push("");
   if(!seg){L.push("* DATA DE NASCIMENTO:");L.push(r.nasc);L.push("")}
-  L.push("* ENDEREÇO COMPLETO:");L.push(up(r.endereco));L.push("");
+  L.push("* ENDEREÇO COMPLETO:");L.push(up(r.endereco)+(r.cep?" - CEP "+r.cep:"")+(up(r.bloco)?" - BLOCO "+up(r.bloco):"")+(up(r.apartamento)?" APTO "+up(r.apartamento):""));L.push("");
+  if(!seg){var dp=[];if(up(r.rg))dp.push("RG "+up(r.rg)+(up(r.rgOrgao)?" "+up(r.rgOrgao):""));if(r.sexo)dp.push("SEXO "+r.sexo);if(r.estadoCivil)dp.push(up(r.estadoCivil));if(up(r.profissao))dp.push(up(r.profissao));if(r.moradia)dp.push("MORADIA "+(r.moradia==="P"?"PRÓPRIA":"ALUGADA"));if(dp.length){L.push("- DADOS PESSOAIS: "+dp.join(" | "));L.push("")}}
   L.push("- CIDADE:");L.push(up(r.cidade));L.push("");
   L.push("- PONTO DE REFERÊNCIA:");L.push(up(r.referencia));L.push("");
   L.push("- LOCALIZAÇÃO DO LOCAL A INSTALAR:");L.push(r.local?r.local.trim():"NÃO INFORMADA");L.push("");
@@ -942,9 +996,9 @@ function cpfFake(){var n=[];for(var i=0;i<9;i++)n.push(Math.floor(Math.random()*
 $("btnExemplo").addEventListener("click",function(){
   editingId=null;
   if(tipoAtual()==="upgrade"){setForm({tipo:"upgrade",nome:"JOSE DE TESTE SOUZA",tel1:"(33) 98888-0003",tel2:"(33) 98888-0004",email:"jose.teste@gmail.com",valAtual:"79,90",valNovo:"109,90",velNova:"500 MEGAS",exRoteador:true,exCabo:true,exCaboObs:"DA SALA ATÉ O QUARTO DOS FUNDOS",valInst:"",valRot:"150,00",obs:"CADASTRO DE TREINO, NÃO EXECUTAR"});rascunho();toast("Exemplo preenchido. Ele é fictício.");return}
-  if(tipoAtual()==="orcamento"){setForm({tipo:"orcamento",nome:"CARLOS DE TESTE LIMA",endereco:"RUA DAS ACÁCIAS, 80, CENTRO",cidade:"CIDADE EXEMPLO",referencia:"PORTÃO VERDE",tel1:"(33) 98888-0007",servico:"PASSAGEM DE CABO DA SALA ATÉ O ESCRITÓRIO (15 M) E INSTALAÇÃO DE SEGUNDO ROTEADOR",valOrc:"180,00",validade:"15",obs:"ORÇAMENTO DE TREINO"});rascunho();toast("Exemplo preenchido. Ele é fictício.");return}
-  if(tipoAtual()==="segundo"){setForm({tipo:"segundo",nome:"ANA DE TESTE PEREIRA",cpf:cpfFake(),endereco:"RUA DO COMÉRCIO, 45, LOJA 2, CENTRO",cidade:"CIDADE EXEMPLO",referencia:"LOJA AO LADO DO MERCADO",tel1:"(33) 98888-0005",tel2:"(33) 98888-0006",email:"ana.teste@gmail.com",venc:"20",plano:cfg.planos[0],provedor:"SIDNET (1º PONTO)",valInst:"50,00",obs:"SEGUNDO PONTO NA LOJA DA CLIENTE. TREINO"});rascunho();toast("Exemplo preenchido. Ele é fictício.");return}
-  setForm({tipo:"venda",nome:"MARIA DE TESTE SILVA",apelido:"",cpf:cpfFake(),nasc:"14/03/1990",endereco:"RUA DAS FLORES, 120, CENTRO",cidade:"CIDADE EXEMPLO",referencia:"CASA AZUL AO LADO DA PADARIA",local:"",tel1:"(33) 98888-0001",tel2:"(33) 98888-0002",email:"maria.teste@gmail.com",venc:"10",plano:cfg.planos[0],provedor:"NENHUM",valInst:"100,00",valRot:"",obs:"CADASTRO DE TREINO, NÃO INSTALAR"});
+  if(tipoAtual()==="orcamento"){setForm({tipo:"orcamento",nome:"CARLOS DE TESTE LIMA",rua:"RUA DAS ACÁCIAS",numero:"80",bairro:"CENTRO",cidade:"CIDADE EXEMPLO",referencia:"PORTÃO VERDE",tel1:"(33) 98888-0007",servico:"PASSAGEM DE CABO DA SALA ATÉ O ESCRITÓRIO (15 M) E INSTALAÇÃO DE SEGUNDO ROTEADOR",valOrc:"180,00",validade:"15",obs:"ORÇAMENTO DE TREINO"});rascunho();toast("Exemplo preenchido. Ele é fictício.");return}
+  if(tipoAtual()==="segundo"){setForm({tipo:"segundo",nome:"ANA DE TESTE PEREIRA",cpf:cpfFake(),cep:"",rua:"RUA DO COMÉRCIO",numero:"45",complemento:"LOJA 2",bairro:"CENTRO",cidade:"CIDADE EXEMPLO",referencia:"LOJA AO LADO DO MERCADO",tel1:"(33) 98888-0005",tel2:"(33) 98888-0006",email:"ana.teste@gmail.com",venc:"20",plano:cfg.planos[0],provedor:"SIDNET (1º PONTO)",valInst:"50,00",obs:"SEGUNDO PONTO NA LOJA DA CLIENTE. TREINO"});rascunho();toast("Exemplo preenchido. Ele é fictício.");return}
+  setForm({tipo:"venda",nome:"MARIA DE TESTE SILVA",apelido:"",cpf:cpfFake(),nasc:"14/03/1990",rua:"RUA DAS FLORES",numero:"120",bairro:"CENTRO",cidade:"CIDADE EXEMPLO",uf:"MG",rg:"MG-12.345.678",rgOrgao:"SSP/MG",sexo:"F",estadoCivil:"Solteiro",profissao:"PROFESSORA",moradia:"P",referencia:"CASA AZUL AO LADO DA PADARIA",local:"",tel1:"(33) 98888-0001",tel2:"(33) 98888-0002",email:"maria.teste@gmail.com",venc:"10",plano:cfg.planos[0],provedor:"NENHUM",valInst:"100,00",valRot:"",obs:"CADASTRO DE TREINO, NÃO INSTALAR"});
   rascunho();toast("Exemplo preenchido. Ele é fictício.");
 });
 
@@ -984,7 +1038,8 @@ function payload(r){
   var c=[["empresa_id","Empresa",EMPRESAS[cfg.empresa]||cfg.empresa],["data_lead","Data",iso(r.criado)],["nome","Nome",up(r.nome)],["tipo_pessoa","Tipo de pessoa","Física"],
     ["cpf","CPF",r.cpf],["whatsapp","WhatsApp",fmtTel(r.tel1)],["telefone_residencial","Telefone 2",fmtTel(r.tel2)],["email","E-mail",String(r.email||"").trim().toLowerCase()]];
   if(t!=="segundo")c.push(["data_nascimento","Nascimento",iso(r.nasc)]);
-  c=c.concat([["logradouro","Endereço",up(r.endereco)],["cidade","Cidade",up(r.cidade)],["uf","UF",ufDDD[dig(r.tel1).slice(0,2)]||""],["referencia","Referência",up(r.referencia)],
+  c=c.concat([["cep","CEP",r.cep||""],["logradouro","Rua",up(r.rua||r.endereco)],["numero","Número",up(r.numero)],["bairro","Bairro",up(r.bairro)],["complemento","Complemento",up(r.complemento)],["cidade","Cidade",up(r.cidade)],["uf","UF",up(r.uf)||ufDDD[dig(r.tel1).slice(0,2)]||""],["bloco","Bloco",up(r.bloco)],["apartamento","Apto",up(r.apartamento)],
+    ["rg","RG",up(r.rg)],["rg_orgao_emissor","Órgão emissor",up(r.rgOrgao)],["sexo","Sexo",r.sexo||""],["estado_civil","Estado civil",r.estadoCivil||""],["profissao","Profissão",up(r.profissao)],["moradia","Moradia",r.moradia==="P"?"Própria":r.moradia==="A"?"Alugada":""],["referencia","Referência",up(r.referencia)],
     ["vendedor_id","Vendedor",quemFez(r)],["origem","Origem","Outros (venda de campo pelo app)"],
     ["plano_interesse","Plano",r.plano],["valor","Valor",preco?"R$ "+brl(preco):"do catálogo"],["status","Status","Venda Fechada"],["dia_vencimento","Vencimento","Dia "+r.venc],
     ["perfil_cliente","Perfil",t==="segundo"?"Cliente atual":"Novo cliente"],["tipo_servico","Tipo de serviço","Instalação"],["observacao","Observação",obs.join(" · ")]]);
