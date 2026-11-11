@@ -1,21 +1,25 @@
 <?php
 /**
- * Painel do servidor do app: vendas recebidas dos celulares, situação no CRM e vendedores.
+ * Painel do servidor do app: vendas recebidas dos celulares, situação no CRM, vendedores e gestores.
+ * Entrada com usuário e senha do gestor; 5 senhas erradas travam o usuário por 15 minutos.
  */
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../lib/repasse.php';
 require_once __DIR__ . '/../../lib/vendedores.php';
 
+const PAINEL_INATIVO_MAX = 8 * 3600; // sai sozinho depois de 8 horas sem uso
+
 session_name('painel_app');
-session_start(['cookie_httponly' => true, 'cookie_secure' => !empty($_SERVER['HTTPS']), 'cookie_samesite' => 'Strict']);
+session_start(['cookie_httponly' => true, 'cookie_secure' => conexao_https(), 'cookie_samesite' => 'Strict', 'use_strict_mode' => true]);
 header('X-Frame-Options: DENY');
-header("Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; form-action 'self'");
+header('Cache-Control: no-store');
+header("Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
 
 $cfg = config();
 $_SESSION['csrf'] ??= bin2hex(random_bytes(16));
 $msg = '';
-$chaveNova = null;
+$novaSenha = null; // ['quem' => ..., 'usuario' => ..., 'senha' => ...] mostrada uma vez
 
 function confere_csrf(): void
 {
@@ -24,64 +28,144 @@ function confere_csrf(): void
         exit('Formulário expirado. Volte e tente de novo.');
     }
 }
+function csrf_campo(): string
+{
+    return '<input type="hidden" name="csrf" value="' . h($_SESSION['csrf']) . '">';
+}
 
 // ---- entrada ----
 if (isset($_POST['entrar'])) {
     confere_csrf();
-    $ok = $cfg['painel_senha_hash'] !== '' && password_verify((string)($_POST['senha'] ?? ''), $cfg['painel_senha_hash']);
-    if ($ok) {
-        session_regenerate_id(true);
-        $_SESSION['ok'] = true;
-        header('Location: ./');
-        exit;
+    $u = strtolower(trim((string)($_POST['usuario'] ?? '')));
+    $ip = ip_cliente();
+    if ($min = travado('painel:u:' . $u, 'painel:ip:' . $ip)) {
+        $msg = "Muitas tentativas erradas. Tente de novo em $min min.";
+    } else {
+        $q = db()->prepare('SELECT * FROM gestores WHERE usuario = ?');
+        $q->execute([$u]);
+        $g = $q->fetch();
+        $hash = $g['senha_hash'] ?? password_hash(gerar_chave(), PASSWORD_DEFAULT);
+        if ($g && $g['ativo'] && password_verify((string)($_POST['senha'] ?? ''), $hash)) {
+            limpar_falhas('painel:u:' . $u);
+            session_regenerate_id(true);
+            $_SESSION['gestor'] = ['id' => (int)$g['id'], 'usuario' => $g['usuario'], 'nome' => $g['nome']];
+            $_SESSION['visto'] = time();
+            db()->prepare("UPDATE gestores SET ultimo_acesso = datetime('now','localtime') WHERE id = ?")->execute([$g['id']]);
+            registrar($g['usuario'], 'entrou', $ip);
+            header('Location: ./');
+            exit;
+        }
+        anotar_falha('painel:u:' . $u, 5);
+        anotar_falha('painel:ip:' . $ip, 20);
+        sleep(1);
+        $msg = 'Usuário ou senha incorretos.';
     }
-    sleep(1);
-    $msg = 'Senha incorreta.';
 }
 if (isset($_GET['sair'])) {
+    $_SESSION = [];
     session_destroy();
     header('Location: ./');
     exit;
 }
-$logado = !empty($_SESSION['ok']);
+$gestor = $_SESSION['gestor'] ?? null;
+if ($gestor) {
+    // sessão parada há muito tempo, ou gestor bloqueado/apagado depois que entrou
+    $q = db()->prepare('SELECT ativo FROM gestores WHERE id = ?');
+    $q->execute([$gestor['id']]);
+    if (time() - (int)($_SESSION['visto'] ?? 0) > PAINEL_INATIVO_MAX || !$q->fetchColumn()) {
+        $_SESSION = [];
+        session_destroy();
+        session_start(['cookie_httponly' => true, 'cookie_secure' => conexao_https(), 'cookie_samesite' => 'Strict', 'use_strict_mode' => true]);
+        $_SESSION['csrf'] = bin2hex(random_bytes(16));
+        $gestor = null;
+        $msg = 'Sua sessão terminou. Entre de novo.';
+    } else {
+        $_SESSION['visto'] = time();
+    }
+}
+$logado = (bool)$gestor;
+$quem = $gestor['usuario'] ?? '';
 
 // ---- ações ----
 if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
     confere_csrf();
     $a = $_POST['acao'] ?? '';
     $id = (int)($_POST['id'] ?? 0);
-    if ($a === 'tentar') {
-        db()->prepare("UPDATE vendas SET status='fila', erro='', tentativas=0 WHERE id=? AND status<>'crm'")->execute([$id]);
-        $msg = 'Venda #' . $id . ' voltou para a fila.';
-    } elseif ($a === 'forcar') {
-        db()->prepare("UPDATE vendas SET status='forcar', erro='', tentativas=0 WHERE id=? AND status<>'crm'")->execute([$id]);
-        $msg = 'Venda #' . $id . ' vai ser enviada mesmo com aviso de duplicado.';
-    } elseif ($a === 'descartar') {
-        db()->prepare("UPDATE vendas SET status='descartada' WHERE id=? AND status<>'crm'")->execute([$id]);
-        $msg = 'Venda #' . $id . ' descartada (não vai para o CRM).';
-    } elseif ($a === 'enviar_agora') {
-        $r = processar_fila_com_trava(true);
-        $msg = $r ? implode(' | ', $r) : 'Nada na fila.';
-    } elseif ($a === 'vend_novo' && up($_POST['nome'] ?? '') !== '') {
-        [$vid, $chaveNova] = vendedor_novo($_POST['nome'], (string)($_POST['crm_vendedor_id'] ?? ''));
-        $chaveNova = ['nome' => up($_POST['nome']), 'chave' => $chaveNova];
-    } elseif ($a === 'vend_chave') {
-        $n = db()->query('SELECT nome FROM vendedores WHERE id=' . $id)->fetchColumn();
-        $chaveNova = ['nome' => $n, 'chave' => vendedor_nova_chave($id)];
-    } elseif ($a === 'vend_crm') {
-        db()->prepare('UPDATE vendedores SET crm_vendedor_id=? WHERE id=?')->execute([trim((string)$_POST['crm_vendedor_id']), $id]);
-        $msg = 'Vendedor atualizado.';
-    } elseif ($a === 'vend_ativo') {
-        db()->prepare('UPDATE vendedores SET ativo = 1 - ativo WHERE id=?')->execute([$id]);
-        $msg = 'Acesso do vendedor alterado.';
-    } elseif ($a === 'crm_vendedores') {
-        try {
+    try {
+        if ($a === 'tentar') {
+            db()->prepare("UPDATE vendas SET status='fila', erro='', tentativas=0 WHERE id=? AND status<>'crm'")->execute([$id]);
+            $msg = 'Venda #' . $id . ' voltou para a fila.';
+        } elseif ($a === 'forcar') {
+            db()->prepare("UPDATE vendas SET status='forcar', erro='', tentativas=0 WHERE id=? AND status<>'crm'")->execute([$id]);
+            $msg = 'Venda #' . $id . ' vai ser enviada mesmo com aviso de duplicado.';
+        } elseif ($a === 'descartar') {
+            db()->prepare("UPDATE vendas SET status='descartada' WHERE id=? AND status<>'crm'")->execute([$id]);
+            $msg = 'Venda #' . $id . ' descartada (não vai para o CRM).';
+        } elseif ($a === 'excluir') {
+            $q = db()->prepare('SELECT v.*, d.nome AS vendedor FROM vendas v JOIN vendedores d ON d.id = v.vendedor_id WHERE v.id = ?');
+            $q->execute([$id]);
+            if ($v = $q->fetch()) {
+                $pdo = db();
+                $pdo->beginTransaction();
+                $pdo->prepare('INSERT OR REPLACE INTO excluidas (id_app, nome, por) VALUES (?, ?, ?)')->execute([$v['id_app'], $v['nome'], $quem]);
+                $pdo->prepare('DELETE FROM vendas WHERE id = ?')->execute([$id]);
+                $pdo->commit();
+                registrar($quem, 'excluiu venda', "#{$v['id']} {$v['nome']} (vendedor {$v['vendedor']}, situação {$v['status']}" . ($v['crm_id'] ? ", {$v['crm_id']} no CRM" : '') . ')');
+                $msg = "Venda #{$v['id']} de {$v['nome']} excluída do painel." . ($v['status'] === 'crm' ? " Ela já tinha entrado no CRM ({$v['crm_id']}): apague lá também, se for o caso." : '');
+            }
+        } elseif ($a === 'enviar_agora') {
+            $r = processar_fila_com_trava(true);
+            $msg = $r ? implode(' | ', $r) : 'Nada na fila.';
+        } elseif ($a === 'vend_novo') {
+            $senha = gerar_senha();
+            vendedor_novo((string)($_POST['nome'] ?? ''), (string)($_POST['crm_vendedor_id'] ?? ''), (string)($_POST['usuario'] ?? ''), $senha);
+            $novaSenha = ['quem' => up($_POST['nome'] ?? ''), 'usuario' => usuario_valido((string)$_POST['usuario']), 'senha' => $senha];
+            registrar($quem, 'criou vendedor', up($_POST['nome'] ?? '') . ' (' . $novaSenha['usuario'] . ')');
+        } elseif ($a === 'vend_senha') {
+            $senha = gerar_senha();
+            vendedor_definir_acesso($id, (string)($_POST['usuario'] ?? ''), $senha);
+            $n = db()->query('SELECT nome FROM vendedores WHERE id=' . $id)->fetchColumn();
+            $novaSenha = ['quem' => $n, 'usuario' => usuario_valido((string)$_POST['usuario']), 'senha' => $senha];
+            registrar($quem, 'nova senha de vendedor', (string)$n);
+        } elseif ($a === 'vend_crm') {
+            db()->prepare('UPDATE vendedores SET crm_vendedor_id=? WHERE id=?')->execute([trim((string)$_POST['crm_vendedor_id']), $id]);
+            $msg = 'Vendedor atualizado.';
+        } elseif ($a === 'vend_ativo') {
+            db()->prepare('UPDATE vendedores SET ativo = 1 - ativo WHERE id=?')->execute([$id]);
+            vendedor_derrubar_sessoes($id);
+            registrar($quem, 'bloqueou/liberou vendedor', '#' . $id);
+            $msg = 'Acesso do vendedor alterado. Se foi bloqueio, o celular dele sai na próxima conexão.';
+        } elseif ($a === 'crm_vendedores') {
             $lista = Crm::opcoes(crm()->abrir('/novo-lead.php'), 'vendedor_id');
             file_put_contents(dirname($cfg['banco']) . '/crm-vendedores.json', json_encode($lista, JSON_UNESCAPED_UNICODE));
             $msg = count($lista) . ' vendedores carregados do CRM.';
-        } catch (Throwable $e) {
-            $msg = 'Não consegui ler os vendedores do CRM: ' . $e->getMessage();
+        } elseif ($a === 'gest_novo') {
+            $u = usuario_valido((string)($_POST['usuario'] ?? ''));
+            if ($u === '' || up($_POST['nome'] ?? '') === '') throw new RuntimeException('Preencha nome e usuário (3 a 40 letras minúsculas, números, ponto ou hífen).');
+            $q = db()->prepare('SELECT 1 FROM gestores WHERE usuario = ?');
+            $q->execute([$u]);
+            if ($q->fetchColumn()) throw new RuntimeException("Já existe o gestor \"$u\".");
+            $senha = gerar_senha();
+            db()->prepare('INSERT INTO gestores (usuario, nome, senha_hash) VALUES (?, ?, ?)')->execute([$u, up($_POST['nome']), password_hash($senha, PASSWORD_DEFAULT)]);
+            $novaSenha = ['quem' => up($_POST['nome']), 'usuario' => $u, 'senha' => $senha];
+            registrar($quem, 'criou gestor', $u);
+        } elseif ($a === 'gest_ativo' && $id !== $gestor['id']) {
+            db()->prepare('UPDATE gestores SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
+            registrar($quem, 'bloqueou/liberou gestor', '#' . $id);
+            $msg = 'Acesso do gestor alterado.';
+        } elseif ($a === 'minha_senha') {
+            $q = db()->prepare('SELECT senha_hash FROM gestores WHERE id = ?');
+            $q->execute([$gestor['id']]);
+            $nova = (string)($_POST['nova'] ?? '');
+            if (!password_verify((string)($_POST['atual'] ?? ''), (string)$q->fetchColumn())) throw new RuntimeException('A senha atual não confere.');
+            if ($p = problema_senha($nova)) throw new RuntimeException($p);
+            if ($nova !== (string)($_POST['nova2'] ?? '')) throw new RuntimeException('A confirmação não é igual à senha nova.');
+            db()->prepare('UPDATE gestores SET senha_hash = ? WHERE id = ?')->execute([password_hash($nova, PASSWORD_DEFAULT), $gestor['id']]);
+            registrar($quem, 'trocou a própria senha');
+            $msg = 'Senha trocada.';
         }
+    } catch (Throwable $e) {
+        $msg = $e instanceof ErroCrm ? 'Não consegui falar com o CRM: ' . $e->getMessage() : $e->getMessage();
     }
 }
 
@@ -95,6 +179,7 @@ if (is_file($arqV)) {
         $crmVend[$o['valor']] = $o['texto'];
     }
 }
+$aba = fn(string $k, string $t) => '<a href="?p=' . $k . '"' . ($p === $k ? ' aria-current="page"' : '') . '>' . $t . '</a>';
 ?>
 <!doctype html>
 <html lang="pt-BR">
@@ -130,54 +215,102 @@ button.pri{background:var(--brand);color:var(--brand-ink);border-color:var(--bra
 form.in{display:inline}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 details summary{cursor:pointer;color:var(--brand);font-size:12.5px}pre{white-space:pre-wrap;font:12px/1.4 var(--mono);max-width:420px;overflow-wrap:anywhere}
 .small{color:var(--muted);font-size:12.5px}
+a.bt{display:inline-block;padding:6px 11px;border-radius:6px;border:1px solid var(--line);background:var(--surface);font-weight:600;text-decoration:none}
+button.del,a.bt.del{color:var(--er);border-color:color-mix(in srgb,var(--er) 40%,var(--line))}button.del.pri{background:var(--er);color:#fff;border-color:var(--er)}
+.login{max-width:380px;display:grid;gap:8px}.login input{width:100%}h2{margin:0 0 8px;font-size:16px}
 </style>
 </head>
 <body>
 <header><div class="in"><b>Comercial + Sidnet · Painel</b>
-<?php if ($logado): ?><a href="?p=vendas" <?= $p === 'vendas' ? 'aria-current="page"' : '' ?>>Vendas</a><a href="?p=vendedores" <?= $p === 'vendedores' ? 'aria-current="page"' : '' ?>>Vendedores</a><a href="?sair=1">Sair</a><?php endif ?>
+<?php if ($logado): ?><?= $aba('vendas', 'Vendas') . $aba('vendedores', 'Vendedores') . $aba('gestores', 'Gestores') ?><a href="?sair=1">Sair (<?= h($quem) ?>)</a><?php endif ?>
 </div></header>
 <main>
-<?php if ($msg): ?><div class="msg"><?= h($msg) ?></div><?php endif ?>
+<?php if ($msg): ?><div class="msg" role="status"><?= h($msg) ?></div><?php endif ?>
+<?php if ($novaSenha): ?>
+  <div class="card"><b>Acesso de <?= h($novaSenha['quem']) ?></b><br>
+    Usuário: <span class="chave"><?= h($novaSenha['usuario']) ?></span> Senha: <span class="chave"><?= h($novaSenha['senha']) ?></span><br>
+    <span class="small">Anote e entregue agora: a senha não aparece de novo. Se perder, gere outra.</span></div>
+<?php endif ?>
 
 <?php if (!$logado): ?>
-  <form method="post" class="card row" style="max-width:420px">
-    <input type="hidden" name="csrf" value="<?= h($_SESSION['csrf']) ?>">
-    <label for="senha">Senha do painel</label>
-    <input id="senha" type="password" name="senha" autofocus required>
+  <form method="post" class="card login">
+    <?= csrf_campo() ?>
+    <h2>Entrar no painel</h2>
+    <label for="usuario">Usuário</label><input id="usuario" name="usuario" autocomplete="username" autocapitalize="none" autofocus required>
+    <label for="senha">Senha</label><input id="senha" type="password" name="senha" autocomplete="current-password" required>
     <button class="pri" name="entrar" value="1">Entrar</button>
-    <?php if ($cfg['painel_senha_hash'] === ''): ?><p class="small">Defina painel_senha_hash no config.php para entrar.</p><?php endif ?>
   </form>
 
-<?php elseif ($p === 'vendedores'): ?>
-  <?php if ($chaveNova): ?>
-    <div class="card"><b>Chave de acesso de <?= h($chaveNova['nome']) ?></b><br>
-      <span class="chave"><?= h($chaveNova['chave']) ?></span><br>
-      <span class="small">Anote agora: ela não aparece de novo. No celular: Ajustes → Chave de acesso do app.</span></div>
+<?php elseif ($p === 'excluir'):
+    $q = db()->prepare('SELECT v.*, d.nome AS vendedor FROM vendas v JOIN vendedores d ON d.id = v.vendedor_id WHERE v.id = ?');
+    $q->execute([(int)($_GET['id'] ?? 0)]);
+    $v = $q->fetch(); ?>
+  <?php if (!$v): ?><div class="msg">Essa venda não existe mais.</div><p><a href="?p=vendas">Voltar às vendas</a></p>
+  <?php else: [$rot] = $SITUACAO[$v['status']] ?? [$v['status']]; ?>
+  <form method="post" action="?p=vendas" class="card" style="max-width:560px;display:grid;gap:10px">
+    <?= csrf_campo() ?><input type="hidden" name="acao" value="excluir"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>">
+    <h2>Excluir a venda #<?= (int)$v['id'] ?>?</h2>
+    <p style="margin:0"><b><?= h($v['nome']) ?></b> · <?= h($NOMES[$v['tipo']] ?? $v['tipo']) ?> · vendedor <?= h($v['vendedor']) ?> · recebida em <?= h($v['recebido_em']) ?> · <?= h($rot) ?> <?= h($v['crm_id']) ?></p>
+    <p class="small" style="margin:0">Ela some do painel e o celular do vendedor passa a mostrar "Excluída pelo gestor". Não dá para desfazer.
+      <?php if ($v['status'] === 'crm'): ?><br><b>Ela já entrou no CRM (<?= h($v['crm_id']) ?>).</b> Excluir aqui não apaga lá: apague no CRM também, se for o caso.<?php endif ?></p>
+    <div class="row"><button class="del pri">Excluir venda</button><a href="?p=vendas">Cancelar</a></div>
+  </form>
   <?php endif ?>
+
+<?php elseif ($p === 'vendedores'): ?>
   <form method="post" class="card row">
-    <input type="hidden" name="csrf" value="<?= h($_SESSION['csrf']) ?>"><input type="hidden" name="acao" value="vend_novo">
+    <?= csrf_campo() ?><input type="hidden" name="acao" value="vend_novo">
     <label for="nome">Novo vendedor</label><input id="nome" name="nome" placeholder="NOME COMPLETO" required>
+    <label for="nusu">Usuário</label><input id="nusu" name="usuario" placeholder="ex.: hellen" autocapitalize="none" size="12" required pattern="[a-z0-9._-]{3,40}">
     <label for="crmv">Vendedor no CRM</label>
     <?php if ($crmVend): ?><select id="crmv" name="crm_vendedor_id"><option value="">escolha</option><?php foreach ($crmVend as $v => $t): ?><option value="<?= h((string)$v) ?>"><?= h($t) ?></option><?php endforeach ?></select>
     <?php else: ?><input id="crmv" name="crm_vendedor_id" placeholder="id no CRM" size="8"><?php endif ?>
-    <button class="pri">Criar e gerar chave</button>
+    <button class="pri">Criar e gerar senha</button>
   </form>
-  <form method="post" class="row"><input type="hidden" name="csrf" value="<?= h($_SESSION['csrf']) ?>"><input type="hidden" name="acao" value="crm_vendedores">
+  <form method="post" class="row"><?= csrf_campo() ?><input type="hidden" name="acao" value="crm_vendedores">
     <button>Carregar vendedores do CRM</button><span class="small">Lê a lista do campo "Vendedor" do Novo Lead. Não grava nada no CRM.</span></form>
   <div class="card tw"><table>
-    <tr><th>Vendedor</th><th>No CRM</th><th>Acesso</th><th>Último envio</th><th></th></tr>
+    <tr><th>Vendedor</th><th>Usuário e senha</th><th>No CRM</th><th>Acesso</th><th>Último uso</th><th></th></tr>
     <?php foreach (db()->query('SELECT * FROM vendedores ORDER BY ativo DESC, nome') as $v): ?>
     <tr><td><?= h($v['nome']) ?></td>
-      <td><form method="post" class="row"><input type="hidden" name="csrf" value="<?= h($_SESSION['csrf']) ?>"><input type="hidden" name="acao" value="vend_crm"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>">
+      <td><form method="post" class="row"><?= csrf_campo() ?><input type="hidden" name="acao" value="vend_senha"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>">
+        <input name="usuario" value="<?= h($v['usuario'] ?? '') ?>" placeholder="usuário" size="10" autocapitalize="none" required aria-label="Usuário de <?= h($v['nome']) ?>">
+        <button><?= ($v['usuario'] ?? '') === '' ? 'Criar acesso' : 'Gerar senha nova' ?></button></form>
+        <?php if (($v['usuario'] ?? '') === ''): ?><span class="small">Ainda usa a chave antiga. Crie usuário e senha.</span><?php endif ?></td>
+      <td><form method="post" class="row"><?= csrf_campo() ?><input type="hidden" name="acao" value="vend_crm"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>">
         <?php if ($crmVend): ?><select name="crm_vendedor_id" aria-label="Vendedor no CRM"><option value="">não ligado</option><?php foreach ($crmVend as $cv => $t): ?><option value="<?= h((string)$cv) ?>" <?= (string)$cv === $v['crm_vendedor_id'] ? 'selected' : '' ?>><?= h($t) ?></option><?php endforeach ?></select>
         <?php else: ?><input name="crm_vendedor_id" value="<?= h($v['crm_vendedor_id']) ?>" size="8" aria-label="id no CRM"><?php endif ?>
         <button>Salvar</button></form></td>
       <td><?= $v['ativo'] ? '<span class="pill ok">Ativo</span>' : '<span class="pill er">Bloqueado</span>' ?></td>
       <td class="n"><?= h($v['ultimo_uso'] ?? '—') ?></td>
-      <td class="row">
-        <form method="post" class="in"><input type="hidden" name="csrf" value="<?= h($_SESSION['csrf']) ?>"><input type="hidden" name="acao" value="vend_chave"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>"><button>Gerar chave nova</button></form>
-        <form method="post" class="in"><input type="hidden" name="csrf" value="<?= h($_SESSION['csrf']) ?>"><input type="hidden" name="acao" value="vend_ativo"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>"><button><?= $v['ativo'] ? 'Bloquear' : 'Liberar' ?></button></form>
-      </td></tr>
+      <td><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="vend_ativo"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>"><button class="<?= $v['ativo'] ? 'del' : '' ?>"><?= $v['ativo'] ? 'Bloquear' : 'Liberar' ?></button></form></td></tr>
+    <?php endforeach ?>
+  </table></div>
+  <p class="small">Senha gerada aqui é provisória e aparece uma vez só. Gerar senha nova tira o vendedor de todos os celulares em que ele estava logado.</p>
+
+<?php elseif ($p === 'gestores'): ?>
+  <div class="card tw"><table>
+    <tr><th>Gestor</th><th>Usuário</th><th>Acesso</th><th>Último acesso</th><th></th></tr>
+    <?php foreach (db()->query('SELECT * FROM gestores ORDER BY ativo DESC, nome') as $g): ?>
+    <tr><td><?= h($g['nome']) ?></td><td><?= h($g['usuario']) ?></td>
+      <td><?= $g['ativo'] ? '<span class="pill ok">Ativo</span>' : '<span class="pill er">Bloqueado</span>' ?></td><td class="n"><?= h($g['ultimo_acesso'] ?? '—') ?></td>
+      <td><?php if ((int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_ativo"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button class="<?= $g['ativo'] ? 'del' : '' ?>"><?= $g['ativo'] ? 'Bloquear' : 'Liberar' ?></button></form><?php else: ?><span class="small">você</span><?php endif ?></td></tr>
+    <?php endforeach ?>
+  </table></div>
+  <form method="post" class="card row"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_novo">
+    <label for="gnome">Novo gestor</label><input id="gnome" name="nome" placeholder="NOME" required>
+    <label for="gusu">Usuário</label><input id="gusu" name="usuario" autocapitalize="none" size="12" required pattern="[a-z0-9._-]{3,40}">
+    <button class="pri">Criar e gerar senha</button></form>
+  <form method="post" class="card login"><?= csrf_campo() ?><input type="hidden" name="acao" value="minha_senha">
+    <h2>Trocar minha senha</h2>
+    <label for="atual">Senha atual</label><input id="atual" name="atual" type="password" autocomplete="current-password" required>
+    <label for="nova">Senha nova (8+ caracteres, letras e números)</label><input id="nova" name="nova" type="password" autocomplete="new-password" minlength="8" required>
+    <label for="nova2">Repita a senha nova</label><input id="nova2" name="nova2" type="password" autocomplete="new-password" minlength="8" required>
+    <button class="pri">Trocar senha</button></form>
+  <div class="card tw"><h2>Últimas ações</h2><table>
+    <tr><th>Quando</th><th>Quem</th><th>O quê</th></tr>
+    <?php foreach (db()->query('SELECT * FROM registro ORDER BY id DESC LIMIT 40') as $l): ?>
+    <tr><td class="n"><?= h($l['em']) ?></td><td><?= h($l['quem']) ?></td><td><?= h($l['acao'] . ($l['detalhe'] !== '' ? ': ' . $l['detalhe'] : '')) ?></td></tr>
     <?php endforeach ?>
   </table></div>
 
@@ -192,7 +325,7 @@ details summary{cursor:pointer;color:var(--brand);font-size:12.5px}pre{white-spa
     <a href="?p=vendas&amp;st=fila"><span class="pill q">Na fila <?= $nFila ?></span></a>
     <a href="?p=vendas&amp;st=erro"><span class="pill er">Com erro <?= (int)($cont['erro'] ?? 0) ?></span></a>
     <a href="?p=vendas&amp;st=crm"><span class="pill ok">No CRM <?= (int)($cont['crm'] ?? 0) ?></span></a>
-    <form method="post" class="in" style="margin-left:auto"><input type="hidden" name="csrf" value="<?= h($_SESSION['csrf']) ?>"><input type="hidden" name="acao" value="enviar_agora"><button class="pri">Enviar fila ao CRM agora</button></form>
+    <form method="post" class="in" style="margin-left:auto"><?= csrf_campo() ?><input type="hidden" name="acao" value="enviar_agora"><button class="pri">Enviar fila ao CRM agora</button></form>
   </div>
   <div class="card tw"><table>
     <tr><th>#</th><th>Recebido</th><th>Tipo</th><th>Cliente</th><th>Vendedor</th><th>CRM</th><th></th></tr>
@@ -204,10 +337,11 @@ details summary{cursor:pointer;color:var(--brand);font-size:12.5px}pre{white-spa
       <td><?= h($v['vendedor']) ?></td>
       <td><span class="pill <?= $cls ?>"><?= h($rot) ?></span> <?= h($v['crm_id']) ?><?php if ($v['erro']): ?><div class="err"><?= h($v['erro']) ?></div><?php endif ?></td>
       <td class="row"><?php if (in_array($v['status'], ['erro', 'tentar'], true)): ?>
-        <form method="post" class="in"><input type="hidden" name="csrf" value="<?= h($_SESSION['csrf']) ?>"><input type="hidden" name="acao" value="tentar"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>"><button>Tentar de novo</button></form>
-        <?php if (stripos($v['erro'], 'duplicado') !== false): ?><form method="post" class="in"><input type="hidden" name="csrf" value="<?= h($_SESSION['csrf']) ?>"><input type="hidden" name="acao" value="forcar"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>"><button>Enviar mesmo assim</button></form><?php endif ?>
-        <form method="post" class="in"><input type="hidden" name="csrf" value="<?= h($_SESSION['csrf']) ?>"><input type="hidden" name="acao" value="descartar"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>"><button>Descartar</button></form>
-      <?php endif ?></td></tr>
+        <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="tentar"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>"><button>Tentar de novo</button></form>
+        <?php if (stripos($v['erro'], 'duplicado') !== false): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="forcar"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>"><button>Enviar mesmo assim</button></form><?php endif ?>
+        <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="descartar"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>"><button>Descartar</button></form>
+      <?php endif ?>
+        <a class="bt del" href="?p=excluir&amp;id=<?= (int)$v['id'] ?>">Excluir</a></td></tr>
     <?php endforeach ?>
   </table></div>
 <?php endif ?>

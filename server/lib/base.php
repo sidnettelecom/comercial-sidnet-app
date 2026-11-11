@@ -66,7 +66,129 @@ function criar_tabelas(PDO $pdo): void
         enviado_crm_em TEXT
     );
     CREATE INDEX IF NOT EXISTS vendas_status ON vendas(status);
+    -- sessões do app: cada login no celular gera um token; guardamos só o hash
+    CREATE TABLE IF NOT EXISTS sessoes (
+        token_hash TEXT PRIMARY KEY,
+        vendedor_id INTEGER NOT NULL REFERENCES vendedores(id) ON DELETE CASCADE,
+        aparelho TEXT NOT NULL DEFAULT '',
+        criado_em TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        ultimo_uso TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    -- quem entra no painel
+    CREATE TABLE IF NOT EXISTS gestores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario TEXT NOT NULL UNIQUE,
+        nome TEXT NOT NULL,
+        senha_hash TEXT NOT NULL,
+        ativo INTEGER NOT NULL DEFAULT 1,
+        criado_em TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        ultimo_acesso TEXT
+    );
+    -- tentativas de senha erradas, para travar quem fica chutando
+    CREATE TABLE IF NOT EXISTS tentativas (
+        chave TEXT PRIMARY KEY,
+        falhas INTEGER NOT NULL DEFAULT 0,
+        primeira TEXT NOT NULL,
+        travado_ate TEXT
+    );
+    -- vendas excluídas pelo gestor: o celular não consegue mandar de novo
+    CREATE TABLE IF NOT EXISTS excluidas (
+        id_app TEXT PRIMARY KEY,
+        nome TEXT NOT NULL,
+        por TEXT NOT NULL,
+        em TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+    );
+    -- registro do que os gestores fazem no painel
+    CREATE TABLE IF NOT EXISTS registro (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        em TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+        quem TEXT NOT NULL,
+        acao TEXT NOT NULL,
+        detalhe TEXT NOT NULL DEFAULT ''
+    );
     SQL);
+    // vendedores ganham usuário e senha (antes era só a chave)
+    $cols = array_column($pdo->query('PRAGMA table_info(vendedores)')->fetchAll(), 'name');
+    if (!in_array('usuario', $cols, true)) {
+        $pdo->exec("ALTER TABLE vendedores ADD COLUMN usuario TEXT");
+        $pdo->exec("ALTER TABLE vendedores ADD COLUMN senha_hash TEXT NOT NULL DEFAULT ''");
+        $pdo->exec("CREATE UNIQUE INDEX IF NOT EXISTS vendedores_usuario ON vendedores(usuario)");
+    }
+    // primeiro gestor: "admin" com a senha do painel que já estava na configuração
+    if ((int)$pdo->query('SELECT COUNT(*) FROM gestores')->fetchColumn() === 0) {
+        $hash = (string)(config()['painel_senha_hash'] ?? '');
+        if ($hash !== '') {
+            $pdo->prepare("INSERT INTO gestores (usuario, nome, senha_hash) VALUES ('admin', 'ADMINISTRADOR', ?)")->execute([$hash]);
+        }
+    }
+}
+
+/** IP de quem acessa. Atrás do Cloudflare Tunnel o nginx vê 127.0.0.1; o IP real vem no cabeçalho do Cloudflare. */
+function ip_cliente(): string
+{
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+    if (in_array($ip, ['127.0.0.1', '::1'], true) && !empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+        $ip = (string)$_SERVER['HTTP_CF_CONNECTING_IP'];
+    }
+    return substr($ip, 0, 64);
+}
+
+/** true se a conexão do usuário é https (direto ou pelo Cloudflare) */
+function conexao_https(): bool
+{
+    return !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'
+        || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'
+        || str_contains((string)($_SERVER['HTTP_CF_VISITOR'] ?? ''), 'https');
+}
+
+/**
+ * Trava contra quem fica chutando senha: 5 erros em 15 minutos travam por 15 minutos,
+ * por usuário e por IP (20 erros no mesmo IP).
+ * Devolve quantos minutos faltam se estiver travado, ou 0.
+ */
+function travado(string ...$chaves): int
+{
+    $q = db()->prepare("SELECT travado_ate FROM tentativas WHERE chave = ? AND travado_ate > datetime('now','localtime')");
+    foreach ($chaves as $c) {
+        $q->execute([$c]);
+        if ($ate = $q->fetchColumn()) {
+            return max(1, (int)ceil((strtotime((string)$ate) - time()) / 60));
+        }
+    }
+    return 0;
+}
+
+function anotar_falha(string $chave, int $limite): void
+{
+    $pdo = db();
+    $pdo->prepare("DELETE FROM tentativas WHERE chave = ? AND primeira < datetime('now','localtime','-15 minutes') AND (travado_ate IS NULL OR travado_ate < datetime('now','localtime'))")->execute([$chave]);
+    $pdo->prepare("INSERT INTO tentativas (chave, falhas, primeira) VALUES (?, 1, datetime('now','localtime')) ON CONFLICT(chave) DO UPDATE SET falhas = falhas + 1")->execute([$chave]);
+    $pdo->prepare("UPDATE tentativas SET travado_ate = datetime('now','localtime','+15 minutes') WHERE chave = ? AND falhas >= ?")->execute([$chave, $limite]);
+}
+
+function limpar_falhas(string $chave): void
+{
+    db()->prepare('DELETE FROM tentativas WHERE chave = ?')->execute([$chave]);
+}
+
+function registrar(string $quem, string $acao, string $detalhe = ''): void
+{
+    db()->prepare('INSERT INTO registro (quem, acao, detalhe) VALUES (?, ?, ?)')->execute([$quem, $acao, $detalhe]);
+}
+
+/** Senha boa o bastante: 8+ caracteres, com letra e número. Devolve o problema ou ''. */
+function problema_senha(string $s): string
+{
+    if (mb_strlen($s) < 8) return 'A senha precisa ter pelo menos 8 caracteres.';
+    if (!preg_match('/[A-Za-z]/', $s) || !preg_match('/\d/', $s)) return 'A senha precisa ter letras e números.';
+    return '';
+}
+
+/** Usuário: letras minúsculas, números, ponto, hífen ou sublinhado. */
+function usuario_valido(string $u): string
+{
+    $u = strtolower(trim($u));
+    return preg_match('/^[a-z0-9._-]{3,40}$/', $u) ? $u : '';
 }
 
 /** Texto em maiúsculas, sem espaços duplicados (o mesmo padrão do app). */

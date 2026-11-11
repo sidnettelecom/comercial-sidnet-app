@@ -2,17 +2,20 @@
 /**
  * API que o app "Comercial + Sidnet" chama.
  *
- *   POST /api/app-vendas.php?acao=enviar   (Authorization: Bearer <chave do vendedor>)
+ *   POST /api/app-vendas.php?acao=login    {usuario, senha, aparelho} -> {ok, token, nome}
+ *   POST /api/app-vendas.php?acao=sair     encerra o login deste celular
+ *   POST /api/app-vendas.php?acao=enviar   (Authorization: Bearer <token do login>)
  *        {id_app, tipo: venda|segundo|upgrade, registro:{...campos do app...}}
- *        -> {ok:true, id:"Recebido #12"}  (o repasse ao CRM acontece logo depois, pelo cron)
+ *        -> {ok:true, id:"Recebido #12"}  e logo em seguida o servidor manda ao CRM
  *   GET  /api/app-vendas.php?acao=status&ids=a,b,c   -> situação no CRM de cada cadastro
- *   GET  /api/app-vendas.php?acao=eu                  -> confere a chave, devolve o nome do vendedor
+ *   GET  /api/app-vendas.php?acao=eu                  -> confere o login, devolve o nome do vendedor
  *
  * Reenviar o mesmo id_app não duplica: devolve o que já foi recebido.
  */
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../lib/repasse.php';
+require_once __DIR__ . '/../../lib/vendedores.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *'); // o app roda num WebView, com origem própria
@@ -54,20 +57,29 @@ function responder_e_repassar(array $corpo): never
     exit;
 }
 
+/** Vendedor dono do token de login (ou da chave antiga, para celulares ainda não atualizados). */
 function vendedor_da_chave(): array
 {
     $h = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
     if (!preg_match('/^Bearer\s+([A-Za-z0-9]{20,64})$/', $h, $m)) {
-        responder(401, ['ok' => false, 'erro' => 'Coloque sua chave de acesso em Ajustes.']);
+        responder(401, ['ok' => false, 'erro' => 'Entre com seu usuário e senha.', 'login' => true]);
     }
-    $q = db()->prepare('SELECT * FROM vendedores WHERE chave_hash = ?');
-    $q->execute([hash('sha256', $m[1])]);
+    $hash = hash('sha256', $m[1]);
+    $q = db()->prepare('SELECT v.* FROM sessoes s JOIN vendedores v ON v.id = s.vendedor_id WHERE s.token_hash = ?');
+    $q->execute([$hash]);
     $v = $q->fetch();
+    if ($v) {
+        db()->prepare("UPDATE sessoes SET ultimo_uso = datetime('now','localtime') WHERE token_hash = ?")->execute([$hash]);
+    } else {
+        $q = db()->prepare('SELECT * FROM vendedores WHERE chave_hash = ?');
+        $q->execute([$hash]);
+        $v = $q->fetch();
+    }
     if (!$v) {
-        responder(401, ['ok' => false, 'erro' => 'Chave de acesso inválida. Peça uma nova ao supervisor.']);
+        responder(401, ['ok' => false, 'erro' => 'Sua sessão terminou. Entre de novo com usuário e senha.', 'login' => true]);
     }
     if (!$v['ativo']) {
-        responder(403, ['ok' => false, 'erro' => 'Seu acesso está bloqueado. Fale com o supervisor.']);
+        responder(403, ['ok' => false, 'erro' => 'Seu acesso está bloqueado. Fale com o gestor.', 'login' => true]);
     }
     db()->prepare("UPDATE vendedores SET ultimo_uso = datetime('now','localtime') WHERE id = ?")->execute([$v['id']]);
     return $v;
@@ -84,7 +96,25 @@ function situacao(array $v): array
 
 try {
     $acao = $_GET['acao'] ?? '';
+
+    if ($acao === 'login' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        $in = json_decode(file_get_contents('php://input') ?: '', true);
+        try {
+            [$v, $token] = vendedor_login((string)($in['usuario'] ?? ''), (string)($in['senha'] ?? ''), (string)($in['aparelho'] ?? ''));
+        } catch (RuntimeException $e) {
+            usleep(400000);
+            responder(401, ['ok' => false, 'erro' => $e->getMessage()]);
+        }
+        responder(200, ['ok' => true, 'token' => $token, 'nome' => $v['nome'], 'usuario' => $v['usuario']]);
+    }
+
     $vend = vendedor_da_chave();
+
+    if ($acao === 'sair' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        $h = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        db()->prepare('DELETE FROM sessoes WHERE token_hash = ?')->execute([hash('sha256', trim(substr($h, 7)))]);
+        responder(200, ['ok' => true]);
+    }
 
     if ($acao === 'eu') {
         responder(200, ['ok' => true, 'nome' => $vend['nome']]);
@@ -99,6 +129,11 @@ try {
             $q->execute(array_merge([$vend['id']], $ids));
             foreach ($q->fetchAll() as $v) {
                 $res[$v['id_app']] = situacao($v);
+            }
+            $q = db()->prepare("SELECT id_app FROM excluidas WHERE id_app IN ($marcas)");
+            $q->execute($ids);
+            foreach ($q->fetchAll(PDO::FETCH_COLUMN) as $idx) {
+                $res[$idx] = ['st' => 'er', 'msg' => 'Excluída pelo gestor no painel.', 'excluida' => true];
             }
         }
         responder(200, ['ok' => true, 'status' => $res]);
@@ -120,6 +155,12 @@ try {
         $dados = json_encode($reg, JSON_UNESCAPED_UNICODE);
         if (strlen($dados) > 64000) {
             responder(413, ['ok' => false, 'erro' => 'Cadastro grande demais.']);
+        }
+
+        $q = db()->prepare('SELECT 1 FROM excluidas WHERE id_app = ?');
+        $q->execute([$idApp]);
+        if ($q->fetchColumn()) {
+            responder(410, ['ok' => false, 'erro' => 'Esta venda foi excluída pelo gestor no painel.']);
         }
 
         $q = db()->prepare('SELECT * FROM vendas WHERE id_app = ?');

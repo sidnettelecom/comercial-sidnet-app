@@ -2,6 +2,8 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' https://comercial.sidnet.com.br https://viacep.com.br; form-action 'self'; base-uri 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -169,7 +171,27 @@ pre.preview{white-space:pre-wrap;word-break:break-word;background:var(--bg);bord
 .small{font-size:12.5px;color:var(--muted)}
 h2.sec{font:700 17px/1.2 var(--f-display);margin:2px 0 12px}
 @media (prefers-reduced-motion:no-preference){.toast{animation:up .2s ease-out}@keyframes up{from{opacity:0;transform:translate(-50%,8px)}}}
+/* tela de login: cobre o app inteiro até o vendedor entrar */
+.gate{position:fixed;inset:0;z-index:50;background:var(--bg);display:grid;place-items:center;padding:24px 16px;overflow:auto}
+.gate form{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:22px 18px;display:grid;gap:12px}
+.gate h1{font:700 21px/1.2 var(--f-display);margin:0;color:var(--brand)}.gate p{margin:0}
+.gate .erro{color:var(--err);font-weight:600;min-height:1.2em}
+.gate input{width:100%}
+body.travado>*:not(.gate):not(.toast){visibility:hidden}
 </style>
+
+<div class="gate" id="gate" hidden>
+  <form id="loginForm" novalidate autocomplete="on">
+    <h1>Comercial + Sidnet</h1>
+    <p class="small">Entre com o usuário e a senha que o gestor passou para você.</p>
+    <div class="f"><label for="lgUser">Usuário</label><input id="lgUser" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
+    <div class="f"><label for="lgPass">Senha</label><input id="lgPass" type="password" autocomplete="current-password"></div>
+    <p class="erro" id="lgErro" role="alert"></p>
+    <button type="submit" class="btn primary" id="lgBtn" style="width:100%">Entrar</button>
+    <p class="small" id="lgOff" hidden>Sem internet: dá para entrar com a última senha usada neste celular.</p>
+    <details><summary class="small">Servidor</summary><div class="f" style="margin-top:8px"><label for="lgSrv">Endereço do servidor do app</label><input id="lgSrv" class="mono" inputmode="url" autocapitalize="none"></div></details>
+  </form>
+</div>
 
 <header class="top">
   <div class="row">
@@ -461,14 +483,14 @@ h2.sec{font:700 17px/1.2 var(--f-display);margin:2px 0 12px}
   <form id="cfg" novalidate>
     <fieldset>
       <legend>Quem está vendendo</legend>
-      <div class="f"><label for="cfgVend" class="req">Seu nome (vendedor)</label><input id="cfgVend" autocapitalize="characters"></div>
+      <div class="f"><label for="cfgVend">Seu nome (vendedor)</label><input id="cfgVend" readonly aria-readonly="true"><span class="hint">Vem do seu login.</span></div>
       <div class="f"><label for="cfgSup">Supervisor</label><input id="cfgSup" autocapitalize="characters"></div>
     </fieldset>
     <fieldset>
-      <legend>Integração com o CRM</legend>
-      <div class="f"><label for="cfgCrmUrl">Endereço do servidor do app</label><input id="cfgCrmUrl" class="mono" inputmode="url" autocapitalize="none" placeholder="https://app.sidnet.com.br"></div>
-      <div class="f"><label for="cfgChave">Chave de acesso do app</label><input id="cfgChave" class="mono" autocapitalize="none" placeholder="vazio = modo demonstração"></div>
-      <span class="hint">O supervisor gera a sua chave no painel. Com a chave, o app manda os cadastros sozinho quando tiver internet, e o servidor coloca no CRM.</span>
+      <legend>Sua conta</legend>
+      <p style="margin:0" id="contaTxt"></p>
+      <span class="hint">Os cadastros vão sozinhos para o servidor quando houver internet, e o servidor coloca no CRM. O app pede a senha de novo a cada 12 horas.</span>
+      <button type="button" class="btn" id="btnSair" style="width:100%">Sair desta conta</button>
     </fieldset>
     <fieldset>
       <legend>Envio pelo WhatsApp (opcional)</legend>
@@ -550,7 +572,7 @@ var $=function(id){return document.getElementById(id)};
 var DEF_PLANOS=["PLANO PROMOCIONAL 600MB"];var PRECOS={"PLANO PROMOCIONAL 600MB":109.90};
 var cfg=load(K.cfg,{vend:"",sup:"",wa:"",planos:DEF_PLANOS,crmUrl:"",empresa:"3",crmUser:""});
 if(!cfg.empresa)cfg.empresa="3";
-if(!cfg.crmUrl&&/^https:$/.test(location.protocol))cfg.crmUrl=location.origin;
+if(!cfg.crmUrl)cfg.crmUrl=/^https:$/.test(location.protocol)?location.origin:"https://comercial.sidnet.com.br";
 if(!cfg.planos||!cfg.planos.length)cfg.planos=DEF_PLANOS;
 var recs=load(K.recs,[]);
 var editingId=null;
@@ -586,14 +608,14 @@ $("btnNet").addEventListener("click",function(){demoOff=!demoOff;this.textConten
 /* ---------- ajustes ---------- */
 function renderCfg(){
   $("who").textContent=cfg.vend?(cfg.vend+(cfg.sup?" · Sup. "+cfg.sup:"")):"Configure seu nome em Ajustes";
-  $("cfgVend").value=cfg.vend||"";$("cfgCrmUrl").value=cfg.crmUrl||"";$("cfgChave").value=cfg.chave||"";$("cfgSup").value=cfg.sup||"";$("cfgWa").value=cfg.wa?fmtTel(cfg.wa):"";$("cfgPlanos").value=cfg.planos.join("\n");
+  $("cfgVend").value=cfg.vend||"";$("contaTxt").innerHTML=cfg.usuario?"Entrou como <b>"+esc(cfg.vend)+"</b> (usuário "+esc(cfg.usuario)+")":"";$("cfgSup").value=cfg.sup||"";$("cfgWa").value=cfg.wa?fmtTel(cfg.wa):"";$("cfgPlanos").value=cfg.planos.join("\n");
   var sel=$("plano"),cur=sel.value;sel.innerHTML='<option value="">Escolha o plano…</option>'+cfg.planos.map(function(p){return'<option>'+esc(p)+'</option>'}).join("");
   if(cur&&cfg.planos.indexOf(cur)<0){var o=document.createElement("option");o.textContent=cur;sel.appendChild(o)}sel.value=cur;
 }
 $("cfgWa").addEventListener("input",function(){this.value=fmtTel(this.value)});
 $("cfg").addEventListener("submit",function(e){e.preventDefault();
   var pl=$("cfgPlanos").value.split("\n").map(up).filter(Boolean);
-  cfg={vend:up($("cfgVend").value),sup:up($("cfgSup").value),wa:dig($("cfgWa").value),planos:pl.length?pl:DEF_PLANOS,crmUrl:$("cfgCrmUrl").value.trim().replace(/\/$/,""),empresa:cfg.empresa,crmUser:cfg.crmUser,chave:$("cfgChave").value.trim()};DEMO=!cfg.chave;$("demoBar").hidden=!DEMO;
+  cfg={vend:cfg.vend,sup:up($("cfgSup").value),wa:dig($("cfgWa").value),planos:pl.length?pl:DEF_PLANOS,crmUrl:cfg.crmUrl,empresa:cfg.empresa,crmUser:cfg.crmUser,chave:cfg.chave,usuario:cfg.usuario,verif:cfg.verif,entrou:cfg.entrou};cfg.vend=cfg.vend||up($("cfgVend").value);
   save(K.cfg,cfg);renderCfg();toast("Ajustes salvos")});
 
 /* ---------- abas ---------- */
@@ -1004,7 +1026,7 @@ $("btnExemplo").addEventListener("click",function(){
 
 
 /* ---------- integração com o CRM: fila offline + envio automático ---------- */
-var DEMO=!cfg.chave; /* sem chave de acesso o app roda em demonstração; com chave, envia de verdade para a API do CRM */
+var DEMO=false; /* o app só abre depois do login; a demonstração ficou no protótipo */
 if(!DEMO)$("demoBar").hidden=true;
 var EMPRESAS={"3":"Sidnet","2":"AG Link Telecom","10":"Gd Net Fibra","1":"Gns Telecom","4":"Live Net"};
 var ufDDD={"31":"MG","32":"MG","33":"MG","34":"MG","35":"MG","37":"MG","38":"MG","27":"ES","28":"ES"};
@@ -1080,20 +1102,20 @@ function enviarCRM(r){
   var reg=Object.assign({},r);delete reg.midias;delete reg.crm;
   return fetch(cfg.crmUrl+"/api/app-vendas.php?acao=enviar",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+cfg.chave},
     body:JSON.stringify({id_app:r.id,tipo:r.tipo||"venda",registro:reg,atualizar:!!r.crm.atualizar})})
-    .then(function(res){return res.json().catch(function(){throw new Error("O servidor respondeu "+res.status)}).then(function(j){if(!res.ok||!j.ok){var e=new Error(j.erro||("O servidor respondeu "+res.status));e.fim=res.status===401||res.status===403||res.status===409||res.status===422;throw e}return j})});
+    .then(function(res){return res.json().catch(function(){throw new Error("O servidor respondeu "+res.status)}).then(function(j){if(!res.ok||!j.ok){var e=new Error(j.erro||("O servidor respondeu "+res.status));if(j.login){e.fim=false;travar(j.erro,true);throw e}e.fim=res.status===403||res.status===409||res.status===410||res.status===422;throw e}return j})});
 }
 /* cadastros que já estão no servidor e esperam o CRM: pergunta a situação */
 function consultarServidor(){
-  if(DEMO||!online())return;var L=recs.filter(function(r){return r.crm&&r.crm.st==="srv"});if(!L.length)return;
+  if(DEMO||!online()||travadoAgora())return;var L=recs.filter(function(r){return r.crm&&r.crm.st==="srv"});if(!L.length)return;
   fetch(cfg.crmUrl+"/api/app-vendas.php?acao=status&ids="+L.map(function(r){return r.id}).join(","),{headers:{"Authorization":"Bearer "+cfg.chave}})
-    .then(function(res){return res.json()}).then(function(j){if(!j.ok)return;var mud=false;
-      L.forEach(function(r){var s=j.status[r.id];if(!s)return;if(s.st==="ok"){r.crm={st:"ok",crmId:s.crmId,em:agora(),tent:0};mud=true}else if(s.st==="er"){r.crm={st:"er",msg:s.msg,tent:5,srv:true};mud=true}});
+    .then(function(res){return res.json()}).then(function(j){if(!j.ok){if(j.login)travar(j.erro,true);return}var mud=false;
+      L.forEach(function(r){var s=j.status[r.id];if(!s)return;if(s.st==="ok"){r.crm={st:"ok",crmId:s.crmId,em:agora(),tent:0};mud=true}else if(s.st==="er"){r.crm={st:"er",msg:s.msg,tent:5,srv:true,excluida:!!s.excluida};mud=true}});
       if(mud){save(K.recs,recs);renderBadge();if(!$("v-hist").hidden)renderLista();if(atual)renderCrmBox()}}).catch(function(){});
 }
 setInterval(consultarServidor,30000);
 var enviando=false;
 function sincronizar(){
-  if(enviando||!online()){renderSync();return}
+  if(enviando||!online()||travadoAgora()){renderSync();return}
   var fila=recs.filter(function(r){return r.crm&&(r.crm.st==="fila"||(r.crm.st==="er"&&r.crm.tent<5))}).reverse();
   if(!fila.length){renderSync();return}
   enviando=true;renderSync();
@@ -1121,7 +1143,62 @@ if(DEMO&&!recs.length&&!load("cadvendas.semeado",false)){
   save(K.recs,recs);save("cadvendas.semeado",true);
 }
 
+/* ---------- login ---------- */
+var SESSAO_HORAS=12;
+function travadoAgora(){return document.body.classList.contains("travado")}
+function sessaoValida(){return !!(cfg.chave&&cfg.usuario&&cfg.entrou&&Date.now()-cfg.entrou<SESSAO_HORAS*3600e3)}
+function hex(b){return Array.prototype.map.call(new Uint8Array(b),function(x){return("0"+x.toString(16)).slice(-2)}).join("")}
+/* guarda no celular só uma "impressão" da senha (PBKDF2), para poder entrar sem internet; a senha em si não fica salva */
+function impressao(usuario,senha,sal){
+  if(!(window.crypto&&crypto.subtle))return Promise.resolve("");
+  var enc=new TextEncoder();
+  return crypto.subtle.importKey("raw",enc.encode(senha),"PBKDF2",false,["deriveBits"]).then(function(k){
+    return crypto.subtle.deriveBits({name:"PBKDF2",salt:enc.encode(sal+"|"+usuario),iterations:150000,hash:"SHA-256"},k,256)}).then(hex);
+}
+function travar(msg,recusado){
+  if(travadoAgora())return;
+  cfg.chave="";cfg.entrou=0;if(recusado){cfg.chaveOff="";cfg.verif=""} // recusado pelo servidor: só entra de novo com internet
+  save(K.cfg,cfg);
+  document.body.classList.add("travado");$("gate").hidden=false;$("lgErro").textContent=msg||"";
+  $("lgUser").value=cfg.usuario||"";$("lgPass").value="";$("lgSrv").value=cfg.crmUrl||"";
+  $("lgOff").hidden=online()||!cfg.verif;setTimeout(function(){(cfg.usuario?$("lgPass"):$("lgUser")).focus()},50);
+}
+function destravar(){document.body.classList.remove("travado");$("gate").hidden=true;$("lgPass").value="";renderCfg();setTimeout(sincronizar,500)}
+$("loginForm").addEventListener("submit",function(e){e.preventDefault();
+  var u=$("lgUser").value.trim().toLowerCase(),p=$("lgPass").value,srv=$("lgSrv").value.trim().replace(/\/$/,"")||cfg.crmUrl;
+  if(!u||!p){$("lgErro").textContent="Preencha usuário e senha.";return}
+  $("lgBtn").disabled=true;$("lgErro").textContent="";$("lgBtn").textContent="Entrando…";
+  function fim(){$("lgBtn").disabled=false;$("lgBtn").textContent="Entrar"}
+  if(!online()){
+    /* sem internet: confere com a impressão da última senha usada aqui */
+    if(!cfg.verif||u!==cfg.usuario||!cfg.chaveOff){fim();$("lgErro").textContent="Sem internet. Para entrar a primeira vez neste celular, conecte à internet.";return}
+    impressao(u,p,cfg.sal).then(function(v){fim();if(v&&v===cfg.verif){cfg.chave=cfg.chaveOff;cfg.entrou=Date.now();save(K.cfg,cfg);destravar();toast("Entrou sem internet. Os cadastros vão quando conectar.")}else $("lgErro").textContent="Usuário ou senha incorretos."});
+    return;
+  }
+  fetch(srv+"/api/app-vendas.php?acao=login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({usuario:u,senha:p,aparelho:navigator.userAgent.slice(0,120)})})
+    .then(function(res){return res.json().catch(function(){throw new Error("O servidor respondeu "+res.status)})})
+    .then(function(j){
+      if(!j.ok){fim();$("lgErro").textContent=j.erro||"Não deu para entrar.";return}
+      var trocou=cfg.usuario&&cfg.usuario!==u;
+      var sal=hex(crypto.getRandomValues(new Uint8Array(16)));
+      return impressao(u,p,sal).then(function(v){
+        cfg.crmUrl=srv;cfg.chave=j.token;cfg.chaveOff=j.token;cfg.usuario=u;cfg.vend=j.nome;cfg.sal=sal;cfg.verif=v;cfg.entrou=Date.now();
+        save(K.cfg,cfg);fim();destravar();toast(trocou?"Entrou como "+j.nome+". O histórico deste celular continua aqui.":"Bem-vindo, "+j.nome);
+      });
+    }).catch(function(){fim();$("lgErro").textContent="Não deu para falar com o servidor. Confira a internet e tente de novo."});
+});
+$("btnSair").addEventListener("click",function(){
+  var pend=recs.filter(function(r){return r.crm&&r.crm.st!=="ok"&&r.crm.st!=="wa"&&!r.crm.excluida}).length;
+  if(pend&&!confirm(pend+" cadastro(s) ainda não foram para o CRM. Eles ficam guardados e vão quando você entrar de novo. Sair mesmo assim?"))return;
+  var t=cfg.chave;
+  if(t&&online())fetch(cfg.crmUrl+"/api/app-vendas.php?acao=sair",{method:"POST",headers:{"Authorization":"Bearer "+t}}).catch(function(){});
+  cfg.chave="";cfg.chaveOff="";cfg.verif="";cfg.entrou=0;save(K.cfg,cfg);travar("");
+});
+/* volta do segundo plano depois de 12 horas: pede a senha de novo */
+document.addEventListener("visibilitychange",function(){if(!document.hidden&&!travadoAgora()&&!sessaoValida())travar("Por segurança, entre de novo.")});
+
 /* ---------- início ---------- */
+if(!sessaoValida())travar(cfg.usuario&&cfg.entrou?"Por segurança, entre de novo.":"");
 renderCfg();renderBadge();renderListas();setTimeout(sincronizar,1500);
 try{$("versao").textContent="Versão "+(APP&&APP.version?APP.version()+" (aplicativo Android)":"2.0 (navegador)")}catch(e){}
 var d=load(K.draft,null);if(d&&d.f){editingId=d.id||null;setForm(d.f)}
