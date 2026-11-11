@@ -272,6 +272,8 @@ th{background:transparent}tr:hover td{background:color-mix(in srgb,var(--brand) 
 body.fora .msg{margin-bottom:12px}
 td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2px 0 2px 4px;vertical-align:middle}
 </style>
+<style>.senha-box{position:relative;display:block}.senha-box input{width:100%;box-sizing:border-box;padding-right:48px}.olho{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:40px;height:40px;border:0!important;background:transparent!important;box-shadow:none!important;color:#475569;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;padding:0}.olho:hover{background:#eef2ff}.olho .risco{display:none}.olho[aria-pressed="true"] .risco{display:inline}</style>
+<script src="/painel/olho.js" defer></script>
 </head>
 <body class="<?= $logado ? 'dentro' : 'fora' ?>">
 <?php if ($logado):

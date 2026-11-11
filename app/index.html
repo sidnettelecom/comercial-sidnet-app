@@ -252,6 +252,7 @@ body.travado>*:not(.gate):not(.toast){visibility:hidden}
 .gate input:focus{box-shadow:0 0 0 3px #22d3ee}
 .gate .erro{color:#fecdd3}
 .gate .btn.primary{background:var(--g-cta);color:#1c1203;border:0;height:54px;border-radius:16px;font-weight:800;font-size:17px;box-shadow:0 10px 24px rgba(249,115,22,.4)}
+.senha-box{position:relative}.senha-box input{width:100%;padding-right:52px}.olho{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:44px;height:44px;border:0;background:transparent;color:#475569;display:flex;align-items:center;justify-content:center;border-radius:10px;cursor:pointer}.olho .risco{display:none}.olho[aria-pressed="true"] .risco{display:inline}
 .gate .logo-gate{width:170px;height:170px;background:#fff;border-radius:40px;padding:6px;box-shadow:0 12px 30px rgba(0,0,0,.25)}
 </style>
 
@@ -261,7 +262,7 @@ body.travado>*:not(.gate):not(.toast){visibility:hidden}
     <h1>Comercial + Sidnet</h1>
     <p class="small">Entre com o usuário e a senha que o gestor passou para você.</p>
     <div class="f"><label for="lgUser">Usuário</label><input id="lgUser" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"></div>
-    <div class="f"><label for="lgPass">Senha</label><input id="lgPass" type="password" autocomplete="current-password"></div>
+    <div class="f"><label for="lgPass">Senha</label><div class="senha-box"><input id="lgPass" type="password" autocomplete="current-password"><button type="button" class="olho" id="lgOlho" aria-label="Mostrar senha" aria-pressed="false"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path class="risco" d="M4 4l16 16"/></svg></button></div></div>
     <p class="erro" id="lgErro" role="alert"></p>
     <button type="submit" class="btn primary" id="lgBtn" style="width:100%">Entrar</button>
     <p class="small" id="lgOff" hidden>Sem internet: dá para entrar com a última senha usada neste celular.</p>
@@ -649,7 +650,13 @@ var $=function(id){return document.getElementById(id)};
 var DEF_PLANOS=["PLANO PROMOCIONAL 600MB"];var PRECOS={"PLANO PROMOCIONAL 600MB":109.90};
 var cfg=load(K.cfg,{vend:"",sup:"",wa:"",planos:DEF_PLANOS,crmUrl:"",empresa:"3",crmUser:""});
 if(!cfg.empresa)cfg.empresa="3";
-if(!cfg.crmUrl)cfg.crmUrl=/^https:$/.test(location.protocol)?location.origin:"https://comercial.sidnet.com.br";
+var SRV_PADRAO="https://comercial.sidnet.com.br";
+/* No APK a página é servida por https://appassets.androidplatform.net, que não é o servidor */
+function servidorDaPagina(){return /^https:$/.test(location.protocol)&&!/androidplatform\.net$/.test(location.hostname)?location.origin:SRV_PADRAO}
+/* Aceita "comercial.sidnet.com.br", com /painel, com barra no fim etc. e devolve só https://host */
+function normalizarServidor(v){v=String(v||"").trim();if(!v)return "";if(!/^https?:\/\//i.test(v))v="https://"+v;var m=v.match(/^(https?:\/\/[^\/?#\s]+)/i);return m?m[1].toLowerCase():""}
+cfg.crmUrl=normalizarServidor(cfg.crmUrl);
+if(!cfg.crmUrl||/androidplatform\.net/.test(cfg.crmUrl))cfg.crmUrl=servidorDaPagina();
 if(!cfg.planos||!cfg.planos.length)cfg.planos=DEF_PLANOS;
 var recs=load(K.recs,[]);
 var editingId=null;
@@ -1249,9 +1256,10 @@ function travar(msg,recusado){
   $("lgUser").value=cfg.usuario||"";$("lgPass").value="";$("lgSrv").value=cfg.crmUrl||"";
   $("lgOff").hidden=online()||!cfg.verif;setTimeout(function(){(cfg.usuario?$("lgPass"):$("lgUser")).focus()},50);
 }
-function destravar(){document.body.classList.remove("travado");$("gate").hidden=true;$("lgPass").value="";renderCfg();setTimeout(sincronizar,500)}
+$("lgOlho").addEventListener("click",function(){var i=$("lgPass"),ver=i.type==="password";i.type=ver?"text":"password";this.setAttribute("aria-pressed",String(ver));this.setAttribute("aria-label",ver?"Esconder senha":"Mostrar senha")});
+function destravar(){document.body.classList.remove("travado");$("gate").hidden=true;$("lgPass").value="";$("lgPass").type="password";$("lgOlho").setAttribute("aria-pressed","false");renderCfg();setTimeout(sincronizar,500)}
 $("loginForm").addEventListener("submit",function(e){e.preventDefault();
-  var u=$("lgUser").value.trim().toLowerCase(),p=$("lgPass").value,srv=$("lgSrv").value.trim().replace(/\/$/,"")||cfg.crmUrl;
+  var u=$("lgUser").value.trim().toLowerCase(),p=$("lgPass").value,srv=normalizarServidor($("lgSrv").value)||servidorDaPagina();
   if(!u||!p){$("lgErro").textContent="Preencha usuário e senha.";return}
   $("lgBtn").disabled=true;$("lgErro").textContent="";$("lgBtn").textContent="Entrando…";
   function fim(){$("lgBtn").disabled=false;$("lgBtn").textContent="Entrar"}
@@ -1271,7 +1279,7 @@ $("loginForm").addEventListener("submit",function(e){e.preventDefault();
         cfg.crmUrl=srv;cfg.chave=j.token;cfg.chaveOff=j.token;cfg.usuario=u;cfg.vend=j.nome;cfg.sal=sal;cfg.verif=v;cfg.entrou=Date.now();
         save(K.cfg,cfg);fim();destravar();toast(trocou?"Entrou como "+j.nome+". O histórico deste celular continua aqui.":"Bem-vindo, "+j.nome);
       });
-    }).catch(function(){fim();$("lgErro").textContent="Não deu para falar com o servidor. Confira a internet e tente de novo."});
+    }).catch(function(){fim();$("lgErro").textContent="Não deu para falar com o servidor "+srv+". Confira a internet e tente de novo."});
 });
 $("btnSair").addEventListener("click",function(){
   var pend=recs.filter(function(r){return r.crm&&r.crm.st!=="ok"&&r.crm.st!=="wa"&&!r.crm.excluida}).length;
