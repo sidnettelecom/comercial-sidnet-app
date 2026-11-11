@@ -188,6 +188,7 @@ $aba = fn(string $k, string $t) => '<a href="?p=' . $k . '"' . ($p === $k ? ' ar
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>Painel Comercial + Sidnet</title>
+<link rel="icon" href="/app/icon-192.png">
 <style>
 /* Painel de operação: barra no topo, uma tabela por tela, estado em selos coloridos */
 :root{--bg:#eef3f4;--surface:#fff;--ink:#122a30;--muted:#5b7177;--line:#d3dfe2;--brand:#0a6fa3;--brand-ink:#fff;
@@ -198,7 +199,7 @@ $aba = fn(string $k, string $t) => '<a href="?p=' . $k . '"' . ($p === $k ? ' ar
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 var(--f)}
 header{background:var(--brand);color:var(--brand-ink);padding:12px max(16px,env(safe-area-inset-left))}
 header .in{max-width:1200px;margin:0 auto;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
-header b{font-size:16px;margin-right:auto}header a{color:inherit;text-decoration:none;opacity:.85;font-weight:600}header a[aria-current]{opacity:1;text-decoration:underline}
+header b{font-size:16px;margin-right:auto}header .marca{display:flex;align-items:center;gap:10px}header .marca img{background:#fff;border-radius:12px;padding:2px}header a{color:inherit;text-decoration:none;opacity:.85;font-weight:600}header a[aria-current]{opacity:1;text-decoration:underline}
 main{max-width:1200px;margin:0 auto;padding:16px max(16px,env(safe-area-inset-right)) 40px max(16px,env(safe-area-inset-left));display:grid;gap:14px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px}
 .msg{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--brand);border-radius:8px;padding:10px 12px;overflow-wrap:anywhere}
@@ -221,7 +222,7 @@ button.del,a.bt.del{color:var(--er);border-color:color-mix(in srgb,var(--er) 40%
 </style>
 </head>
 <body>
-<header><div class="in"><b>Comercial + Sidnet · Painel</b>
+<header><div class="in"><b class="marca"><img src="/app/logo-96.png" alt="" width="40" height="40">Comercial + Sidnet · Painel</b>
 <?php if ($logado): ?><?= $aba('vendas', 'Vendas') . $aba('vendedores', 'Vendedores') . $aba('gestores', 'Gestores') ?><a href="?sair=1">Sair (<?= h($quem) ?>)</a><?php endif ?>
 </div></header>
 <main>
