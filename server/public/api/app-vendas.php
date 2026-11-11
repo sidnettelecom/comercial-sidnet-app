@@ -12,7 +12,7 @@
  */
 declare(strict_types=1);
 
-require_once __DIR__ . '/../../lib/base.php';
+require_once __DIR__ . '/../../lib/repasse.php';
 
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *'); // o app roda num WebView, com origem própria
@@ -28,6 +28,29 @@ function responder(int $status, array $corpo): never
 {
     http_response_code($status);
     echo json_encode($corpo, JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+/**
+ * Responde ao celular na hora e, com a conexão já fechada, manda a fila ao CRM.
+ * Assim a venda entra no CRM em segundos, sem esperar o cron nem o painel.
+ */
+function responder_e_repassar(array $corpo): never
+{
+    ignore_user_abort(true);
+    http_response_code(200);
+    echo json_encode($corpo, JSON_UNESCAPED_UNICODE);
+    if (function_exists('fastcgi_finish_request')) {
+        fastcgi_finish_request();
+    }
+    set_time_limit(120);
+    try {
+        foreach (processar_fila_com_trava(true) as $linha) {
+            error_log('app-vendas repasse: ' . $linha);
+        }
+    } catch (Throwable $e) {
+        error_log('app-vendas repasse: ' . $e->getMessage()); // o cron tenta de novo
+    }
     exit;
 }
 
@@ -112,13 +135,17 @@ try {
                     ->execute([$dados, up($reg['nome']), $tipo, $ja['id']]);
                 $ja['status'] = 'fila';
             }
-            responder(200, ['ok' => true, 'id' => 'Recebido #' . $ja['id'], 'repetido' => true] + situacao($ja));
+            $corpo = ['ok' => true, 'id' => 'Recebido #' . $ja['id'], 'repetido' => true] + situacao($ja);
+            if ($ja['status'] === 'fila') {
+                responder_e_repassar($corpo);
+            }
+            responder(200, $corpo);
         }
 
         db()->prepare('INSERT INTO vendas (id_app, vendedor_id, tipo, nome, dados) VALUES (?, ?, ?, ?, ?)')
             ->execute([$idApp, $vend['id'], $tipo, up($reg['nome']), $dados]);
         $id = (int)db()->lastInsertId();
-        responder(200, ['ok' => true, 'id' => 'Recebido #' . $id, 'st' => 'srv', 'msg' => 'Recebido. Entrando no CRM.']);
+        responder_e_repassar(['ok' => true, 'id' => 'Recebido #' . $id, 'st' => 'srv', 'msg' => 'Recebido. Entrando no CRM.']);
     }
 
     responder(404, ['ok' => false, 'erro' => 'Ação desconhecida.']);

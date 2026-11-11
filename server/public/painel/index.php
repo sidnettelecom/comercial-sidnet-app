@@ -60,7 +60,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
         db()->prepare("UPDATE vendas SET status='descartada' WHERE id=? AND status<>'crm'")->execute([$id]);
         $msg = 'Venda #' . $id . ' descartada (não vai para o CRM).';
     } elseif ($a === 'enviar_agora') {
-        $r = processar_fila();
+        $r = processar_fila_com_trava(true);
         $msg = $r ? implode(' | ', $r) : 'Nada na fila.';
     } elseif ($a === 'vend_novo' && up($_POST['nome'] ?? '') !== '') {
         [$vid, $chaveNova] = vendedor_novo($_POST['nome'], (string)($_POST['crm_vendedor_id'] ?? ''));
