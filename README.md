@@ -32,6 +32,11 @@ dá para entrar sem internet com a mesma senha; o app pede a senha de novo a cad
 - Painel: cookie `HttpOnly`/`Secure`/`SameSite=Strict`, CSRF em todo formulário, sai sozinho após 8 h parado.
 - Excluir venda no painel fica registrado em Gestores → Últimas ações, e o celular não consegue reenviar a venda excluída.
 - Esqueceu a senha do painel: `php server/bin/gestor.php senha <usuario>` no servidor.
+- Login do celular vale até 7 dias sem uso e no máximo 30 dias. A chave antiga (antes do login com senha) não é mais aceita.
+- Tudo o que vai para o CRM passa por `texto_crm()`: sem caracteres de controle e sem `< > " \``, para ninguém colocar HTML ou script no CRM pelos campos do app.
+- Cada vendedor manda no máximo 40 cadastros por hora; acima disso a API responde 429 e o app tenta depois.
+- Um cadastro com dado inesperado vira "Erro" no painel e não trava a fila dos outros.
+- O usuário do CRM usado pelo servidor deve ser exclusivo do app, só com acesso a Novo Lead e Upgrades.
 
 ## Pastas
 
