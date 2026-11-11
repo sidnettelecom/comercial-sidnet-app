@@ -478,7 +478,7 @@ function load(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d}ca
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));return true}catch(e){return false}}
 var $=function(id){return document.getElementById(id)};
 var DEF_PLANOS=["PLANO PROMOCIONAL 600MB"];var PRECOS={"PLANO PROMOCIONAL 600MB":109.90};
-var cfg=load(K.cfg,{vend:"VENDEDOR DEMO",sup:"",wa:"",planos:DEF_PLANOS,crmUrl:"",empresa:"3",crmUser:""});
+var cfg=load(K.cfg,{vend:"",sup:"",wa:"",planos:DEF_PLANOS,crmUrl:"",empresa:"3",crmUser:""});
 if(!cfg.empresa)cfg.empresa="3";
 if(!cfg.crmUrl&&/^https:$/.test(location.protocol))cfg.crmUrl=location.origin;
 if(!cfg.planos||!cfg.planos.length)cfg.planos=DEF_PLANOS;
@@ -905,6 +905,7 @@ var EMPRESAS={"3":"Sidnet","2":"AG Link Telecom","10":"Gd Net Fibra","1":"Gns Te
 var ufDDD={"31":"MG","32":"MG","33":"MG","34":"MG","35":"MG","37":"MG","38":"MG","27":"ES","28":"ES"};
 function iso(dmy){var m=/^(\d{2})\/(\d{2})\/(\d{4})/.exec(dmy||"");return m?m[3]+"-"+m[2]+"-"+m[1]:""}
 function nomePlano(p){return p}
+function quemFez(r){return DEMO?(r.vend||"-")+" (demonstração)":"Dono da chave de acesso deste celular ("+(r.vend||"-")+")"}
 function payload(r){
   var obs=[],t=r.tipo||"venda";
   if(t==="upgrade"){
@@ -917,7 +918,7 @@ function payload(r){
     obs.push("VIA APP · "+r.id);
     return {tela:"Upgrades e Renegociações → Lançar à mão",rota:"servicos-vendedor.php",campos:[
       ["cliente","Cliente",up(r.nome)],["doc","CPF/CNPJ",r.cpf||"(busca pelo nome)"],["data","Quando",iso(r.criado)],
-      ["vendedor_id","Quem fez",r.vend+" (usuário "+(cfg.crmUser||"?")+")"],["plano_de","Plano anterior","plano atual do contrato"],
+      ["vendedor_id","Quem fez",quemFez(r)],["plano_de","Plano anterior","plano atual do contrato"],
       ["plano_para","Plano novo",up(r.velNova)],["valor_de","Valor anterior","R$ "+fmtMoney(r.valAtual)],["valor_para","Valor novo","R$ "+fmtMoney(r.valNovo)],
       ["observacao","Observação",obs.join(" · ")]]};
   }
@@ -933,7 +934,7 @@ function payload(r){
     ["cpf","CPF",r.cpf],["whatsapp","WhatsApp",fmtTel(r.tel1)],["telefone_residencial","Telefone 2",fmtTel(r.tel2)],["email","E-mail",String(r.email||"").trim().toLowerCase()]];
   if(t!=="segundo")c.push(["data_nascimento","Nascimento",iso(r.nasc)]);
   c=c.concat([["logradouro","Endereço",up(r.endereco)],["cidade","Cidade",up(r.cidade)],["uf","UF",ufDDD[dig(r.tel1).slice(0,2)]||""],["referencia","Referência",up(r.referencia)],
-    ["vendedor_id","Vendedor",r.vend+" (usuário "+(cfg.crmUser||"?")+")"],["origem","Origem","Outros (venda de campo pelo app)"],
+    ["vendedor_id","Vendedor",quemFez(r)],["origem","Origem","Outros (venda de campo pelo app)"],
     ["plano_interesse","Plano",r.plano],["valor","Valor",preco?"R$ "+brl(preco):"do catálogo"],["status","Status","Venda Fechada"],["dia_vencimento","Vencimento","Dia "+r.venc],
     ["perfil_cliente","Perfil",t==="segundo"?"Cliente atual":"Novo cliente"],["tipo_servico","Tipo de serviço","Instalação"],["observacao","Observação",obs.join(" · ")]]);
   return {tela:"Comercial → Novo Lead",rota:"novo-lead.php",campos:c};
