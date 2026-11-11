@@ -107,6 +107,15 @@ function criar_tabelas(PDO $pdo): void
         detalhe TEXT NOT NULL DEFAULT ''
     );
     SQL);
+    // envio ao IXC: o que já foi criado lá para cada venda (contrato, login, atendimento)
+    $colsV = array_column($pdo->query('PRAGMA table_info(vendas)')->fetchAll(), 'name');
+    if (!in_array('ixc_passos', $colsV, true)) {
+        $pdo->exec("ALTER TABLE vendas ADD COLUMN ixc_passos TEXT NOT NULL DEFAULT ''");
+    }
+    $colsD = array_column($pdo->query('PRAGMA table_info(vendedores)')->fetchAll(), 'name');
+    if (!in_array('ixc_vendedor_id', $colsD, true)) {
+        $pdo->exec("ALTER TABLE vendedores ADD COLUMN ixc_vendedor_id TEXT NOT NULL DEFAULT ''");
+    }
     // vendedores ganham usuário e senha (antes era só a chave)
     $cols = array_column($pdo->query('PRAGMA table_info(vendedores)')->fetchAll(), 'name');
     if (!in_array('usuario', $cols, true)) {
@@ -121,6 +130,17 @@ function criar_tabelas(PDO $pdo): void
             $pdo->prepare("INSERT INTO gestores (usuario, nome, senha_hash) VALUES ('admin', 'ADMINISTRADOR', ?)")->execute([$hash]);
         }
     }
+}
+
+/** Para onde as vendas vão: 'ixc' (IXC Provedor, pela API) ou 'crm' (crm.sidnet.com.br, pelas telas). */
+function destino(): string
+{
+    return (config()['destino'] ?? 'crm') === 'ixc' ? 'ixc' : 'crm';
+}
+
+function nome_destino(): string
+{
+    return destino() === 'ixc' ? 'IXC' : 'CRM';
 }
 
 /** IP de quem acessa. Atrás do Cloudflare Tunnel o nginx vê 127.0.0.1; o IP real vem no cabeçalho do Cloudflare. */

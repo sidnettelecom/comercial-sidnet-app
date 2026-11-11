@@ -23,6 +23,26 @@ Cada cadastro tem um `id_app` único: reenviar não cria venda duplicada.
 O app só abre com **usuário e senha** do vendedor (criados no painel). Depois do primeiro login com internet,
 dá para entrar sem internet com a mesma senha; o app pede a senha de novo a cada 12 horas.
 
+## Envio ao IXC
+
+Com `'destino' => 'ixc'` no `config.php`, o servidor manda tudo para o IXC Provedor pela API oficial:
+
+| No app | No IXC |
+|---|---|
+| Venda nova | Lead no CRM do IXC (Leads). Avisa se o CPF já é lead ou cliente. |
+| Upgrade | Atendimento no cliente (achado pelo CPF), com o assunto de upgrade. O processo do assunto abre a O.S. |
+| 2º ponto | Contrato novo (pré-contrato, sem cobrança até ativar), login novo ligado a ele e atendimento com o assunto de 2º ponto. Se der erro no meio, "Tentar de novo" continua de onde parou, sem duplicar. |
+
+Para ligar:
+
+1. No IXC, crie um usuário só para o app, com token e acesso apenas a clientes, contratos, logins, leads e atendimentos.
+2. No servidor: `php server/bin/ixc.php token` e cole o token (ele não aparece na tela e fica em `/etc/comercial-sidnet/ixc-token`).
+3. `php server/bin/ixc.php listar assuntos` (e `setores`, `filiais`, `planos`) e preencha o bloco `ixc` do `config.php`.
+4. `php server/bin/ixc.php teste` confere o token e os assuntos.
+5. No painel, em Vendedores, "Carregar vendedores do IXC" e ligue cada vendedor.
+
+Os nomes dos planos no app precisam ser iguais aos planos de venda do IXC.
+
 ## Segurança
 
 - Vendedores e gestores entram com usuário e senha (senhas guardadas com `password_hash`).

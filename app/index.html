@@ -548,7 +548,7 @@ body.travado>*:not(.gate):not(.toast){visibility:hidden}
   </div>
   <div class="resumo" id="resumo"></div>
   <div class="filters">
-    <button class="btn sm primary" id="btnSync" type="button">Enviar fila ao CRM agora</button>
+    <button class="btn sm primary" id="btnSync" type="button">Enviar fila ao IXC agora</button>
     <button class="btn sm brand" id="btnPdf" type="button">Relatório em PDF</button>
     <button class="btn sm" id="btnCsv" type="button">Copiar (planilha)</button>
   </div>
@@ -567,7 +567,7 @@ body.travado>*:not(.gate):not(.toast){visibility:hidden}
     <fieldset>
       <legend>Sua conta</legend>
       <p style="margin:0" id="contaTxt"></p>
-      <span class="hint">Os cadastros vão sozinhos para o servidor quando houver internet, e o servidor coloca no CRM. O app pede a senha de novo a cada 12 horas.</span>
+      <span class="hint">Os cadastros vão sozinhos para o servidor quando houver internet, e o servidor coloca no IXC. O app pede a senha de novo a cada 12 horas.</span>
       <button type="button" class="btn" id="btnSair" style="width:100%">Sair desta conta</button>
     </fieldset>
     <fieldset>
@@ -589,14 +589,14 @@ body.travado>*:not(.gate):not(.toast){visibility:hidden}
     <button type="submit" class="btn brand" style="width:100%">Salvar ajustes</button>
   </form>
   <p class="small" style="margin-top:16px" id="versao"></p>
-  <p class="small">Os cadastros ficam guardados neste celular e vão para o CRM assim que houver internet. O que já foi para o CRM continua aqui no histórico.</p>
+  <p class="small">Os cadastros ficam guardados neste celular e vão para o IXC assim que houver internet. O que já foi para o IXC continua aqui no histórico.</p>
 </section>
 </main>
 
 <div class="actions" id="actions">
   <div class="row">
     <button type="button" class="btn" id="btnLimpar">Limpar</button>
-    <button type="button" class="btn primary" id="btnEnviar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 18a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.6 1.5A3.8 3.8 0 0 1 17.5 18z"/><path d="M12 15V10M9.5 12.5 12 10l2.5 2.5"/></svg><span id="btnEnviarTxt">Salvar e enviar ao CRM</span>
+    <button type="button" class="btn primary" id="btnEnviar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 18a4.5 4.5 0 0 1-.6-9 6 6 0 0 1 11.6 1.5A3.8 3.8 0 0 1 17.5 18z"/><path d="M12 15V10M9.5 12.5 12 10l2.5 2.5"/></svg><span id="btnEnviarTxt">Salvar e enviar ao IXC</span>
     </button>
   </div>
 </div>
@@ -611,7 +611,7 @@ body.travado>*:not(.gate):not(.toast){visibility:hidden}
   <div class="box" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
     <h2 id="sheetTitle">Cadastro salvo</h2>
     <div class="crmbox" id="crmBox"></div>
-    <div id="mapWrap"><span class="lbl" style="display:block;font-weight:600;font-size:13.5px;margin-bottom:6px" id="mapTitle">O que vai para o CRM</span><div class="map" id="mapa"></div></div>
+    <div id="mapWrap"><span class="lbl" style="display:block;font-weight:600;font-size:13.5px;margin-bottom:6px" id="mapTitle">O que vai para o IXC</span><div class="map" id="mapa"></div></div>
     <details class="wa" id="waBox"><summary id="waSum">Também mandar no WhatsApp (opcional)</summary>
     <div style="display:grid;gap:10px">
     <pre class="preview" id="preview"></pre>
@@ -687,7 +687,7 @@ function copiar(txt,okMsg){
 var demoOff=false;function online(){return navigator.onLine&&!demoOff}
 function net(){var on=online();$("net").classList.toggle("on",on);$("netTxt").textContent=on?"Online":"Sem internet (funciona igual)"}
 addEventListener("online",function(){net();sincronizar()});addEventListener("offline",net);net();
-$("btnNet").addEventListener("click",function(){demoOff=!demoOff;this.textContent=demoOff?"Voltar a internet":"Simular sem internet";this.classList.toggle("primary",demoOff);net();renderSync();if(!demoOff){toast("Internet de volta. Enviando a fila ao CRM…");sincronizar()}else toast("Sem internet. Pode continuar cadastrando.")});
+$("btnNet").addEventListener("click",function(){demoOff=!demoOff;this.textContent=demoOff?"Voltar a internet":"Simular sem internet";this.classList.toggle("primary",demoOff);net();renderSync();if(!demoOff){toast("Internet de volta. Enviando a fila ao IXC…");sincronizar()}else toast("Sem internet. Pode continuar cadastrando.")});
 
 /* ---------- ajustes ---------- */
 function renderCfg(){
@@ -765,7 +765,7 @@ var CK=["exRoteador","exCabo","exTroca"];
 function mostraObsServ(){CK.forEach(function(k){var t=$(k+"Obs");var was=t.hidden;t.hidden=!$(k).checked;if(was&&!t.hidden&&document.activeElement===$(k))t.focus()})}
 CK.forEach(function(k){$(k).addEventListener("change",mostraObsServ)});
 function tipoAtual(){return $("tipoUpg").checked?"upgrade":$("tipoSeg").checked?"segundo":$("tipoOrc").checked?"orcamento":"venda"}
-function setTipo(t){t=t==="upgrade"||t==="segundo"||t==="orcamento"?t:"venda";$("tipoUpg").checked=t==="upgrade";$("tipoSeg").checked=t==="segundo";$("tipoOrc").checked=t==="orcamento";$("tipoVenda").checked=t==="venda";if(t==="orcamento"&&!$("validade").value)$("validade").value="15";$("form").dataset.tipo=t;$("cpfLbl").classList.toggle("req",t!=="upgrade");$("endLegend").textContent=t==="segundo"?"Endereço do 2º ponto":t==="orcamento"?"Local do serviço":"Endereço de instalação";$("btnEnviarTxt").textContent=t==="orcamento"?"Salvar e enviar no WhatsApp":"Salvar e enviar ao CRM"}
+function setTipo(t){t=t==="upgrade"||t==="segundo"||t==="orcamento"?t:"venda";$("tipoUpg").checked=t==="upgrade";$("tipoSeg").checked=t==="segundo";$("tipoOrc").checked=t==="orcamento";$("tipoVenda").checked=t==="venda";if(t==="orcamento"&&!$("validade").value)$("validade").value="15";$("form").dataset.tipo=t;$("cpfLbl").classList.toggle("req",t!=="orcamento");$("endLegend").textContent=t==="segundo"?"Endereço do 2º ponto":t==="orcamento"?"Local do serviço":"Endereço de instalação";$("btnEnviarTxt").textContent=t==="orcamento"?"Salvar e enviar no WhatsApp":"Salvar e enviar ao IXC"}
 function montarEnd(o){var p=[up(o.rua),up(o.numero),up(o.complemento),up(o.bairro)].filter(Boolean);return p.join(", ")}
 function nomeTipo(t){return t==="upgrade"?"Upgrade":t==="segundo"?"2º plano":t==="orcamento"?"Orçamento":"Venda"}
 function ehOrc(r){return r&&r.tipo==="orcamento"}
@@ -811,7 +811,7 @@ function validar(o){
     if(!telOk(o.tel1))erros.tel1=1;
     if(!telOk(o.tel2))erros.tel2="Use DDD + número (10 ou 11 dígitos).";else if(dig(o.tel2)===dig(o.tel1))erros.tel2="O telefone 2 precisa ser diferente do principal.";
     if(!emailOk(o.email))erros.email=1;
-    if(dig(o.cpf)&&!cpfOk(o.cpf))erros.cpf=1;
+    if(!cpfOk(o.cpf))erros.cpf="Informe o CPF do titular: é por ele que o cliente é achado no IXC.";
     return erros;
   }
   if(!cpfOk(o.cpf))erros.cpf=1;
@@ -912,7 +912,7 @@ function waLink(txt){return "https://wa.me/"+(cfg.wa?("55"+cfg.wa.replace(/^55(?
 
 var atual=null;
 function abrirEnvio(r){
-  atual=r;var txt=mensagem(r);$("preview").textContent=txt;var orc=ehOrc(r);$("crmBox").hidden=orc;$("mapWrap").hidden=orc;$("sheetTitle").textContent=orc?"Orçamento salvo":"Cadastro salvo";$("waSum").textContent=orc?"Enviar o orçamento no WhatsApp":"Também mandar no WhatsApp (opcional)";$("waBox").open=orc;if(!orc){renderCrmBox();renderMapa(r)}$("btnWa").href=waLink(txt);
+  atual=r;var txt=mensagem(r);$("preview").textContent=txt;var orc=ehOrc(r);$("crmBox").hidden=orc;$("mapWrap").hidden=true;$("sheetTitle").textContent=orc?"Orçamento salvo":"Cadastro salvo";$("waSum").textContent=orc?"Enviar o orçamento no WhatsApp":"Também mandar no WhatsApp (opcional)";$("waBox").open=orc;if(!orc){renderCrmBox()}$("btnWa").href=waLink(txt);
   var n=(r.midias||[]).length;$("btnShare").hidden=!n;$("btnOutro").hidden=!(n&&APP);
   prontos=null;if(n&&!APP)prepararArquivos(r).then(function(f){prontos=f});
   $("btnShare").textContent=n?"Enviar com "+n+(n===1?" anexo":" anexos")+" (foto/vídeo)":"";
@@ -1005,7 +1005,7 @@ function renderLista(){
   renderMeses();
   var L=filtrados();
   var S=somar(L);
-  $("resumo").innerHTML=recs.length?'<div><b>'+S.v+'</b><span>'+(S.v===1?"venda nova":"vendas novas")+'</span></div><div><b>'+S.u+'</b><span>'+(S.u===1?"upgrade":"upgrades")+'</span></div><div><b>'+S.s+'</b><span>2º plano</span></div><div><b>'+S.f+'</b><span>aguardando o CRM</span></div>'+(S.o?'<div><b>'+S.o+'</b><span>'+(S.o===1?"orçamento":"orçamentos")+'</span></div><div><b>'+brl(S.vo)+'</b><span>orçado (R$)</span></div>':''):"";
+  $("resumo").innerHTML=recs.length?'<div><b>'+S.v+'</b><span>'+(S.v===1?"venda nova":"vendas novas")+'</span></div><div><b>'+S.u+'</b><span>'+(S.u===1?"upgrade":"upgrades")+'</span></div><div><b>'+S.s+'</b><span>2º plano</span></div><div><b>'+S.f+'</b><span>aguardando o IXC</span></div>'+(S.o?'<div><b>'+S.o+'</b><span>'+(S.o===1?"orçamento":"orçamentos")+'</span></div><div><b>'+brl(S.vo)+'</b><span>orçado (R$)</span></div>':''):"";
   var el=$("lista");
   if(!recs.length){el.innerHTML='<div class="empty">Nenhum cadastro ainda.<br>Os cadastros que você enviar aparecem aqui e ficam guardados mesmo sem internet.</div>';return}
   if(!L.length){el.innerHTML='<div class="empty">Nenhum cadastro em '+esc(nomeMes($("fMes").value))+' com esse filtro.</div>';return}
@@ -1111,7 +1111,7 @@ $("btnExemplo").addEventListener("click",function(){
 });
 
 
-/* ---------- integração com o CRM: fila offline + envio automático ---------- */
+/* ---------- integração com o IXC: fila offline + envio automático ---------- */
 var DEMO=false; /* o app só abre depois do login; a demonstração ficou no protótipo */
 if(!DEMO)$("demoBar").hidden=true;
 var EMPRESAS={"3":"Sidnet","2":"AG Link Telecom","10":"Gd Net Fibra","1":"Gns Telecom","4":"Live Net"};
@@ -1154,11 +1154,11 @@ function payload(r){
   return {tela:"Comercial → Novo Lead",rota:"novo-lead.php",campos:c};
 }
 function renderMapa(r){
-  var p=payload(r);$("mapTitle").textContent="O que vai para o CRM ("+p.tela+")";
+  var p=payload(r);$("mapTitle").textContent="O que vai para o IXC ("+p.tela+")";
   $("mapa").innerHTML='<table>'+p.campos.map(function(c){return'<tr><th>'+esc(c[1])+'<code>'+esc(c[0])+'</code></th><td>'+esc(c[2]||"—")+'</td></tr>'}).join("")+'</table>';
 }
 function pillCrm(r){if(ehOrc(r))return r.status==="enviado"?'<span class="pill wa">Enviado no WhatsApp</span>':'<span class="pill q">Não enviado</span>';var c=r.crm||{st:"fila"};
-  if(c.st==="ok")return'<span class="pill ok">No CRM '+esc(c.crmId)+'</span>';
+  if(c.st==="ok")return'<span class="pill ok">No IXC '+esc(c.crmId)+'</span>';
   if(c.st==="go")return'<span class="pill go">Enviando…</span>';
   if(c.st==="srv")return'<span class="pill go">No servidor</span>';
   if(c.st==="er")return'<span class="pill er">Erro no envio</span>';
@@ -1166,23 +1166,23 @@ function pillCrm(r){if(ehOrc(r))return r.status==="enviado"?'<span class="pill w
 function renderCrmBox(){
   if(!atual||$("sheet").hidden&&!atual)return;var c=atual.crm||{st:"fila"},b=$("crmBox");
   b.className="crmbox "+(c.st==="ok"?"ok":c.st==="er"?"er":"q");
-  if(c.st==="ok")b.innerHTML='<b>Cadastrado no CRM · '+esc(c.crmId)+'</b><span class="small">Enviado em '+esc(c.em)+'. A partir daqui o CRM segue o fluxo dele.</span>';
-  else if(c.st==="srv")b.innerHTML='<b>Recebido pelo servidor</b><span class="small">Já saiu do celular. O servidor está colocando no CRM e o número aparece aqui.</span>';
-  else if(c.st==="go")b.innerHTML='<b>Enviando para o CRM…</b><span class="small">Pode fechar esta tela.</span>';
-  else if(c.st==="er")b.innerHTML='<b>O CRM não aceitou</b><span class="small">'+esc(c.msg||"")+' Corrija e salve de novo.</span>';
-  else b.innerHTML='<b>Salvo no celular, na fila do CRM</b><span class="small">'+(online()?"Enviando em instantes.":"Sem internet agora. Vai sozinho assim que o celular conectar.")+'</span>'+(demoOff?'<button type="button" class="btn sm primary" id="btnVolta" style="justify-self:start;margin-top:6px">Simular: a internet voltou</button>':'');var bv=$("btnVolta");if(bv)bv.addEventListener("click",function(){$("btnNet").click()});
+  if(c.st==="ok")b.innerHTML='<b>Cadastrado no IXC · '+esc(c.crmId)+'</b><span class="small">Enviado em '+esc(c.em)+'. A partir daqui o IXC segue o fluxo dele.</span>';
+  else if(c.st==="srv")b.innerHTML='<b>Recebido pelo servidor</b><span class="small">Já saiu do celular. O servidor está colocando no IXC e o número aparece aqui.</span>';
+  else if(c.st==="go")b.innerHTML='<b>Enviando para o IXC…</b><span class="small">Pode fechar esta tela.</span>';
+  else if(c.st==="er")b.innerHTML='<b>O IXC não aceitou</b><span class="small">'+esc(c.msg||"")+' Corrija e salve de novo.</span>';
+  else b.innerHTML='<b>Salvo no celular, na fila do IXC</b><span class="small">'+(online()?"Enviando em instantes.":"Sem internet agora. Vai sozinho assim que o celular conectar.")+'</span>'+(demoOff?'<button type="button" class="btn sm primary" id="btnVolta" style="justify-self:start;margin-top:6px">Simular: a internet voltou</button>':'');var bv=$("btnVolta");if(bv)bv.addEventListener("click",function(){$("btnNet").click()});
 }
 var ICONES={venda:'<path d="M12 5v14M5 12h14"/>',upgrade:'<path d="M12 19V5M6 11l6-6 6 6"/>',segundo:'<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',orcamento:'<path d="M7 3h7l5 5v13H7z"/><path d="M10 13h6M10 17h6"/>'};
 function iconeTipo(t){t=ICONES[t]?t:"venda";return '<i class="ti ti-'+t+'" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'+ICONES[t]+'</svg></i>'}
 function renderStats(){
   var hoje=agora().slice(0,10),v=0,q=0,ok=0;
   recs.forEach(function(r){if(ehOrc(r))return;if(String(r.criado||"").slice(0,10)===hoje)v++;if(r.crm&&r.crm.st==="ok")ok++;else q++});
-  $("stats").innerHTML='<div><b>'+v+'</b><span>'+(v===1?"cadastro hoje":"cadastros hoje")+'</span></div><div class="q"><b>'+q+'</b><span>aguardando</span></div><div class="ok"><b>'+ok+'</b><span>no CRM</span></div>';
+  $("stats").innerHTML='<div><b>'+v+'</b><span>'+(v===1?"cadastro hoje":"cadastros hoje")+'</span></div><div class="q"><b>'+q+'</b><span>aguardando</span></div><div class="ok"><b>'+ok+'</b><span>no IXC</span></div>';
 }
 function renderSync(){
   renderStats();
   var f=recs.filter(function(r){return !ehOrc(r)&&(!r.crm||(r.crm.st!=="ok"&&r.crm.st!=="srv"))}).length;
-  $("syncTxt").textContent=enviando?"Enviando ao CRM…":f?(f===1?"1 cadastro aguardando o CRM":f+" cadastros aguardando o CRM"):(recs.some(function(r){return r.crm&&r.crm.st==="srv"})?"Tudo saiu do celular":"Tudo enviado ao CRM");
+  $("syncTxt").textContent=enviando?"Enviando ao IXC…":f?(f===1?"1 cadastro aguardando o IXC":f+" cadastros aguardando o IXC"):(recs.some(function(r){return r.crm&&r.crm.st==="srv"})?"Tudo saiu do celular":"Tudo enviado ao IXC");
 }
 function espera(ms){return new Promise(function(res){setTimeout(res,ms)})}
 var seqDemo=load("cadvendas.seqdemo",2140);
@@ -1192,13 +1192,13 @@ function enviarCRM(r){
     if(!online())throw new Error("A internet caiu durante o envio. Tenta de novo sozinho.");
     if(r.crm.crmId)return {id:r.crm.crmId};seqDemo++;save("cadvendas.seqdemo",seqDemo);
     return {id:(r.tipo==="upgrade"?"Upgrade #":"Lead #")+seqDemo}})}
-  /* versão real: POST no servidor do app com a chave do vendedor; o servidor repassa ao CRM. id_app evita duplicar */
+  /* versão real: POST no servidor do app com a chave do vendedor; o servidor repassa ao IXC. id_app evita duplicar */
   var reg=Object.assign({},r);delete reg.midias;delete reg.crm;
   return fetch(cfg.crmUrl+"/api/app-vendas.php?acao=enviar",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+cfg.chave},
     body:JSON.stringify({id_app:r.id,tipo:r.tipo||"venda",registro:reg,atualizar:!!r.crm.atualizar})})
     .then(function(res){return res.json().catch(function(){throw new Error("O servidor respondeu "+res.status)}).then(function(j){if(!res.ok||!j.ok){var e=new Error(j.erro||("O servidor respondeu "+res.status));if(j.login){e.fim=false;travar(j.erro,true);throw e}e.fim=res.status===403||res.status===409||res.status===410||res.status===422;throw e}return j})});
 }
-/* cadastros que já estão no servidor e esperam o CRM: pergunta a situação */
+/* cadastros que já estão no servidor e esperam o IXC: pergunta a situação */
 function consultarServidor(){
   if(DEMO||!online()||travadoAgora())return;var L=recs.filter(function(r){return r.crm&&r.crm.st==="srv"});if(!L.length)return;
   fetch(cfg.crmUrl+"/api/app-vendas.php?acao=status&ids="+L.map(function(r){return r.id}).join(","),{headers:{"Authorization":"Bearer "+cfg.chave}})
@@ -1222,7 +1222,7 @@ function sincronizar(){
   function refresh(){renderBadge();if(!$("v-hist").hidden)renderLista();if(atual)renderCrmBox()}
 }
 $("btnSync").addEventListener("click",function(){if(!online()){toast("Sem internet. A fila vai sozinha quando conectar.");return}
-  var n=recs.filter(function(r){return r.crm&&r.crm.st!=="ok"}).length;if(!n){toast("Nada na fila. Tudo já está no CRM.");return}
+  var n=recs.filter(function(r){return r.crm&&r.crm.st!=="ok"}).length;if(!n){toast("Nada na fila. Tudo já está no IXC.");return}
   recs.forEach(function(r){if(r.crm&&r.crm.st==="er"){r.crm.st="fila";r.crm.tent=0}});sincronizar()});
 setInterval(sincronizar,20000);
 /* cadastros antigos (antes da integração) entram na fila uma vez */
@@ -1285,7 +1285,7 @@ $("loginForm").addEventListener("submit",function(e){e.preventDefault();
 });
 $("btnSair").addEventListener("click",function(){
   var pend=recs.filter(function(r){return r.crm&&r.crm.st!=="ok"&&r.crm.st!=="wa"&&!r.crm.excluida}).length;
-  if(pend&&!confirm(pend+" cadastro(s) ainda não foram para o CRM. Eles ficam guardados e vão quando você entrar de novo. Sair mesmo assim?"))return;
+  if(pend&&!confirm(pend+" cadastro(s) ainda não foram para o IXC. Eles ficam guardados e vão quando você entrar de novo. Sair mesmo assim?"))return;
   var t=cfg.chave;
   if(t&&online())fetch(cfg.crmUrl+"/api/app-vendas.php?acao=sair",{method:"POST",headers:{"Authorization":"Bearer "+t}}).catch(function(){});
   cfg.chave="";cfg.chaveOff="";cfg.verif="";cfg.entrou=0;save(K.cfg,cfg);travar("");

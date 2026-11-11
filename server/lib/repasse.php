@@ -12,6 +12,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/base.php';
 require_once __DIR__ . '/crm.php';
+require_once __DIR__ . '/ixc.php';
 
 const UF_POR_DDD = ['31' => 'MG', '32' => 'MG', '33' => 'MG', '34' => 'MG', '35' => 'MG', '37' => 'MG', '38' => 'MG', '27' => 'ES', '28' => 'ES'];
 
@@ -134,7 +135,7 @@ function limpar_campos(array $f): array
 {
     foreach ($f as $k => $v) {
         if (is_string($v) && $k !== 'csrf_token') {
-            $f[$k] = texto_crm($v, $k === 'observacao' ? 4000 : 300);
+            $f[$k] = texto_crm($v, in_array($k, ['observacao', 'obs', 'menssagem'], true) ? 6000 : 300);
         }
     }
     return $f;
@@ -143,6 +144,9 @@ function limpar_campos(array $f): array
 /** Envia uma venda ao CRM. Devolve o identificador no CRM ou lança ErroCrm. */
 function repassar(array $venda, array $vendedor): string
 {
+    if (destino() === 'ixc') {
+        return repassar_ixc($venda, $vendedor);
+    }
     if ($vendedor['crm_vendedor_id'] === '') {
         throw new ErroCrm('O vendedor ' . $vendedor['nome'] . ' não está ligado a um vendedor do CRM. Ajuste no painel.');
     }
