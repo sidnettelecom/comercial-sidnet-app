@@ -87,7 +87,7 @@ function situacao(array $v): array
     return match ($v['status']) {
         'crm' => ['st' => 'ok', 'crmId' => $v['crm_id']],
         'erro' => ['st' => 'er', 'msg' => $v['erro']],
-        default => ['st' => 'srv', 'msg' => 'Recebido. Entrando no CRM.'],
+        default => ['st' => 'srv', 'msg' => 'Recebido. Entrando no ' . nome_destino() . '.'],
     };
 }
 
@@ -191,7 +191,7 @@ try {
         db()->prepare('INSERT INTO vendas (id_app, vendedor_id, tipo, nome, dados) VALUES (?, ?, ?, ?, ?)')
             ->execute([$idApp, $vend['id'], $tipo, up($reg['nome']), $dados]);
         $id = (int)db()->lastInsertId();
-        responder_e_repassar(['ok' => true, 'id' => 'Recebido #' . $id, 'st' => 'srv', 'msg' => 'Recebido. Entrando no CRM.']);
+        responder_e_repassar(['ok' => true, 'id' => 'Recebido #' . $id, 'st' => 'srv', 'msg' => 'Recebido. Entrando no ' . nome_destino() . '.']);
     }
 
     responder(404, ['ok' => false, 'erro' => 'Ação desconhecida.']);

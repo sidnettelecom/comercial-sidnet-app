@@ -17,6 +17,8 @@ header('Cache-Control: no-store');
 header("Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
 
 $cfg = config();
+$DEST = nome_destino();                                          // "IXC" ou "CRM"
+$colV = destino() === 'ixc' ? 'ixc_vendedor_id' : 'crm_vendedor_id'; // id do vendedor no sistema de destino
 $_SESSION['csrf'] ??= bin2hex(random_bytes(16));
 $msg = '';
 $novaSenha = null; // ['quem' => ..., 'usuario' => ..., 'senha' => ...] mostrada uma vez
@@ -100,7 +102,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = 'Venda #' . $id . ' vai ser enviada mesmo com aviso de duplicado.';
         } elseif ($a === 'descartar') {
             db()->prepare("UPDATE vendas SET status='descartada' WHERE id=? AND status<>'crm'")->execute([$id]);
-            $msg = 'Venda #' . $id . ' descartada (não vai para o CRM).';
+            $msg = 'Venda #' . $id . " descartada (não vai para o $DEST).";
         } elseif ($a === 'excluir') {
             $q = db()->prepare('SELECT v.*, d.nome AS vendedor FROM vendas v JOIN vendedores d ON d.id = v.vendedor_id WHERE v.id = ?');
             $q->execute([$id]);
@@ -110,15 +112,18 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->prepare('INSERT OR REPLACE INTO excluidas (id_app, nome, por) VALUES (?, ?, ?)')->execute([$v['id_app'], $v['nome'], $quem]);
                 $pdo->prepare('DELETE FROM vendas WHERE id = ?')->execute([$id]);
                 $pdo->commit();
-                registrar($quem, 'excluiu venda', "#{$v['id']} {$v['nome']} (vendedor {$v['vendedor']}, situação {$v['status']}" . ($v['crm_id'] ? ", {$v['crm_id']} no CRM" : '') . ')');
-                $msg = "Venda #{$v['id']} de {$v['nome']} excluída do painel." . ($v['status'] === 'crm' ? " Ela já tinha entrado no CRM ({$v['crm_id']}): apague lá também, se for o caso." : '');
+                registrar($quem, 'excluiu venda', "#{$v['id']} {$v['nome']} (vendedor {$v['vendedor']}, situação {$v['status']}" . ($v['crm_id'] ? ", {$v['crm_id']} no $DEST" : '') . ')');
+                $msg = "Venda #{$v['id']} de {$v['nome']} excluída do painel." . ($v['status'] === 'crm' ? " Ela já tinha entrado no $DEST ({$v['crm_id']}): apague lá também, se for o caso." : '');
             }
         } elseif ($a === 'enviar_agora') {
             $r = processar_fila_com_trava(true);
             $msg = $r ? implode(' | ', $r) : 'Nada na fila.';
         } elseif ($a === 'vend_novo') {
             $senha = gerar_senha();
-            vendedor_novo((string)($_POST['nome'] ?? ''), (string)($_POST['crm_vendedor_id'] ?? ''), (string)($_POST['usuario'] ?? ''), $senha);
+            $novoId = vendedor_novo((string)($_POST['nome'] ?? ''), destino() === 'crm' ? (string)($_POST['crm_vendedor_id'] ?? '') : '', (string)($_POST['usuario'] ?? ''), $senha);
+            if (destino() === 'ixc') {
+                db()->prepare('UPDATE vendedores SET ixc_vendedor_id=? WHERE id=?')->execute([trim((string)($_POST['crm_vendedor_id'] ?? '')), $novoId]);
+            }
             $novaSenha = ['quem' => up($_POST['nome'] ?? ''), 'usuario' => usuario_valido((string)$_POST['usuario']), 'senha' => $senha];
             registrar($quem, 'criou vendedor', up($_POST['nome'] ?? '') . ' (' . $novaSenha['usuario'] . ')');
         } elseif ($a === 'vend_senha') {
@@ -128,7 +133,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $novaSenha = ['quem' => $n, 'usuario' => usuario_valido((string)$_POST['usuario']), 'senha' => $senha];
             registrar($quem, 'nova senha de vendedor', (string)$n);
         } elseif ($a === 'vend_crm') {
-            db()->prepare('UPDATE vendedores SET crm_vendedor_id=? WHERE id=?')->execute([trim((string)$_POST['crm_vendedor_id']), $id]);
+            db()->prepare("UPDATE vendedores SET $colV=? WHERE id=?")->execute([trim((string)$_POST['crm_vendedor_id']), $id]);
             $msg = 'Vendedor atualizado.';
         } elseif ($a === 'vend_ativo') {
             db()->prepare('UPDATE vendedores SET ativo = 1 - ativo WHERE id=?')->execute([$id]);
@@ -136,9 +141,17 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             registrar($quem, 'bloqueou/liberou vendedor', '#' . $id);
             $msg = 'Acesso do vendedor alterado. Se foi bloqueio, o celular dele sai na próxima conexão.';
         } elseif ($a === 'crm_vendedores') {
-            $lista = Crm::opcoes(crm()->abrir('/novo-lead.php'), 'vendedor_id');
-            file_put_contents(dirname($cfg['banco']) . '/crm-vendedores.json', json_encode($lista, JSON_UNESCAPED_UNICODE));
-            $msg = count($lista) . ' vendedores carregados do CRM.';
+            if (destino() === 'ixc') {
+                $lista = [];
+                foreach (ixc()->listar('vendedor', 'id', '0', '>', 500, 'asc') as $o) {
+                    if (($o['status'] ?? $o['ativo'] ?? 'A') !== 'I' && ($o['ativo'] ?? 'S') !== 'N') $lista[] = ['valor' => (string)$o['id'], 'texto' => up($o['nome'] ?? '')];
+                }
+                file_put_contents(dirname($cfg['banco']) . '/ixc-vendedores.json', json_encode($lista, JSON_UNESCAPED_UNICODE));
+            } else {
+                $lista = Crm::opcoes(crm()->abrir('/novo-lead.php'), 'vendedor_id');
+                file_put_contents(dirname($cfg['banco']) . '/crm-vendedores.json', json_encode($lista, JSON_UNESCAPED_UNICODE));
+            }
+            $msg = count($lista) . " vendedores carregados do $DEST.";
         } elseif ($a === 'gest_novo') {
             $u = usuario_valido((string)($_POST['usuario'] ?? ''));
             if ($u === '' || up($_POST['nome'] ?? '') === '') throw new RuntimeException('Preencha nome e usuário (3 a 40 letras minúsculas, números, ponto ou hífen).');
@@ -165,15 +178,15 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = 'Senha trocada.';
         }
     } catch (Throwable $e) {
-        $msg = $e instanceof ErroCrm ? 'Não consegui falar com o CRM: ' . $e->getMessage() : $e->getMessage();
+        $msg = $e instanceof ErroCrm ? "Não consegui falar com o $DEST: " . $e->getMessage() : $e->getMessage();
     }
 }
 
 $p = $_GET['p'] ?? 'vendas';
 $NOMES = ['venda' => 'Venda', 'segundo' => '2º plano', 'upgrade' => 'Upgrade'];
-$SITUACAO = ['fila' => ['Na fila', 'q'], 'forcar' => ['Na fila', 'q'], 'tentar' => ['Tentando de novo', 'q'], 'crm' => ['No CRM', 'ok'], 'erro' => ['Erro', 'er'], 'descartada' => ['Descartada', 'mu']];
+$SITUACAO = ['fila' => ['Na fila', 'q'], 'forcar' => ['Na fila', 'q'], 'tentar' => ['Tentando de novo', 'q'], 'crm' => ['No ' . $DEST, 'ok'], 'erro' => ['Erro', 'er'], 'descartada' => ['Descartada', 'mu']];
 $crmVend = [];
-$arqV = dirname($cfg['banco']) . '/crm-vendedores.json';
+$arqV = dirname($cfg['banco']) . (destino() === 'ixc' ? '/ixc-vendedores.json' : '/crm-vendedores.json');
 if (is_file($arqV)) {
     foreach (json_decode((string)file_get_contents($arqV), true) ?: [] as $o) {
         $crmVend[$o['valor']] = $o['texto'];
@@ -281,7 +294,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
 <aside class="lado">
   <div class="marca"><img src="/app/logo-96.png" alt="" width="48" height="48"><div><b>Comercial + SIDNET</b><span>Painel do gestor</span></div></div>
   <nav aria-label="Seções"><?= $aba('vendas', 'Vendas') . $aba('vendedores', 'Vendedores') . $aba('gestores', 'Gestores') ?></nav>
-  <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao CRM: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
+  <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
 <?php endif ?>
 <main>
@@ -313,7 +326,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     <h2>Excluir a venda #<?= (int)$v['id'] ?>?</h2>
     <p style="margin:0"><b><?= h($v['nome']) ?></b> · <?= h($NOMES[$v['tipo']] ?? $v['tipo']) ?> · vendedor <?= h($v['vendedor']) ?> · recebida em <?= h($v['recebido_em']) ?> · <?= h($rot) ?> <?= h($v['crm_id']) ?></p>
     <p class="small" style="margin:0">Ela some do painel e o celular do vendedor passa a mostrar "Excluída pelo gestor". Não dá para desfazer.
-      <?php if ($v['status'] === 'crm'): ?><br><b>Ela já entrou no CRM (<?= h($v['crm_id']) ?>).</b> Excluir aqui não apaga lá: apague no CRM também, se for o caso.<?php endif ?></p>
+      <?php if ($v['status'] === 'crm'): ?><br><b>Ela já entrou no <?= $DEST ?> (<?= h($v['crm_id']) ?>).</b> Excluir aqui não apaga lá: apague no <?= $DEST ?> também, se for o caso.<?php endif ?></p>
     <div class="row"><button class="del pri">Excluir venda</button><a href="?p=vendas">Cancelar</a></div>
   </form>
   <?php endif ?>
@@ -323,15 +336,15 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     <?= csrf_campo() ?><input type="hidden" name="acao" value="vend_novo">
     <label for="nome">Novo vendedor</label><input id="nome" name="nome" placeholder="NOME COMPLETO" required>
     <label for="nusu">Usuário</label><input id="nusu" name="usuario" placeholder="ex.: hellen" autocapitalize="none" size="12" required pattern="[a-z0-9._-]{3,40}">
-    <label for="crmv">Vendedor no CRM</label>
+    <label for="crmv">Vendedor no <?= $DEST ?></label>
     <?php if ($crmVend): ?><select id="crmv" name="crm_vendedor_id"><option value="">escolha</option><?php foreach ($crmVend as $v => $t): ?><option value="<?= h((string)$v) ?>"><?= h($t) ?></option><?php endforeach ?></select>
-    <?php else: ?><input id="crmv" name="crm_vendedor_id" placeholder="id no CRM" size="8"><?php endif ?>
+    <?php else: ?><input id="crmv" name="crm_vendedor_id" placeholder="id no <?= $DEST ?>" size="8"><?php endif ?>
     <button class="pri">Criar e gerar senha</button>
   </form>
   <form method="post" class="row"><?= csrf_campo() ?><input type="hidden" name="acao" value="crm_vendedores">
-    <button>Carregar vendedores do CRM</button><span class="small">Lê a lista do campo "Vendedor" do Novo Lead. Não grava nada no CRM.</span></form>
+    <button>Carregar vendedores do <?= $DEST ?></button><span class="small">Só lê a lista de vendedores. Não grava nada no <?= $DEST ?>.</span></form>
   <div class="card tw"><table>
-    <tr><th>Vendedor</th><th>Usuário e senha</th><th>No CRM</th><th>Acesso</th><th>Último uso</th><th></th></tr>
+    <tr><th>Vendedor</th><th>Usuário e senha</th><th>No <?= $DEST ?></th><th>Acesso</th><th>Último uso</th><th></th></tr>
     <?php foreach (db()->query('SELECT * FROM vendedores ORDER BY ativo DESC, nome') as $v): ?>
     <tr><td><?= h($v['nome']) ?></td>
       <td><form method="post" class="row"><?= csrf_campo() ?><input type="hidden" name="acao" value="vend_senha"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>">
@@ -339,8 +352,8 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
         <button><?= ($v['usuario'] ?? '') === '' ? 'Criar acesso' : 'Gerar senha nova' ?></button></form>
         <?php if (($v['usuario'] ?? '') === ''): ?><span class="small">Ainda usa a chave antiga. Crie usuário e senha.</span><?php endif ?></td>
       <td><form method="post" class="row"><?= csrf_campo() ?><input type="hidden" name="acao" value="vend_crm"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>">
-        <?php if ($crmVend): ?><select name="crm_vendedor_id" aria-label="Vendedor no CRM"><option value="">não ligado</option><?php foreach ($crmVend as $cv => $t): ?><option value="<?= h((string)$cv) ?>" <?= (string)$cv === $v['crm_vendedor_id'] ? 'selected' : '' ?>><?= h($t) ?></option><?php endforeach ?></select>
-        <?php else: ?><input name="crm_vendedor_id" value="<?= h($v['crm_vendedor_id']) ?>" size="8" aria-label="id no CRM"><?php endif ?>
+        <?php if ($crmVend): ?><select name="crm_vendedor_id" aria-label="Vendedor no <?= $DEST ?>"><option value="">não ligado</option><?php foreach ($crmVend as $cv => $t): ?><option value="<?= h((string)$cv) ?>" <?= (string)$cv === (string)$v[$colV] ? 'selected' : '' ?>><?= h($t) ?></option><?php endforeach ?></select>
+        <?php else: ?><input name="crm_vendedor_id" value="<?= h($v[$colV]) ?>" size="8" aria-label="id no <?= $DEST ?>"><?php endif ?>
         <button>Salvar</button></form></td>
       <td><?= $v['ativo'] ? '<span class="pill ok">Ativo</span>' : '<span class="pill er">Bloqueado</span>' ?></td>
       <td class="n"><?= h($v['ultimo_uso'] ?? '—') ?></td>
@@ -381,8 +394,8 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     $cont = db()->query("SELECT status, COUNT(*) n FROM vendas GROUP BY status")->fetchAll(PDO::FETCH_KEY_PAIR);
     $nFila = ($cont['fila'] ?? 0) + ($cont['forcar'] ?? 0) + ($cont['tentar'] ?? 0);
 ?>
-  <div class="topo"><div><h1>Vendas</h1><p class="small">Tudo o que chegou dos celulares e a situação no CRM.</p></div>
-    <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="enviar_agora"><button class="cta">Enviar fila ao CRM agora</button></form></div>
+  <div class="topo"><div><h1>Vendas</h1><p class="small">Tudo o que chegou dos celulares e a situação no <?= $DEST ?>.</p></div>
+    <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="enviar_agora"><button class="cta">Enviar fila ao <?= $DEST ?> agora</button></form></div>
   <?php
     $hoje = (int)db()->query("SELECT COUNT(*) FROM vendas WHERE date(recebido_em) = date('now','localtime')")->fetchColumn();
     $ontem = (int)db()->query("SELECT COUNT(*) FROM vendas WHERE date(recebido_em) = date('now','localtime','-1 day')")->fetchColumn();
@@ -394,16 +407,16 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     <div class="kpi forte"><span>Recebidas hoje</span><b><?= $hoje ?></b><small><?= $dif === 0 ? 'igual a ontem' : ($dif > 0 ? '+' . $dif . ' que ontem' : $dif . ' que ontem') ?></small></div>
     <div class="kpi"><span>Na fila</span><b class="q"><?= $nFila ?></b><small>entram em segundos</small></div>
     <div class="kpi"><span>Com erro</span><b class="er"><?= (int)($cont['erro'] ?? 0) ?></b><small>precisam de você</small></div>
-    <div class="kpi"><span>No CRM no mês</span><b class="ok"><?= $mes ?></b><small><?= $ativos ?> <?= $ativos === 1 ? 'vendedor ativo' : 'vendedores ativos' ?></small></div>
+    <div class="kpi"><span>No <?= $DEST ?> no mês</span><b class="ok"><?= $mes ?></b><small><?= $ativos ?> <?= $ativos === 1 ? 'vendedor ativo' : 'vendedores ativos' ?></small></div>
   </div>
   <div class="row">
     <a href="?p=vendas"><span class="pill mu">Todas</span></a>
     <a href="?p=vendas&amp;st=fila"><span class="pill q">Na fila <?= $nFila ?></span></a>
     <a href="?p=vendas&amp;st=erro"><span class="pill er">Com erro <?= (int)($cont['erro'] ?? 0) ?></span></a>
-    <a href="?p=vendas&amp;st=crm"><span class="pill ok">No CRM <?= (int)($cont['crm'] ?? 0) ?></span></a>
+    <a href="?p=vendas&amp;st=crm"><span class="pill ok">No <?= $DEST ?> <?= (int)($cont['crm'] ?? 0) ?></span></a>
   </div>
   <div class="card tw"><table>
-    <tr><th>#</th><th>Recebido</th><th>Tipo</th><th>Cliente</th><th>Vendedor</th><th>CRM</th><th></th></tr>
+    <tr><th>#</th><th>Recebido</th><th>Tipo</th><th>Cliente</th><th>Vendedor</th><th><?= $DEST ?></th><th></th></tr>
     <?php foreach (db()->query("SELECT v.*, d.nome AS vendedor FROM vendas v JOIN vendedores d ON d.id=v.vendedor_id $where ORDER BY v.id DESC LIMIT 300") as $v):
         [$rot, $cls] = $SITUACAO[$v['status']] ?? [$v['status'], 'mu']; $r = json_decode($v['dados'], true) ?: []; ?>
     <tr><td class="n"><?= (int)$v['id'] ?></td><td class="n"><?= h($v['recebido_em']) ?></td><td><span class="tp tp-<?= h($v['tipo']) ?>"><?= h($NOMES[$v['tipo']] ?? $v['tipo']) ?></span></td>
