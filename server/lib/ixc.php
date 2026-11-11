@@ -21,9 +21,12 @@ final class Ixc
 
     public function __construct(string $url, private string $token)
     {
-        $url = rtrim($url, '/');
-        $url = preg_replace('#/app(/.*)?$#', '', $url) ?? $url; // aceita o endereço da tela de login
-        $this->base = preg_match('#/webservice/v1$#', $url) ? $url : $url . '/webservice/v1';
+        // usa só https://host, seja qual for a tela colada (/adm.php, /app/login, /webservice/v1...)
+        $url = trim($url);
+        if (!preg_match('#^https?://#i', $url)) {
+            $url = 'https://' . $url;
+        }
+        $this->base = (preg_match('#^(https?://[^/?\#\s]+)#i', $url, $m) ? $m[1] : rtrim($url, '/')) . '/webservice/v1';
     }
 
     /** Chamada à API. $listar = true usa o cabeçalho "ixcsoft: listar" (consulta). */
