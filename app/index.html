@@ -946,7 +946,9 @@ $("btnEnviar").addEventListener("click",function(){
   else r.crm={st:"fila",crmId:r.crm&&r.crm.crmId||"",tent:0,atualizar:!!(r.crm&&r.crm.crmId)};
   editingId=r.id;
   if(!save(K.recs,recs))toast("Atenção: o celular não deixou salvar no histórico");
-  rascunho();renderBadge();renderListas();abrirEnvio(r);sincronizar();
+  renderBadge();renderListas();abrirEnvio(r);sincronizar();
+  /* já está salvo no histórico: o formulário fica limpo para o próximo cadastro */
+  editingId=null;setForm({tipo:o.tipo});save(K.draft,null);$("cepHint").textContent="Com internet, preenche rua, bairro e cidade.";
 });
 $("btnWa").addEventListener("click",marcarEnviado);
 $("btnOutro").addEventListener("click",function(){if(!atual)return;compartilhar(atual,mensagem(atual),true).then(function(ok){if(ok===true)marcarEnviado()})});
