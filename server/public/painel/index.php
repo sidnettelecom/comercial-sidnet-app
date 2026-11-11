@@ -179,7 +179,12 @@ if (is_file($arqV)) {
         $crmVend[$o['valor']] = $o['texto'];
     }
 }
-$aba = fn(string $k, string $t) => '<a href="?p=' . $k . '"' . ($p === $k ? ' aria-current="page"' : '') . '>' . $t . '</a>';
+$ICONES = [
+    'vendas' => '<path d="M4 6h16M4 12h16M4 18h10"/>',
+    'vendedores' => '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.4 3.6 5.2"/>',
+    'gestores' => '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+];
+$aba = fn(string $k, string $t) => '<a href="?p=' . $k . '"' . (($p === $k || ($k === 'vendas' && $p === 'excluir')) ? ' aria-current="page"' : '') . '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $ICONES[$k] . '</svg>' . $t . '</a>';
 ?>
 <!doctype html>
 <html lang="pt-BR">
@@ -219,12 +224,64 @@ details summary{cursor:pointer;color:var(--brand);font-size:12.5px}pre{white-spa
 a.bt{display:inline-block;padding:6px 11px;border-radius:6px;border:1px solid var(--line);background:var(--surface);font-weight:600;text-decoration:none}
 button.del,a.bt.del{color:var(--er);border-color:color-mix(in srgb,var(--er) 40%,var(--line))}button.del.pri{background:var(--er);color:#fff;border-color:var(--er)}
 .login{max-width:380px;display:grid;gap:8px}.login input{width:100%}h2{margin:0 0 8px;font-size:16px}
+
+/* ===== versão viva: menu lateral em degradê, cartões arredondados, cores por tipo ===== */
+:root{--bg:#f3f6fc;--surface:#fff;--ink:#0f1b3d;--muted:#56627d;--line:#e1e7f2;--brand:#1d4ed8;--brand-ink:#fff;
+--q:#f59e0b;--ok:#047857;--ok-bg:#dcfce7;--er:#be123c;--er-bg:#ffe4e6;--sombra:0 6px 20px rgba(15,27,61,.07);
+--g-lado:linear-gradient(180deg,#0b1e5b 0%,#102a7a 60%,#0e7490 100%);--g-btn:linear-gradient(90deg,#1d4ed8,#0891b2);--g-cta:linear-gradient(90deg,#f59e0b,#f97316)}
+@media (prefers-color-scheme:dark){:root{--bg:#0a1330;--surface:#111d42;--ink:#e7ecfb;--muted:#a3b0d0;--line:#24315c;--brand:#7aa2ff;--brand-ink:#0a1330;
+--ok:#6ee7a8;--ok-bg:#0f3326;--er:#fda4af;--er-bg:#3b1220;--sombra:0 6px 20px rgba(0,0,0,.35)}}
+body.dentro{display:flex;flex-wrap:wrap;min-height:100vh}
+body.fora{min-height:100vh;background:linear-gradient(165deg,#0b1e5b 0%,#1d4ed8 48%,#0891b2 100%);display:grid;place-items:center}
+body.fora main{width:100%;max-width:420px}
+.lado{flex:1 1 230px;max-width:100%;box-sizing:border-box;background:var(--g-lado);color:#fff;padding:22px 16px;display:flex;flex-direction:column;gap:24px}
+.lado .marca{display:flex;align-items:center;gap:12px}
+.lado .marca img{background:#fff;border-radius:14px;padding:2px;flex:none}
+.lado .marca b{display:block;font-size:15.5px}.lado .marca span{font-size:12px;color:#bfdbfe}
+.lado nav{display:flex;flex-direction:column;gap:4px}
+.lado nav a{display:flex;align-items:center;gap:12px;height:44px;padding:0 12px;border-radius:14px;color:#dbeafe;text-decoration:none;font-weight:700}
+.lado nav a svg{width:20px;height:20px}
+.lado nav a[aria-current]{background:rgba(255,255,255,.16);color:#fff}
+.lado nav a:hover{background:rgba(255,255,255,.1)}
+.lado .status{margin-top:auto;background:rgba(255,255,255,.12);border-radius:16px;padding:14px;display:grid;gap:6px;font-size:13px}
+.lado .status div{display:flex;align-items:center;gap:8px;font-weight:700}
+.lado .status i{width:8px;height:8px;border-radius:50%;background:#4ade80;box-shadow:0 0 0 4px rgba(74,222,128,.25)}
+.lado .status span{font-size:12px;color:#bfdbfe}.lado .status a{color:#fff;font-weight:700}
+body.dentro main{flex:999 1 560px;min-width:0;max-width:none;margin:0;padding:26px clamp(16px,3vw,32px) 40px;align-content:start}
+.topo{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.topo h1{margin:0;font-size:28px;letter-spacing:-.02em}.topo p{margin:2px 0 0}
+button.cta{background:var(--g-cta);color:#1c1203;border:0;height:46px;padding:0 18px;border-radius:14px;font-weight:800;box-shadow:0 10px 22px rgba(249,115,22,.35)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.kpi{background:var(--surface);border-radius:20px;padding:16px 18px;box-shadow:var(--sombra);display:grid;gap:4px}
+.kpi span{font-size:13px;font-weight:700;color:var(--muted)}.kpi b{font-size:32px;line-height:1.1}.kpi small{font-size:12px;color:var(--muted)}
+.kpi b.q{color:#b45309}.kpi b.er{color:var(--er)}.kpi b.ok{color:var(--ok)}
+.kpi.forte{background:var(--g-btn);color:#fff;box-shadow:0 12px 28px rgba(29,78,216,.28)}.kpi.forte span,.kpi.forte small{color:#dbeafe}
+.card{border:0;border-radius:20px;box-shadow:var(--sombra)}
+.msg{border:0;border-left:5px solid var(--brand);border-radius:14px;box-shadow:var(--sombra)}
+.pill{border-radius:10px;padding:6px 11px;font-size:12px}
+.pill.q{background:#fef3c7;color:#92400e}
+button{border-radius:10px}button.pri{background:var(--g-btn);border:0;color:#fff}
+input,select{border-radius:10px}
+th{background:transparent}tr:hover td{background:color-mix(in srgb,var(--brand) 4%,transparent)}
+.tp{display:inline-block;padding:4px 10px;border-radius:10px;font-size:12px;font-weight:800;white-space:nowrap}
+.tp-venda{background:#dbeafe;color:#1e40af}.tp-upgrade{background:#ede9fe;color:#5b21b6}.tp-segundo{background:#d1fae5;color:#065f46}
+.entrada{max-width:420px;margin:0 auto;border-radius:26px;padding:26px 22px;text-align:left}
+.entrada .logo-entrada{display:block;margin:0 auto;border-radius:32px}
+.entrada h2{text-align:center;font-size:22px;margin:4px 0 6px}.entrada h2 span{display:block;font-size:13px;color:var(--muted);font-weight:600}
+.entrada button.pri{background:var(--g-cta);color:#1c1203;height:48px;font-weight:800;font-size:16px;margin-top:6px}
+body.fora .msg{margin-bottom:12px}
+td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2px 0 2px 4px;vertical-align:middle}
 </style>
 </head>
-<body>
-<header><div class="in"><b class="marca"><img src="/app/logo-96.png" alt="" width="40" height="40">Comercial + Sidnet · Painel</b>
-<?php if ($logado): ?><?= $aba('vendas', 'Vendas') . $aba('vendedores', 'Vendedores') . $aba('gestores', 'Gestores') ?><a href="?sair=1">Sair (<?= h($quem) ?>)</a><?php endif ?>
-</div></header>
+<body class="<?= $logado ? 'dentro' : 'fora' ?>">
+<?php if ($logado):
+    $ultimo = db()->query("SELECT MAX(enviado_crm_em) FROM vendas")->fetchColumn(); ?>
+<aside class="lado">
+  <div class="marca"><img src="/app/logo-96.png" alt="" width="48" height="48"><div><b>Comercial + SIDNET</b><span>Painel do gestor</span></div></div>
+  <nav aria-label="Seções"><?= $aba('vendas', 'Vendas') . $aba('vendedores', 'Vendedores') . $aba('gestores', 'Gestores') ?></nav>
+  <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao CRM: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
+</aside>
+<?php endif ?>
 <main>
 <?php if ($msg): ?><div class="msg" role="status"><?= h($msg) ?></div><?php endif ?>
 <?php if ($novaSenha): ?>
@@ -234,9 +291,10 @@ button.del,a.bt.del{color:var(--er);border-color:color-mix(in srgb,var(--er) 40%
 <?php endif ?>
 
 <?php if (!$logado): ?>
-  <form method="post" class="card login">
+  <form method="post" class="card login entrada">
     <?= csrf_campo() ?>
-    <h2>Entrar no painel</h2>
+    <img src="/app/logo-256.png" alt="" width="132" height="132" class="logo-entrada">
+    <h2>Comercial + SIDNET<span>Painel do gestor</span></h2>
     <label for="usuario">Usuário</label><input id="usuario" name="usuario" autocomplete="username" autocapitalize="none" autofocus required>
     <label for="senha">Senha</label><input id="senha" type="password" name="senha" autocomplete="current-password" required>
     <button class="pri" name="entrar" value="1">Entrar</button>
@@ -321,18 +379,32 @@ button.del,a.bt.del{color:var(--er);border-color:color-mix(in srgb,var(--er) 40%
     $cont = db()->query("SELECT status, COUNT(*) n FROM vendas GROUP BY status")->fetchAll(PDO::FETCH_KEY_PAIR);
     $nFila = ($cont['fila'] ?? 0) + ($cont['forcar'] ?? 0) + ($cont['tentar'] ?? 0);
 ?>
+  <div class="topo"><div><h1>Vendas</h1><p class="small">Tudo o que chegou dos celulares e a situação no CRM.</p></div>
+    <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="enviar_agora"><button class="cta">Enviar fila ao CRM agora</button></form></div>
+  <?php
+    $hoje = (int)db()->query("SELECT COUNT(*) FROM vendas WHERE date(recebido_em) = date('now','localtime')")->fetchColumn();
+    $ontem = (int)db()->query("SELECT COUNT(*) FROM vendas WHERE date(recebido_em) = date('now','localtime','-1 day')")->fetchColumn();
+    $mes = (int)db()->query("SELECT COUNT(*) FROM vendas WHERE status='crm' AND strftime('%Y-%m', enviado_crm_em) = strftime('%Y-%m','now','localtime')")->fetchColumn();
+    $ativos = (int)db()->query("SELECT COUNT(*) FROM vendedores WHERE ativo=1")->fetchColumn();
+    $dif = $hoje - $ontem;
+  ?>
+  <div class="kpis">
+    <div class="kpi forte"><span>Recebidas hoje</span><b><?= $hoje ?></b><small><?= $dif === 0 ? 'igual a ontem' : ($dif > 0 ? '+' . $dif . ' que ontem' : $dif . ' que ontem') ?></small></div>
+    <div class="kpi"><span>Na fila</span><b class="q"><?= $nFila ?></b><small>entram em segundos</small></div>
+    <div class="kpi"><span>Com erro</span><b class="er"><?= (int)($cont['erro'] ?? 0) ?></b><small>precisam de você</small></div>
+    <div class="kpi"><span>No CRM no mês</span><b class="ok"><?= $mes ?></b><small><?= $ativos ?> <?= $ativos === 1 ? 'vendedor ativo' : 'vendedores ativos' ?></small></div>
+  </div>
   <div class="row">
     <a href="?p=vendas"><span class="pill mu">Todas</span></a>
     <a href="?p=vendas&amp;st=fila"><span class="pill q">Na fila <?= $nFila ?></span></a>
     <a href="?p=vendas&amp;st=erro"><span class="pill er">Com erro <?= (int)($cont['erro'] ?? 0) ?></span></a>
     <a href="?p=vendas&amp;st=crm"><span class="pill ok">No CRM <?= (int)($cont['crm'] ?? 0) ?></span></a>
-    <form method="post" class="in" style="margin-left:auto"><?= csrf_campo() ?><input type="hidden" name="acao" value="enviar_agora"><button class="pri">Enviar fila ao CRM agora</button></form>
   </div>
   <div class="card tw"><table>
     <tr><th>#</th><th>Recebido</th><th>Tipo</th><th>Cliente</th><th>Vendedor</th><th>CRM</th><th></th></tr>
     <?php foreach (db()->query("SELECT v.*, d.nome AS vendedor FROM vendas v JOIN vendedores d ON d.id=v.vendedor_id $where ORDER BY v.id DESC LIMIT 300") as $v):
         [$rot, $cls] = $SITUACAO[$v['status']] ?? [$v['status'], 'mu']; $r = json_decode($v['dados'], true) ?: []; ?>
-    <tr><td class="n"><?= (int)$v['id'] ?></td><td class="n"><?= h($v['recebido_em']) ?></td><td><?= h($NOMES[$v['tipo']] ?? $v['tipo']) ?></td>
+    <tr><td class="n"><?= (int)$v['id'] ?></td><td class="n"><?= h($v['recebido_em']) ?></td><td><span class="tp tp-<?= h($v['tipo']) ?>"><?= h($NOMES[$v['tipo']] ?? $v['tipo']) ?></span></td>
       <td><?= h($v['nome']) ?><br><span class="small"><?= h(($r['cpf'] ?? '') . ' · ' . ($r['tel1'] ?? '') . ' · ' . ($r['cidade'] ?? '')) ?></span>
         <details><summary>ver cadastro</summary><pre><?= h(json_encode($r, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) ?></pre></details></td>
       <td><?= h($v['vendedor']) ?></td>
