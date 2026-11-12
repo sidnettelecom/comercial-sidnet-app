@@ -328,6 +328,7 @@ $ICONES = [
     'vendedores' => '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.4 3.6 5.2"/>',
     'planos' => '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10h6M7 14h10"/>',
     'comissoes' => '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.8 0-3 .9-3 2.1 0 2.9 6 1.6 6 4.6 0 1.3-1.3 2.3-3 2.3-1.5 0-2.7-.6-3.2-1.7M12 6.5V8m0 9v1.5"/>',
+    'mes' => '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2.5v3M16 2.5v3M7.5 13.5h3M7.5 17h6"/>',
     'gestores' => '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
 ];
 $aba = fn(string $k, string $t) => '<a href="?p=' . $k . '"' . (($p === $k || ($k === 'vendas' && $p === 'excluir')) ? ' aria-current="page"' : '') . '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $ICONES[$k] . '</svg>' . $t . '</a>';
@@ -427,6 +428,16 @@ th{background:transparent}tr:hover td{background:color-mix(in srgb,var(--brand) 
 @media (max-width:800px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .com table{min-width:1180px}.com th,.com td{padding:8px 6px}.com td{vertical-align:middle}.com input,.com select{height:34px;padding:0 8px;font-size:13px}.com input{width:82px}.com input[type=date]{width:136px}.com td.small{max-width:130px}
 .com input.forte{font-weight:700}
+.mes{display:grid;gap:0;padding-top:6px}.mes>*{min-width:0}
+.mes-l{display:grid;grid-template-columns:minmax(200px,2fr) repeat(5,minmax(60px,.7fr)) repeat(3,minmax(96px,1fr));gap:10px;align-items:center;padding:12px 8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+.mes-l>span:not(.quem){text-align:right}.mes-l>span:first-child{text-align:left}.mes-h{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.mes-v>summary{cursor:pointer;list-style:none;border-radius:10px;color:var(--fg)}.mes-v>summary::-webkit-details-marker{display:none}.mes-v>summary:hover{background:var(--bg)}
+.mes-v .quem{display:grid;gap:6px}.mes-v .quem b::before{content:"▸ ";color:var(--muted)}.mes-v[open] .quem b::before{content:"▾ "}
+.mes-v[open]>summary{background:var(--bg)}.mes-v small{color:var(--muted)}
+.mes .barra-m{display:block;height:6px;border-radius:3px;background:var(--line)}.mes .barra-m i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#2563eb,#0891b2)}
+.mes table.det{margin:6px 0 14px;font-size:13px;min-width:640px}.mes table.det td,.mes table.det th{padding:7px 8px}
+.mes-t{font-weight:700;border-top:2px solid var(--line);border-bottom:0}
+@media (max-width:900px){.mes-h{display:none}.mes-l{grid-template-columns:1fr 1fr;row-gap:4px}.mes-l>.quem,.mes-t>span:first-child{grid-column:1/-1}.mes-l>span[data-r]{text-align:left;font-size:13px}.mes-l>span[data-r]::before{content:attr(data-r) ": ";color:var(--muted)}}
 .com tr.paga td{background:color-mix(in srgb,var(--ok-bg) 70%,transparent)}
 .com tr.apagar td{background:#fef9c3}
 @media (prefers-color-scheme:dark){.com tr.apagar td{background:#3a3210}}
@@ -477,7 +488,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     $ultimo = db()->query("SELECT MAX(enviado_crm_em) FROM vendas")->fetchColumn(); ?>
 <aside class="lado">
   <div class="marca"><img src="/app/logo-96.png" alt="" width="48" height="48"><div><b>Comercial + SIDNET</b><span>Painel do gestor</span></div></div>
-  <nav aria-label="Seções"><?= $aba('vendas', 'Vendas') . $aba('vendedores', 'Vendedores') . $aba('planos', 'Planos') . ($admin ? $aba('comissoes', 'Comissões') : '') . $aba('gestores', 'Gestores') ?></nav>
+  <nav aria-label="Seções"><?= $aba('vendas', 'Vendas') . $aba('mes', 'Vendas do mês') . $aba('vendedores', 'Vendedores') . $aba('planos', 'Planos') . ($admin ? $aba('comissoes', 'Comissões') : '') . $aba('gestores', 'Gestores') ?></nav>
   <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
 <?php endif ?>
@@ -557,6 +568,72 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
   </form>
   <?php endif ?>
 
+<?php elseif ($p === 'mes'):
+    $mesAtualM = date('Y-m');
+    $mesM = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) ? (string)$_GET['mes'] : $mesAtualM;
+    $precosM = comissoes_precos_planos();
+    $qM = db()->prepare("SELECT v.id, v.tipo, v.nome, v.dados, v.status, v.recebido_em, d.nome AS vendedor, c.valor_plano
+        FROM vendas v JOIN vendedores d ON d.id = v.vendedor_id LEFT JOIN comissoes c ON c.venda_id = v.id
+        WHERE v.status <> 'descartada' AND v.tipo IN ('venda','upgrade','segundo') AND strftime('%Y-%m', v.recebido_em, 'localtime') = ?
+        ORDER BY d.nome, v.recebido_em");
+    $qM->execute([$mesM]);
+    $porV = [];
+    $totM = ['venda' => 0, 'upgrade' => 0, 'segundo' => 0, 'n' => 0, 'ixc' => 0, 'pend' => 0, 'inst' => 0.0, 'rot' => 0.0, 'plano' => 0.0];
+    foreach ($qM as $r) {
+        $dd = json_decode((string)$r['dados'], true) ?: [];
+        $vp = (string)($r['valor_plano'] ?? '');
+        if ($vp === '') $vp = $r['tipo'] === 'upgrade' ? dinheiro((string)($dd['valNovo'] ?? '')) : (string)($precosM[up(sem_acento((string)($dd['plano'] ?? '')))] ?? '');
+        $r['plano'] = $r['tipo'] === 'upgrade' ? up((string)($dd['velNova'] ?? '')) : up((string)($dd['plano'] ?? ''));
+        $r['vp'] = (float)($vp ?: 0);
+        $r['inst'] = (float)(dinheiro((string)($dd['valInst'] ?? '')) ?: 0);
+        $r['rot'] = (float)(dinheiro((string)($dd['valRot'] ?? '')) ?: 0);
+        $r['cidade'] = up((string)($dd['cidade'] ?? ''));
+        $g = &$porV[$r['vendedor']];
+        $g ??= ['venda' => 0, 'upgrade' => 0, 'segundo' => 0, 'n' => 0, 'ixc' => 0, 'pend' => 0, 'inst' => 0.0, 'rot' => 0.0, 'plano' => 0.0, 'linhas' => []];
+        foreach ([&$g, &$totM] as &$t) {
+            $t[$r['tipo']]++; $t['n']++;
+            $r['status'] === 'crm' ? $t['ixc']++ : $t['pend']++;
+            $t['inst'] += $r['inst']; $t['rot'] += $r['rot']; $t['plano'] += $r['vp'];
+        }
+        unset($t);
+        $g['linhas'][] = $r;
+        unset($g);
+    }
+    uasort($porV, fn($a, $b) => $b['n'] <=> $a['n']);
+    $maxM = max([1, ...array_values(array_map(fn($g) => $g['n'], $porV))]);
+    $R = fn(float $v) => 'R$ ' . brl(number_format($v, 2, '.', ''));
+?>
+  <div class="card"><form method="get" class="row"><input type="hidden" name="p" value="mes">
+      <h2 style="margin:0">Vendas do mês por vendedor</h2>
+      <select name="mes" aria-label="Mês" onchange="this.form.submit()"><?php for ($i = 0; $i <= 12; $i++): $om = mes_soma($mesAtualM, -$i); ?><option value="<?= $om ?>" <?= $om === $mesM ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endfor ?></select>
+      <button>Ver</button></form>
+    <p class="small" style="margin:8px 0 0">Tudo o que os vendedores cadastraram no mês (vendas novas, upgrades e 2º ponto), mais vendidos primeiro. Clique no vendedor para ver os clientes.</p>
+  </div>
+  <div class="kpis">
+    <div><b><?= $totM['n'] ?></b><span>cadastros em <?= h(mes_nome($mesM)) ?></span></div>
+    <div><b><?= $totM['venda'] ?> · <?= $totM['upgrade'] ?> · <?= $totM['segundo'] ?></b><span>vendas novas · upgrades · 2º ponto</span></div>
+    <div class="ok"><b><?= $totM['ixc'] ?></b><span>já no <?= $DEST ?><?= $totM['pend'] ? ' · ' . $totM['pend'] . ' pendentes' : '' ?></span></div>
+    <div><b><?= $R($totM['plano']) ?></b><span>em mensalidades vendidas</span></div>
+  </div>
+  <div class="card mes">
+    <div class="mes-l mes-h"><span>Vendedor</span><span>Vendas novas</span><span>Upgrades</span><span>2º ponto</span><span>Total</span><span>No <?= $DEST ?></span><span>Mensalidades</span><span>Instalação</span><span>Roteador</span></div>
+    <?php foreach ($porV as $nomeV => $g): ?>
+    <details class="mes-v"><summary class="mes-l">
+        <span class="quem"><b><?= h($nomeV) ?></b><span class="barra-m"><i style="width:<?= round($g['n'] / $maxM * 100) ?>%"></i></span></span>
+        <span data-r="Vendas novas"><?= $g['venda'] ?></span><span data-r="Upgrades"><?= $g['upgrade'] ?></span><span data-r="2º ponto"><?= $g['segundo'] ?></span><span data-r="Total"><b><?= $g['n'] ?></b></span>
+        <span data-r="No <?= $DEST ?>"><?= $g['ixc'] ?><?= $g['pend'] ? ' <small>(' . $g['pend'] . ' pend.)</small>' : '' ?></span>
+        <span data-r="Mensalidades"><?= $R($g['plano']) ?></span><span data-r="Instalação"><?= $R($g['inst']) ?></span><span data-r="Roteador"><?= $R($g['rot']) ?></span></summary>
+      <div class="tw"><table class="det"><tr><th>Dia</th><th>Cliente</th><th>Cidade</th><th>Tipo</th><th>Plano</th><th>Mensalidade</th><th>Situação</th></tr>
+      <?php foreach ($g['linhas'] as $l): $sit = $SITUACAO[$l['status']] ?? [$l['status'], 'mu']; ?>
+        <tr><td><?= h(date('d/m', strtotime($l['recebido_em']))) ?></td><td><?= h($l['nome']) ?></td><td class="small"><?= h($l['cidade']) ?></td>
+          <td><span class="tp tp-<?= h($l['tipo']) ?>"><?= h(COMISSAO_TIPOS[$l['tipo']] ?? $l['tipo']) ?></span></td>
+          <td class="small"><?= h($l['plano']) ?></td><td class="n"><?= $l['vp'] ? $R($l['vp']) : '—' ?></td>
+          <td><span class="pill <?= $sit[1] ?>"><?= h($sit[0]) ?></span></td></tr>
+      <?php endforeach ?></table></div></details>
+    <?php endforeach ?>
+    <?php if ($porV): ?><div class="mes-l mes-t"><span>Total</span><span data-r="Vendas novas"><?= $totM['venda'] ?></span><span data-r="Upgrades"><?= $totM['upgrade'] ?></span><span data-r="2º ponto"><?= $totM['segundo'] ?></span><span data-r="Total"><?= $totM['n'] ?></span><span data-r="No <?= $DEST ?>"><?= $totM['ixc'] ?></span><span data-r="Mensalidades"><?= $R($totM['plano']) ?></span><span data-r="Instalação"><?= $R($totM['inst']) ?></span><span data-r="Roteador"><?= $R($totM['rot']) ?></span></div>
+    <?php else: ?><p class="small">Nenhum cadastro em <?= h(mes_nome($mesM)) ?>.</p><?php endif ?>
+  </div>
 <?php elseif ($p === 'vendedores'): ?>
   <form method="post" class="card row">
     <?= csrf_campo() ?><input type="hidden" name="acao" value="vend_novo">
