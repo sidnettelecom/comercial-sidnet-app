@@ -116,6 +116,10 @@ function criar_tabelas(PDO $pdo): void
     if (!in_array('ixc_vendedor_id', $colsD, true)) {
         $pdo->exec("ALTER TABLE vendedores ADD COLUMN ixc_vendedor_id TEXT NOT NULL DEFAULT ''");
     }
+    if (!in_array('ixc_colaborador_id', $colsD, true)) {
+        // colaborador do IXC (funcionarios) que aparece como Responsável no lead, prospect e negociação
+        $pdo->exec("ALTER TABLE vendedores ADD COLUMN ixc_colaborador_id TEXT NOT NULL DEFAULT ''");
+    }
     // vendedores ganham usuário e senha (antes era só a chave)
     $cols = array_column($pdo->query('PRAGMA table_info(vendedores)')->fetchAll(), 'name');
     if (!in_array('usuario', $cols, true)) {

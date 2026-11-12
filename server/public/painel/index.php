@@ -122,7 +122,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $senha = gerar_senha();
             $novoId = vendedor_novo((string)($_POST['nome'] ?? ''), destino() === 'crm' ? (string)($_POST['crm_vendedor_id'] ?? '') : '', (string)($_POST['usuario'] ?? ''), $senha);
             if (destino() === 'ixc') {
-                db()->prepare('UPDATE vendedores SET ixc_vendedor_id=? WHERE id=?')->execute([trim((string)($_POST['crm_vendedor_id'] ?? '')), $novoId]);
+                db()->prepare('UPDATE vendedores SET ixc_vendedor_id=?, ixc_colaborador_id=? WHERE id=?')->execute([trim((string)($_POST['crm_vendedor_id'] ?? '')), so_digitos((string)($_POST['ixc_colaborador_id'] ?? '')), $novoId]);
             }
             $novaSenha = ['quem' => up($_POST['nome'] ?? ''), 'usuario' => usuario_valido((string)$_POST['usuario']), 'senha' => $senha];
             registrar($quem, 'criou vendedor', up($_POST['nome'] ?? '') . ' (' . $novaSenha['usuario'] . ')');
@@ -134,6 +134,9 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             registrar($quem, 'nova senha de vendedor', (string)$n);
         } elseif ($a === 'vend_crm') {
             db()->prepare("UPDATE vendedores SET $colV=? WHERE id=?")->execute([trim((string)$_POST['crm_vendedor_id']), $id]);
+            if (destino() === 'ixc' && isset($_POST['ixc_colaborador_id'])) {
+                db()->prepare('UPDATE vendedores SET ixc_colaborador_id=? WHERE id=?')->execute([so_digitos((string)$_POST['ixc_colaborador_id']), $id]);
+            }
             $msg = 'Vendedor atualizado.';
         } elseif ($a === 'vend_ativo') {
             db()->prepare('UPDATE vendedores SET ativo = 1 - ativo WHERE id=?')->execute([$id]);
@@ -147,11 +150,29 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (($o['status'] ?? $o['ativo'] ?? 'A') !== 'I' && ($o['ativo'] ?? 'S') !== 'N') $lista[] = ['valor' => (string)$o['id'], 'texto' => up($o['nome'] ?? '')];
                 }
                 file_put_contents(dirname($cfg['banco']) . '/ixc-vendedores.json', json_encode($lista, JSON_UNESCAPED_UNICODE));
+                $cols = [];
+                foreach (ixc()->listar('funcionarios', 'id', '0', '>', 1000, 'asc') as $o) {
+                    if (($o['ativo'] ?? 'S') === 'N') continue;
+                    $cols[] = ['valor' => (string)$o['id'], 'texto' => up($o['funcionario'] ?? ($o['nome'] ?? ''))];
+                }
+                file_put_contents(dirname($cfg['banco']) . '/ixc-colaboradores.json', json_encode($cols, JSON_UNESCAPED_UNICODE));
+                // liga sozinho quem ainda não tem colaborador e tem o mesmo nome no IXC
+                $porNome = [];
+                foreach ($cols as $c) $porNome[up(sem_acento($c['texto']))][] = $c['valor'];
+                $ligados = 0;
+                foreach (db()->query("SELECT id, nome FROM vendedores WHERE ixc_colaborador_id = ''")->fetchAll() as $vd) {
+                    $ids = $porNome[up(sem_acento((string)$vd['nome']))] ?? [];
+                    if (count($ids) === 1) {
+                        db()->prepare('UPDATE vendedores SET ixc_colaborador_id=? WHERE id=?')->execute([$ids[0], $vd['id']]);
+                        $ligados++;
+                    }
+                }
+                $msg = count($lista) . ' vendedores e ' . count($cols) . ' colaboradores carregados do IXC' . ($ligados ? "; $ligados ligados pelo nome" : '') . '.';
             } else {
                 $lista = Crm::opcoes(crm()->abrir('/novo-lead.php'), 'vendedor_id');
                 file_put_contents(dirname($cfg['banco']) . '/crm-vendedores.json', json_encode($lista, JSON_UNESCAPED_UNICODE));
             }
-            $msg = count($lista) . " vendedores carregados do $DEST.";
+            $msg = $msg ?: count($lista) . " vendedores carregados do $DEST.";
         } elseif ($a === 'gest_novo') {
             $u = usuario_valido((string)($_POST['usuario'] ?? ''));
             if ($u === '' || up($_POST['nome'] ?? '') === '') throw new RuntimeException('Preencha nome e usuário (3 a 40 letras minúsculas, números, ponto ou hífen).');
@@ -192,6 +213,20 @@ if (is_file($arqV)) {
         $crmVend[$o['valor']] = $o['texto'];
     }
 }
+$ixcCol = [];
+if (destino() === 'ixc' && is_file(dirname($cfg['banco']) . '/ixc-colaboradores.json')) {
+    foreach (json_decode((string)file_get_contents(dirname($cfg['banco']) . '/ixc-colaboradores.json'), true) ?: [] as $o) {
+        $ixcCol[$o['valor']] = $o['texto'];
+    }
+}
+$selCol = function (string $atual, string $id = '') use ($ixcCol): string {
+    if (!$ixcCol) {
+        return '<input' . ($id ? ' id="' . $id . '"' : '') . ' name="ixc_colaborador_id" value="' . h($atual) . '" size="6" placeholder="id" aria-label="Colaborador no IXC (responsável)">';
+    }
+    $o = '<select' . ($id ? ' id="' . $id . '"' : '') . ' name="ixc_colaborador_id" aria-label="Colaborador no IXC (responsável)"><option value="">padrão do config</option>';
+    foreach ($ixcCol as $v => $t) $o .= '<option value="' . h((string)$v) . '"' . ((string)$v === $atual ? ' selected' : '') . '>' . h($t) . '</option>';
+    return $o . '</select>';
+};
 $ICONES = [
     'vendas' => '<path d="M4 6h16M4 12h16M4 18h10"/>',
     'vendedores' => '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.4 3.6 5.2"/>',
@@ -339,12 +374,14 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     <label for="crmv">Vendedor no <?= $DEST ?></label>
     <?php if ($crmVend): ?><select id="crmv" name="crm_vendedor_id"><option value="">escolha</option><?php foreach ($crmVend as $v => $t): ?><option value="<?= h((string)$v) ?>"><?= h($t) ?></option><?php endforeach ?></select>
     <?php else: ?><input id="crmv" name="crm_vendedor_id" placeholder="id no <?= $DEST ?>" size="8"><?php endif ?>
+    <?php if (destino() === 'ixc'): ?><label for="ncol">Responsável no IXC</label><?= $selCol('', 'ncol') ?><?php endif ?>
     <button class="pri">Criar e gerar senha</button>
   </form>
   <form method="post" class="row"><?= csrf_campo() ?><input type="hidden" name="acao" value="crm_vendedores">
-    <button>Carregar vendedores do <?= $DEST ?></button><span class="small">Só lê a lista de vendedores. Não grava nada no <?= $DEST ?>.</span></form>
+    <button>Carregar vendedores do <?= $DEST ?></button><span class="small">Só lê a lista de vendedores<?= destino() === 'ixc' ? ' e colaboradores' : '' ?>. Não grava nada no <?= $DEST ?>.</span></form>
+  <?php if (destino() === 'ixc'): ?><p class="small">"Vendedor no IXC" vai no contrato. "Responsável no IXC" é o colaborador que aparece como responsável no lead, no prospect e na negociação das vendas que ele cadastra.</p><?php endif ?>
   <div class="card tw"><table>
-    <tr><th>Vendedor</th><th>Usuário e senha</th><th>No <?= $DEST ?></th><th>Acesso</th><th>Último uso</th><th></th></tr>
+    <tr><th>Vendedor</th><th>Usuário e senha</th><th>No <?= $DEST ?><?= destino() === 'ixc' ? ' (vendedor · responsável)' : '' ?></th><th>Acesso</th><th>Último uso</th><th></th></tr>
     <?php foreach (db()->query('SELECT * FROM vendedores ORDER BY ativo DESC, nome') as $v): ?>
     <tr><td><?= h($v['nome']) ?></td>
       <td><form method="post" class="row"><?= csrf_campo() ?><input type="hidden" name="acao" value="vend_senha"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>">
@@ -354,6 +391,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
       <td><form method="post" class="row"><?= csrf_campo() ?><input type="hidden" name="acao" value="vend_crm"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>">
         <?php if ($crmVend): ?><select name="crm_vendedor_id" aria-label="Vendedor no <?= $DEST ?>"><option value="">não ligado</option><?php foreach ($crmVend as $cv => $t): ?><option value="<?= h((string)$cv) ?>" <?= (string)$cv === (string)$v[$colV] ? 'selected' : '' ?>><?= h($t) ?></option><?php endforeach ?></select>
         <?php else: ?><input name="crm_vendedor_id" value="<?= h($v[$colV]) ?>" size="8" aria-label="id no <?= $DEST ?>"><?php endif ?>
+        <?php if (destino() === 'ixc'): ?><?= $selCol((string)($v['ixc_colaborador_id'] ?? '')) ?><?php endif ?>
         <button>Salvar</button></form></td>
       <td><?= $v['ativo'] ? '<span class="pill ok">Ativo</span>' : '<span class="pill er">Bloqueado</span>' ?></td>
       <td class="n"><?= h($v['ultimo_uso'] ?? '—') ?></td>
