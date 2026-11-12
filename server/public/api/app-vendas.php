@@ -147,7 +147,10 @@ try {
             $q->execute(array_merge([$vend['id']], $ids));
             foreach ($q as $r) {
                 if ($r['vencimento'] === '' && $r['cliente_pagou'] === '') continue;
-                $res[$r['id_app']] = ['pagou' => $r['cliente_pagou'], 'venc' => $r['vencimento']];
+                $pagou = $r['cliente_pagou'];
+                // "não pagou" só vale para o vendedor depois do vencimento; antes disso o boleto está a vencer
+                if ($pagou === 'N' && $r['vencimento'] !== '' && $r['vencimento'] >= date('Y-m-d')) $pagou = '';
+                $res[$r['id_app']] = ['pagou' => $pagou, 'venc' => $r['vencimento']];
             }
         }
         responder(200, ['ok' => true, 'boletos' => $res]);
