@@ -106,6 +106,14 @@ function criar_tabelas(PDO $pdo): void
         acao TEXT NOT NULL,
         detalhe TEXT NOT NULL DEFAULT ''
     );
+    -- planos que aparecem no app para todos os vendedores (definidos no painel)
+    CREATE TABLE IF NOT EXISTS planos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT NOT NULL UNIQUE,
+        valor TEXT NOT NULL DEFAULT '',
+        ordem INTEGER NOT NULL DEFAULT 0,
+        ativo INTEGER NOT NULL DEFAULT 1
+    );
     SQL);
     // envio ao IXC: o que já foi criado lá para cada venda (contrato, login, atendimento)
     $colsV = array_column($pdo->query('PRAGMA table_info(vendas)')->fetchAll(), 'name');
@@ -137,6 +145,16 @@ function criar_tabelas(PDO $pdo): void
 }
 
 /** Para onde as vendas vão: 'ixc' (IXC Provedor, pela API) ou 'crm' (crm.sidnet.com.br, pelas telas). */
+/** Planos ativos, na ordem do painel: [['nome' => ..., 'valor' => 109.9|null], ...] */
+function planos_ativos(): array
+{
+    $out = [];
+    foreach (db()->query('SELECT nome, valor FROM planos WHERE ativo = 1 ORDER BY ordem, nome') as $p) {
+        $out[] = ['nome' => $p['nome'], 'valor' => $p['valor'] !== '' ? (float)$p['valor'] : null];
+    }
+    return $out;
+}
+
 function destino(): string
 {
     return (config()['destino'] ?? 'crm') === 'ixc' ? 'ixc' : 'crm';

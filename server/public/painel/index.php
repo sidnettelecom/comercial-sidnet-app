@@ -89,6 +89,26 @@ $logado = (bool)$gestor;
 $quem = $gestor['usuario'] ?? '';
 
 // ---- ações ----
+/** "109,90", "R$ 109.90", "109" -> "109.90" ('' se vazio) */
+function plano_valor(string $v): string
+{
+    $v = preg_replace('/[^\d,.]/', '', $v);
+    if ($v === '') return '';
+    if (str_contains($v, ',')) $v = str_replace(['.', ','], ['', '.'], $v);
+    return is_numeric($v) && (float)$v > 0 ? number_format((float)$v, 2, '.', '') : '';
+}
+/** Planos de venda do IXC carregados pelo botão, por nome. */
+function planos_ixc_ler(string $arq): array
+{
+    $out = [];
+    if (is_file($arq)) {
+        foreach (json_decode((string)file_get_contents($arq), true) ?: [] as $o) $out[$o['nome']] = $o;
+    }
+    return $out;
+}
+$arqPlanosIxc = dirname($cfg['banco']) . '/ixc-planos.json';
+$ixcPlanos = destino() === 'ixc' ? planos_ixc_ler($arqPlanosIxc) : [];
+
 if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
     confere_csrf();
     $a = $_POST['acao'] ?? '';
@@ -173,6 +193,51 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 file_put_contents(dirname($cfg['banco']) . '/crm-vendedores.json', json_encode($lista, JSON_UNESCAPED_UNICODE));
             }
             $msg = $msg ?: count($lista) . " vendedores carregados do $DEST.";
+        } elseif ($a === 'plano_novo' || $a === 'plano_salvar') {
+            $nome = up(preg_replace('/\s+/', ' ', trim((string)($_POST['nome'] ?? ''))));
+            if ($nome === '') throw new RuntimeException('Digite o nome do plano.');
+            $valor = plano_valor((string)($_POST['valor'] ?? ''));
+            if ($valor === '' && isset($ixcPlanos[$nome]) && $ixcPlanos[$nome]['valor'] !== '') $valor = $ixcPlanos[$nome]['valor'];
+            $q = db()->prepare('SELECT id FROM planos WHERE nome = ? AND id <> ?');
+            $q->execute([$nome, $a === 'plano_novo' ? 0 : $id]);
+            if ($q->fetchColumn()) throw new RuntimeException("O plano \"$nome\" já está na lista.");
+            if ($a === 'plano_novo') {
+                $ordem = (int)db()->query('SELECT COALESCE(MAX(ordem), 0) + 1 FROM planos')->fetchColumn();
+                db()->prepare('INSERT INTO planos (nome, valor, ordem) VALUES (?, ?, ?)')->execute([$nome, $valor, $ordem]);
+                registrar($quem, 'criou plano', $nome);
+                $msg = "Plano $nome criado. Os celulares recebem a lista nova na próxima vez que abrirem o app com internet.";
+            } else {
+                db()->prepare('UPDATE planos SET nome = ?, valor = ? WHERE id = ?')->execute([$nome, $valor, $id]);
+                registrar($quem, 'alterou plano', $nome);
+                $msg = "Plano $nome salvo.";
+            }
+            if ($ixcPlanos && !isset($ixcPlanos[$nome])) $msg .= " Atenção: não achei um plano de venda com esse nome no IXC.";
+        } elseif ($a === 'plano_ativo') {
+            db()->prepare('UPDATE planos SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
+            registrar($quem, 'escondeu/mostrou plano', '#' . $id);
+            $msg = 'Plano alterado.';
+        } elseif ($a === 'plano_excluir') {
+            db()->prepare('DELETE FROM planos WHERE id = ?')->execute([$id]);
+            registrar($quem, 'excluiu plano', '#' . $id);
+            $msg = 'Plano excluído. As vendas antigas com ele não mudam.';
+        } elseif ($a === 'plano_mover') {
+            $ids = db()->query('SELECT id FROM planos ORDER BY ordem, nome')->fetchAll(PDO::FETCH_COLUMN);
+            $i = array_search($id, array_map('intval', $ids), true);
+            $j = $i === false ? false : $i + (($_POST['dir'] ?? '') === 'cima' ? -1 : 1);
+            if ($i !== false && isset($ids[$j])) {
+                [$ids[$i], $ids[$j]] = [$ids[$j], $ids[$i]];
+                $up = db()->prepare('UPDATE planos SET ordem = ? WHERE id = ?');
+                foreach ($ids as $n => $pid) $up->execute([$n + 1, $pid]);
+            }
+        } elseif ($a === 'planos_ixc') {
+            $lista = [];
+            foreach (ixc()->listar('vd_contratos', 'id', '0', '>', 1000, 'asc') as $o) {
+                if (($o['Ativo'] ?? $o['ativo'] ?? 'S') === 'N') continue;
+                $lista[] = ['id' => (string)$o['id'], 'nome' => up($o['nome'] ?? ''), 'valor' => plano_valor((string)($o['valor_contrato'] ?? ''))];
+            }
+            file_put_contents($arqPlanosIxc, json_encode($lista, JSON_UNESCAPED_UNICODE));
+            $ixcPlanos = planos_ixc_ler($arqPlanosIxc);
+            $msg = count($lista) . ' planos de venda ativos carregados do IXC. Escolha abaixo quais aparecem no app.';
         } elseif ($a === 'gest_novo') {
             $u = usuario_valido((string)($_POST['usuario'] ?? ''));
             if ($u === '' || up($_POST['nome'] ?? '') === '') throw new RuntimeException('Preencha nome e usuário (3 a 40 letras minúsculas, números, ponto ou hífen).');
@@ -230,6 +295,7 @@ $selCol = function (string $atual, string $id = '') use ($ixcCol): string {
 $ICONES = [
     'vendas' => '<path d="M4 6h16M4 12h16M4 18h10"/>',
     'vendedores' => '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.4 3.6 5.2"/>',
+    'planos' => '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10h6M7 14h10"/>',
     'gestores' => '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
 ];
 $aba = fn(string $k, string $t) => '<a href="?p=' . $k . '"' . (($p === $k || ($k === 'vendas' && $p === 'excluir')) ? ' aria-current="page"' : '') . '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $ICONES[$k] . '</svg>' . $t . '</a>';
@@ -307,6 +373,7 @@ button.cta{background:var(--g-cta);color:#1c1203;border:0;height:46px;padding:0 
 .card{border:0;border-radius:20px;box-shadow:var(--sombra)}
 .msg{border:0;border-left:5px solid var(--brand);border-radius:14px;box-shadow:var(--sombra)}
 .pill{border-radius:10px;padding:6px 11px;font-size:12px}
+.acoes{display:flex;gap:6px;flex-wrap:nowrap;align-items:center}.acoes form{margin:0}
 .pill.q{background:#fef3c7;color:#92400e}
 button{border-radius:10px}button.pri{background:var(--g-btn);border:0;color:#fff}
 input,select{border-radius:10px}
@@ -328,7 +395,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     $ultimo = db()->query("SELECT MAX(enviado_crm_em) FROM vendas")->fetchColumn(); ?>
 <aside class="lado">
   <div class="marca"><img src="/app/logo-96.png" alt="" width="48" height="48"><div><b>Comercial + SIDNET</b><span>Painel do gestor</span></div></div>
-  <nav aria-label="Seções"><?= $aba('vendas', 'Vendas') . $aba('vendedores', 'Vendedores') . $aba('gestores', 'Gestores') ?></nav>
+  <nav aria-label="Seções"><?= $aba('vendas', 'Vendas') . $aba('vendedores', 'Vendedores') . $aba('planos', 'Planos') . $aba('gestores', 'Gestores') ?></nav>
   <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
 <?php endif ?>
@@ -399,6 +466,51 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     <?php endforeach ?>
   </table></div>
   <p class="small">Senha gerada aqui é provisória e aparece uma vez só. Gerar senha nova tira o vendedor de todos os celulares em que ele estava logado.</p>
+
+<?php elseif ($p === 'planos'):
+    $planos = db()->query('SELECT * FROM planos ORDER BY ordem, nome')->fetchAll();
+    $ativos = count(array_filter($planos, fn($x) => $x['ativo']));
+    $jaTem = array_column($planos, 'nome'); ?>
+  <div class="card"><h2>Planos do app</h2>
+    <p class="small">Estes planos aparecem na lista "Plano selecionado" de todos os vendedores, no celular e na versão web. O app busca a lista ao entrar e sempre que abre com internet.
+    <?= $ativos ? '' : '<br><b>Nenhum plano ativo ainda:</b> enquanto a lista estiver vazia, cada celular continua usando a lista que tem em Ajustes.' ?>
+    <?php if (destino() === 'ixc'): ?><br>O nome precisa ser igual ao do plano de venda no IXC, senão a negociação entra sem plano.<?php endif ?></p></div>
+  <div class="card tw"><table>
+    <tr><th>Ordem</th><th>Plano</th><th>Valor mensal (R$)</th><?= destino() === 'ixc' ? '<th>No IXC</th>' : '' ?><th>No app</th><th></th></tr>
+    <?php foreach ($planos as $n => $pl): $fid = 'pl' . (int)$pl['id']; ?>
+    <tr>
+      <td class="n"><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="plano_mover"><input type="hidden" name="id" value="<?= (int)$pl['id'] ?>">
+        <button name="dir" value="cima" aria-label="Subir" <?= $n === 0 ? 'disabled' : '' ?>>↑</button><button name="dir" value="baixo" aria-label="Descer" <?= $n === count($planos) - 1 ? 'disabled' : '' ?>>↓</button></form></td>
+      <td><form method="post" id="<?= $fid ?>"><?= csrf_campo() ?><input type="hidden" name="acao" value="plano_salvar"><input type="hidden" name="id" value="<?= (int)$pl['id'] ?>"></form>
+        <input form="<?= $fid ?>" name="nome" value="<?= h($pl['nome']) ?>" aria-label="Nome do plano" size="22" style="width:100%;min-width:290px" list="ixcpl" required></td>
+      <td><input form="<?= $fid ?>" name="valor" value="<?= $pl['valor'] !== '' ? h(number_format((float)$pl['valor'], 2, ',', '')) : '' ?>" aria-label="Valor mensal" size="7" style="width:90px" inputmode="decimal" placeholder="0,00"></td>
+      <?php if (destino() === 'ixc'): ?><td><?= !$ixcPlanos ? '<span class="small">carregue do IXC</span>' : (isset($ixcPlanos[$pl['nome']]) ? '<span class="pill ok">Achado #' . h($ixcPlanos[$pl['nome']]['id']) . '</span>' : '<span class="pill er">Nome não existe</span>') ?></td><?php endif ?>
+      <td><?= $pl['ativo'] ? '<span class="pill ok">Aparece</span>' : '<span class="pill mu">Escondido</span>' ?></td>
+      <td><div class="acoes"><button form="<?= $fid ?>">Salvar</button>
+        <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="plano_ativo"><input type="hidden" name="id" value="<?= (int)$pl['id'] ?>"><button><?= $pl['ativo'] ? 'Esconder' : 'Mostrar' ?></button></form>
+        <form method="post" class="in" onsubmit="return confirm('Excluir o plano <?= h(addslashes($pl['nome'])) ?>?')"><?= csrf_campo() ?><input type="hidden" name="acao" value="plano_excluir"><input type="hidden" name="id" value="<?= (int)$pl['id'] ?>"><button class="del">Excluir</button></form></div></td>
+    </tr>
+    <?php endforeach ?>
+    <?php if (!$planos): ?><tr><td colspan="6" class="small">Nenhum plano cadastrado.</td></tr><?php endif ?>
+  </table></div>
+  <form method="post" class="card row"><?= csrf_campo() ?><input type="hidden" name="acao" value="plano_novo">
+    <label for="pnome">Novo plano</label><input id="pnome" name="nome" placeholder="NOME IGUAL AO DO IXC" size="34" list="ixcpl" required>
+    <label for="pval">Valor mensal</label><input id="pval" name="valor" size="8" inputmode="decimal" placeholder="<?= $ixcPlanos ? 'do IXC' : '0,00' ?>">
+    <button class="pri">Adicionar</button></form>
+  <?php if (destino() === 'ixc'): ?>
+  <form method="post" class="row"><?= csrf_campo() ?><input type="hidden" name="acao" value="planos_ixc">
+    <button>Carregar planos de venda do IXC</button><span class="small">Só lê os planos de venda ativos. Não grava nada no IXC.</span></form>
+  <?php if ($ixcPlanos): ?>
+  <div class="card tw"><h2>Planos de venda ativos no IXC</h2><table>
+    <tr><th>ID</th><th>Plano de venda</th><th>Valor</th><th></th></tr>
+    <?php foreach ($ixcPlanos as $ip): ?>
+    <tr><td class="n"><?= h($ip['id']) ?></td><td><?= h($ip['nome']) ?></td><td class="n"><?= $ip['valor'] !== '' ? 'R$ ' . h(number_format((float)$ip['valor'], 2, ',', '.')) : '—' ?></td>
+      <td><?php if (in_array($ip['nome'], $jaTem, true)): ?><span class="small">já está no app</span><?php else: ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="plano_novo"><input type="hidden" name="nome" value="<?= h($ip['nome']) ?>"><button>Pôr no app</button></form><?php endif ?></td></tr>
+    <?php endforeach ?>
+  </table></div>
+  <?php endif ?>
+  <?php endif ?>
+  <datalist id="ixcpl"><?php foreach ($ixcPlanos as $ip): ?><option value="<?= h($ip['nome']) ?>"><?php endforeach ?></datalist>
 
 <?php elseif ($p === 'gestores'): ?>
   <div class="card tw"><table>

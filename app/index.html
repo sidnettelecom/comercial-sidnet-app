@@ -591,7 +591,7 @@ body.travado>*:not(.gate):not(.toast){visibility:hidden}
       <div class="f">
         <label for="cfgPlanos">Um plano por linha</label>
         <textarea id="cfgPlanos" rows="5" class="mono"></textarea>
-        <span class="hint">Aparecem na lista "Plano selecionado".</span>
+        <span class="hint" id="cfgPlanosHint">Aparecem na lista "Plano selecionado".</span>
       </div>
     </fieldset>
     <button type="submit" class="btn brand" style="width:100%">Salvar ajustes</button>
@@ -694,20 +694,33 @@ function copiar(txt,okMsg){
 /* ---------- internet ---------- */
 var demoOff=false;function online(){return navigator.onLine&&!demoOff}
 function net(){var on=online();$("net").classList.toggle("on",on);$("netTxt").textContent=on?"Online":"Sem internet (funciona igual)"}
-addEventListener("online",function(){net();sincronizar()});addEventListener("offline",net);net();
+addEventListener("online",function(){net();sincronizar();buscarPlanos()});addEventListener("offline",net);net();
 $("btnNet").addEventListener("click",function(){demoOff=!demoOff;this.textContent=demoOff?"Voltar a internet":"Simular sem internet";this.classList.toggle("primary",demoOff);net();renderSync();if(!demoOff){toast("Internet de volta. Enviando a fila ao IXC…");sincronizar()}else toast("Sem internet. Pode continuar cadastrando.")});
 
 /* ---------- ajustes ---------- */
 function renderCfg(){
   $("who").textContent=cfg.vend?(cfg.vend+(cfg.sup?" · Sup. "+cfg.sup:"")):"Configure seu nome em Ajustes";
   $("cfgVend").value=cfg.vend||"";$("contaTxt").innerHTML=cfg.usuario?"Entrou como <b>"+esc(cfg.vend)+"</b> (usuário "+esc(cfg.usuario)+")":"";$("cfgSup").value=cfg.sup||"";$("cfgWa").value=cfg.wa?fmtTel(cfg.wa):"";$("cfgPlanos").value=cfg.planos.join("\n");
+  $("cfgPlanos").readOnly=!!cfg.planosSrv;$("cfgPlanosHint").textContent=cfg.planosSrv?"Definidos pelo gestor no painel. Para mudar, fale com ele.":"Aparecem na lista \"Plano selecionado\".";
   var sel=$("plano"),cur=sel.value;sel.innerHTML='<option value="">Escolha o plano…</option>'+cfg.planos.map(function(p){return'<option>'+esc(p)+'</option>'}).join("");
   if(cur&&cfg.planos.indexOf(cur)<0){var o=document.createElement("option");o.textContent=cur;sel.appendChild(o)}sel.value=cur;
+}
+/* planos definidos pelo gestor no painel: valem para todos os vendedores */
+function aplicarPlanos(L){
+  if(!Array.isArray(L))return;
+  if(L.length){cfg.planos=L.map(function(p){return up(p.nome)});cfg.precos={};L.forEach(function(p){if(p.valor)cfg.precos[up(p.nome)]=p.valor});cfg.planosSrv=true}
+  else if(cfg.planosSrv){cfg.planosSrv=false;cfg.precos={}}
+  save(K.cfg,cfg);renderCfg();
+}
+function buscarPlanos(){
+  if(DEMO||!online()||!cfg.chave||travadoAgora())return;
+  fetch(cfg.crmUrl+"/api/app-vendas.php?acao=planos",{headers:{"Authorization":"Bearer "+cfg.chave}})
+    .then(function(res){return res.json()}).then(function(j){if(j.ok)aplicarPlanos(j.planos);else if(j.login)travar(j.erro,true)}).catch(function(){});
 }
 $("cfgWa").addEventListener("input",function(){this.value=fmtTel(this.value)});
 $("cfg").addEventListener("submit",function(e){e.preventDefault();
   var pl=$("cfgPlanos").value.split("\n").map(up).filter(Boolean);
-  cfg={vend:cfg.vend,sup:up($("cfgSup").value),wa:dig($("cfgWa").value),planos:pl.length?pl:DEF_PLANOS,crmUrl:cfg.crmUrl,empresa:cfg.empresa,crmUser:cfg.crmUser,chave:cfg.chave,usuario:cfg.usuario,verif:cfg.verif,entrou:cfg.entrou};cfg.vend=cfg.vend||up($("cfgVend").value);
+  cfg.sup=up($("cfgSup").value);cfg.wa=dig($("cfgWa").value);if(!cfg.planosSrv)cfg.planos=pl.length?pl:DEF_PLANOS;cfg.vend=cfg.vend||up($("cfgVend").value);
   save(K.cfg,cfg);renderCfg();toast("Ajustes salvos")});
 
 /* ---------- abas ---------- */
@@ -1150,7 +1163,7 @@ function payload(r){
   if(moneyVal(r.valRot))obs.push("ROTEADOR VENDIDO R$ "+brl(moneyVal(r.valRot)));
   if(r.obs&&r.obs.trim())obs.push(up(r.obs));
   obs.push("VIA APP · "+r.id);
-  var preco=PRECOS[r.plano];
+  var preco=(cfg.precos||{})[r.plano]||PRECOS[r.plano];
   var c=[["empresa_id","Empresa",EMPRESAS[cfg.empresa]||cfg.empresa],["data_lead","Data",iso(r.criado)],["nome","Nome",up(r.nome)],["tipo_pessoa","Tipo de pessoa","Física"],
     ["cpf","CPF",r.cpf],["whatsapp","WhatsApp",fmtTel(r.tel1)],["telefone_residencial","Telefone 2",fmtTel(r.tel2)],["email","E-mail",String(r.email||"").trim().toLowerCase()]];
   if(t!=="segundo")c.push(["data_nascimento","Nascimento",iso(r.nasc)]);
@@ -1267,7 +1280,7 @@ function travar(msg,recusado){
   $("lgOff").hidden=online()||!cfg.verif;setTimeout(function(){(cfg.usuario?$("lgPass"):$("lgUser")).focus()},50);
 }
 $("lgOlho").addEventListener("click",function(){var i=$("lgPass"),ver=i.type==="password";i.type=ver?"text":"password";this.setAttribute("aria-pressed",String(ver));this.setAttribute("aria-label",ver?"Esconder senha":"Mostrar senha")});
-function destravar(){document.body.classList.remove("travado");$("gate").hidden=true;$("lgPass").value="";$("lgPass").type="password";$("lgOlho").setAttribute("aria-pressed","false");renderCfg();setTimeout(sincronizar,500)}
+function destravar(){document.body.classList.remove("travado");$("gate").hidden=true;$("lgPass").value="";$("lgPass").type="password";$("lgOlho").setAttribute("aria-pressed","false");renderCfg();setTimeout(sincronizar,500);setTimeout(buscarPlanos,800)}
 $("loginForm").addEventListener("submit",function(e){e.preventDefault();
   var u=$("lgUser").value.trim().toLowerCase(),p=$("lgPass").value,srv=normalizarServidor($("lgSrv").value)||servidorDaPagina();
   if(!u||!p){$("lgErro").textContent="Preencha usuário e senha.";return}
@@ -1286,7 +1299,7 @@ $("loginForm").addEventListener("submit",function(e){e.preventDefault();
       var trocou=cfg.usuario&&cfg.usuario!==u;
       var sal=hex(crypto.getRandomValues(new Uint8Array(16)));
       return impressao(u,p,sal).then(function(v){
-        cfg.crmUrl=srv;cfg.chave=j.token;cfg.chaveOff=j.token;cfg.usuario=u;cfg.vend=j.nome;cfg.sal=sal;cfg.verif=v;cfg.entrou=Date.now();
+        cfg.crmUrl=srv;cfg.chave=j.token;cfg.chaveOff=j.token;cfg.usuario=u;cfg.vend=j.nome;cfg.sal=sal;cfg.verif=v;cfg.entrou=Date.now();aplicarPlanos(j.planos);
         save(K.cfg,cfg);fim();destravar();toast(trocou?"Entrou como "+j.nome+". O histórico deste celular continua aqui.":"Bem-vindo, "+j.nome);
       });
     }).catch(function(){fim();$("lgErro").textContent="Não deu para falar com o servidor "+srv+". Confira a internet e tente de novo."});
@@ -1303,7 +1316,8 @@ document.addEventListener("visibilitychange",function(){if(!document.hidden&&!tr
 
 /* ---------- início ---------- */
 if(!sessaoValida())travar(cfg.usuario&&cfg.entrou?"Por segurança, entre de novo.":"");
-renderCfg();renderBadge();renderListas();setTimeout(sincronizar,1500);
+renderCfg();renderBadge();renderListas();setTimeout(sincronizar,1500);setTimeout(buscarPlanos,2000);
+document.addEventListener("visibilitychange",function(){if(!document.hidden)buscarPlanos()});
 try{$("versao").textContent="Versão "+(APP&&APP.version?APP.version()+" (aplicativo Android)":"2.0 (navegador)")}catch(e){}
 var d=load(K.draft,null);if(d&&d.f){editingId=d.id||null;setForm(d.f)}
 if(!cfg.vend){setTimeout(function(){toast("Primeiro, coloque seu nome em Ajustes")},400)}
