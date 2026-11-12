@@ -156,6 +156,30 @@ try {
         responder(200, ['ok' => true, 'boletos' => $res]);
     }
 
+    if ($acao === 'valores' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        // venda que já está no IXC: o vendedor só pode corrigir instalação e roteador (vão para as comissões)
+        $in = json_decode(file_get_contents('php://input') ?: '', true);
+        $idApp = preg_replace('/[^A-Za-z0-9]/', '', (string)($in['id_app'] ?? ''));
+        $q = db()->prepare('SELECT id, vendedor_id, dados FROM vendas WHERE id_app = ?');
+        $q->execute([$idApp]);
+        $v = $idApp !== '' ? $q->fetch() : false;
+        if (!$v || (int)$v['vendedor_id'] !== (int)$vend['id']) {
+            responder(404, ['ok' => false, 'fim' => true, 'erro' => 'Venda não encontrada no servidor.']);
+        }
+        require_once __DIR__ . '/../../lib/comissoes.php';
+        $inst = dinheiro((string)($in['valInst'] ?? ''));
+        $rot = dinheiro((string)($in['valRot'] ?? ''));
+        $d = json_decode((string)$v['dados'], true) ?: [];
+        $d['valInst'] = mb_substr((string)($in['valInst'] ?? ''), 0, 20);
+        $d['valRot'] = mb_substr((string)($in['valRot'] ?? ''), 0, 20);
+        db()->prepare("UPDATE vendas SET dados = ?, atualizado_em = datetime('now','localtime') WHERE id = ?")
+            ->execute([json_encode($d, JSON_UNESCAPED_UNICODE), $v['id']]);
+        // a comissão já paga não muda
+        db()->prepare("UPDATE comissoes SET instalacao = ?, roteador = ?, atualizado_em = datetime('now','localtime'), por = 'vendedor' WHERE venda_id = ? AND pago_em = ''")
+            ->execute([$inst, $rot, $v['id']]);
+        responder(200, ['ok' => true]);
+    }
+
     if ($acao === 'status') {
         $ids = array_slice(array_filter(explode(',', (string)($_GET['ids'] ?? ''))), 0, 200);
         $res = [];

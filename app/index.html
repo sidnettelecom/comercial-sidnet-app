@@ -751,6 +751,19 @@ html.web .gate .olho{color:#475569}
   </div>
 </div>
 
+<div class="sheet" id="valores" hidden>
+  <form class="box" id="valForm" role="dialog" aria-modal="true" aria-labelledby="valTitle" novalidate>
+    <h2 id="valTitle">Valores da venda</h2>
+    <p class="small" id="valTxt" style="margin:0">Esta venda já está no IXC. Só os valores de instalação e roteador podem ser alterados.</p>
+    <div class="f"><label for="valInstEd">Valor da instalação</label><div class="money"><span>R$</span><input id="valInstEd" class="mono" inputmode="numeric" placeholder="0,00"></div></div>
+    <div class="f"><label for="valRotEd">Valor do roteador</label><div class="money"><span>R$</span><input id="valRotEd" class="mono" inputmode="numeric" placeholder="0,00"></div></div>
+    <div class="row">
+      <button type="button" class="btn" id="valNo">Cancelar</button>
+      <button type="submit" class="btn primary" id="valYes">Salvar valores</button>
+    </div>
+  </form>
+</div>
+
 <div class="sheet" id="confirm" hidden>
   <div class="box" role="dialog" aria-modal="true" aria-labelledby="confTitle">
     <h2 id="confTitle">Tem certeza?</h2>
@@ -1135,6 +1148,23 @@ $("btnNovo").addEventListener("click",function(){var t=atual&&atual.tipo||"venda
 
 /* ---------- confirmação ---------- */
 var confCb=null;
+/* venda que já está no IXC: só instalação e roteador podem mudar (vão para o painel / comissões) */
+var valRec=null;
+function editarValores(r){valRec=r;$("valTxt").textContent=up(r.nome)+" já está no IXC. Só os valores de instalação e roteador podem ser alterados; o resto, corrija direto no IXC.";
+  $("valInstEd").value=fmtMoney(r.valInst||"");$("valRotEd").value=fmtMoney(r.valRot||"");$("valores").hidden=false;$("valInstEd").focus()}
+["valInstEd","valRotEd"].forEach(function(id){$(id).addEventListener("input",function(){this.value=fmtMoney(this.value)})});
+$("valNo").addEventListener("click",function(){$("valores").hidden=true;valRec=null});
+$("valForm").addEventListener("submit",function(e){e.preventDefault();var r=valRec;if(!r)return;
+  r.valInst=$("valInstEd").value;r.valRot=$("valRotEd").value;r.valPend=true;save(K.recs,recs);$("valores").hidden=true;valRec=null;
+  renderLista();enviarValores();toast("Valores salvos")});
+function enviarValores(){
+  if(DEMO||!online()||travadoAgora())return;
+  recs.filter(function(r){return r.valPend}).forEach(function(r){
+    fetch(cfg.crmUrl+"/api/app-vendas.php?acao=valores",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+cfg.chave},body:JSON.stringify({id_app:r.id,valInst:r.valInst||"",valRot:r.valRot||""})})
+      .then(function(res){return res.json()}).then(function(j){if(j.ok||j.fim){delete r.valPend;save(K.recs,recs)}else if(j.login)travar(j.erro,true)}).catch(function(){});
+  });
+}
+setInterval(enviarValores,60000);
 function confirmar(txt,label,cb){$("confTxt").textContent=txt;$("confYes").textContent=label;confCb=cb;$("confirm").hidden=false}
 $("confNo").addEventListener("click",function(){$("confirm").hidden=true;confCb=null});
 $("confYes").addEventListener("click",function(){$("confirm").hidden=true;if(confCb)confCb();confCb=null});
@@ -1198,6 +1228,7 @@ $("lista").addEventListener("click",function(e){
   var a=b.dataset.a;
   if(a==="enviar")abrirEnvio(r);
   else if(a==="copiar")copiar(mensagem(r),"Mensagem copiada");
+  else if(a==="editar"&&r.crm&&r.crm.st==="ok"&&!ehOrc(r))editarValores(r);
   else if(a==="editar"){editingId=r.id;setForm(r);rascunho();aba("novo");toast("Editando cadastro de "+up(r.nome).split(" ")[0])}
   else if(a==="excluir")confirmar("Excluir o cadastro de "+up(r.nome)+" deste celular?"+((r.midias||[]).length?" As fotos e vídeos dele também serão apagados.":""),"Excluir",function(){(r.midias||[]).forEach(function(m){apagarMidia(m.id)});recs=recs.filter(function(x){return x.id!==id});if(editingId===id)editingId=null;save(K.recs,recs);renderBadge();renderLista()});
 });
