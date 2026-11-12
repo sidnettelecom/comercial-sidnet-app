@@ -257,6 +257,11 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $n = comissoes_salvar((array)($_POST['c'] ?? []), $quem);
             registrar($quem, 'salvou comissões', $n . ' venda(s)');
             $msg = "Comissões salvas ($n venda" . ($n === 1 ? '' : 's') . ').';
+        } elseif ($a === 'comissoes_ixc') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin mexe nas comissões.');
+            $n = comissoes_atualizar_ixc(300);
+            registrar($quem, 'atualizou comissões do IXC', (string)$n);
+            $msg = $n ? "$n venda(s) atualizadas com dados do IXC." : 'Nada novo no IXC: o que dava para achar já está preenchido.';
         } elseif ($a === 'gest_admin' && $id !== $gestor['id']) {
             if (!$admin) throw new RuntimeException('Só um gestor admin pode dar ou tirar admin.');
             db()->prepare('UPDATE gestores SET admin = 1 - admin WHERE id = ?')->execute([$id]);
@@ -646,7 +651,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     $vendList = db()->query('SELECT id, nome FROM vendedores ORDER BY nome')->fetchAll();
     $qs = fn(array $mais) => '?' . http_build_query(array_merge(['p' => 'comissoes', 'mes' => $mes], array_filter($filtro), $mais)); ?>
   <div class="card"><h2>Comissões</h2>
-    <p class="small">Cada comissão fica no mês da venda e é paga uma vez só. Quando o cliente pagar, marque "Cliente pagou: Sim"; quando você pagar o vendedor, escolha o mês em "Comissão paga em". O que ficar sem pagar continua aqui no mês da venda: volte nele para conferir.</p>
+    <p class="small"><b>Automático do IXC</b> (a cada 30 minutos): ID do cliente, vencimento do primeiro boleto depois da venda e "Cliente pagou" (Sim quando o boleto é recebido, Não quando vence em aberto). Instalação e roteador vêm do que o vendedor preencheu no app.<br>Cada comissão fica no mês da venda e é paga uma vez só. Quando o cliente pagar, marque "Cliente pagou: Sim"; quando você pagar o vendedor, escolha o mês em "Comissão paga em". O que ficar sem pagar continua aqui no mês da venda: volte nele para conferir.</p>
     <form method="get" class="row filtros"><input type="hidden" name="p" value="comissoes">
       <label for="cmes">Vendas de</label>
       <select id="cmes" name="mes"><?php foreach ($meses as $m => $i): ?><option value="<?= h($m) ?>" <?= $m === $mes ? 'selected' : '' ?>><?= h(mes_nome($m)) ?> · <?= $i['abertas'] ? $i['abertas'] . ' em aberto' : 'tudo pago' ?></option><?php endforeach ?></select>
@@ -655,6 +660,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
       <select name="pagou" aria-label="Cliente pagou"><option value="">Cliente pagou: todos</option><option value="S" <?= $filtro['pagou'] === 'S' ? 'selected' : '' ?>>Cliente pagou</option><option value="N" <?= $filtro['pagou'] === 'N' ? 'selected' : '' ?>>Cliente não pagou</option><option value="V" <?= $filtro['pagou'] === 'V' ? 'selected' : '' ?>>A vencer</option></select>
       <select name="paga" aria-label="Comissão paga"><option value="">Comissão: todas</option><option value="nao" <?= $filtro['paga'] === 'nao' ? 'selected' : '' ?>>Ainda não paga</option><option value="sim" <?= $filtro['paga'] === 'sim' ? 'selected' : '' ?>>Já paga</option></select>
       <button class="pri">Filtrar</button></form>
+    <?php if (destino() === 'ixc'): ?><form method="post" class="row" style="margin-top:8px"><?= csrf_campo() ?><input type="hidden" name="acao" value="comissoes_ixc"><button>Atualizar do IXC agora</button><span class="small">Só lê o IXC.</span></form><?php endif ?>
   </div>
   <div class="kpis">
     <div><b><?= $tot['n'] ?></b><span>vendas em <?= h(mes_nome($mes)) ?></span></div>
