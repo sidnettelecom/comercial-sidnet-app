@@ -426,8 +426,9 @@ th{background:transparent}tr:hover td{background:color-mix(in srgb,var(--brand) 
 .kpis b{display:block;font-size:20px;font-variant-numeric:tabular-nums}.kpis span{font-size:12.5px;color:var(--muted)}
 .kpis .ok b{color:var(--ok)}.kpis .q b{color:#b45309}
 @media (max-width:800px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
-.com table{min-width:1180px}.com th,.com td{padding:8px 6px}.com td{vertical-align:middle}.com input,.com select{height:34px;padding:0 8px;font-size:13px}.com input{width:82px}.com input[type=date]{width:136px}.com td.small{max-width:130px}
+.com table{min-width:1260px}.com th,.com td{padding:8px 6px}.com td{vertical-align:middle}.com input,.com select{height:34px;padding:0 8px;font-size:13px}.com input{width:82px}.com input[type=date]{width:136px}.com td.small{max-width:130px}
 .com input.forte{font-weight:700}
+.com .rs{position:relative;display:inline-block}.com .rs::before{content:"R$";position:absolute;left:9px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--muted);pointer-events:none}.com .rs input{padding-left:30px;width:100px}
 .mes{display:grid;gap:0;padding-top:6px}.mes>*{min-width:0}
 .mes-l{display:grid;grid-template-columns:minmax(200px,2fr) repeat(5,minmax(60px,.7fr)) repeat(3,minmax(96px,1fr));gap:10px;align-items:center;padding:12px 8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
 .mes-l>span:not(.quem){text-align:right}.mes-l>span:first-child{text-align:left}.mes-h{font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
@@ -776,11 +777,11 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
         <td><?= h($l['vendedor']) ?></td>
         <td><span class="tp tp-<?= h($l['tipo']) ?>"><?= h(COMISSAO_TIPOS[$l['tipo']] ?? $l['tipo']) ?></span></td>
         <td class="small"><?= h($l['plano']) ?></td>
-        <td><input name="<?= $k ?>[valor_plano]" value="<?= h(brl($l['valor_plano'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor mensal do plano"></td>
+        <td><span class="rs"><input name="<?= $k ?>[valor_plano]" value="<?= h(brl($l['valor_plano'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor mensal do plano"></span></td>
         <td><input type="date" name="<?= $k ?>[vencimento]" value="<?= h($l['vencimento']) ?>" aria-label="Vencimento do boleto"><?= $l['dia_venc'] !== '' && $l['vencimento'] === '' ? '<br><span class="small">dia ' . h($l['dia_venc']) . '</span>' : '' ?></td>
-        <td><input name="<?= $k ?>[instalacao]" value="<?= h(brl($l['instalacao'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor da instalação"></td>
-        <td><input name="<?= $k ?>[roteador]" value="<?= h(brl($l['roteador'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor do roteador"></td>
-        <td><input name="<?= $k ?>[valor]" value="<?= h(brl($l['valor'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor da comissão" class="forte"></td>
+        <td><span class="rs"><input name="<?= $k ?>[instalacao]" value="<?= h(brl($l['instalacao'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor da instalação"></span></td>
+        <td><span class="rs"><input name="<?= $k ?>[roteador]" value="<?= h(brl($l['roteador'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor do roteador"></span></td>
+        <td><span class="rs"><input name="<?= $k ?>[valor]" value="<?= h(brl($l['valor'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor da comissão" class="forte"></span></td>
         <td><select name="<?= $k ?>[cliente_pagou]" aria-label="Cliente pagou"><option value="">A vencer</option><option value="S" <?= $l['cliente_pagou'] === 'S' ? 'selected' : '' ?>>Sim</option><option value="N" <?= $l['cliente_pagou'] === 'N' ? 'selected' : '' ?>>Não</option></select></td>
         <td><select name="<?= $k ?>[pago_em]" aria-label="Comissão paga em"><option value="">Não paga</option><?php foreach ($opMeses as $om): ?><option value="<?= $om ?>" <?= $l['pago_em'] === $om ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select>
           <input type="hidden" name="<?= $k ?>[obs]" value="<?= h($l['obs']) ?>"></td>
