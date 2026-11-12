@@ -96,20 +96,20 @@ function comissoes_do_mes(string $mes, array $filtro = []): array
     return $out;
 }
 
-/** Valor mensal de cada plano pelo nome: primeiro o cadastro do painel, depois a lista lida do IXC. */
+/** Valor mensal de cada plano pelo nome: o da lista lida do IXC vale mais que o da aba Planos. */
 function comissoes_precos_planos(): array
 {
     $out = [];
+    foreach (db()->query('SELECT nome, valor FROM planos') as $p) {
+        $v = dinheiro((string)$p['valor']);
+        if ($v !== '' && (float)$v > 0) $out[up(sem_acento((string)$p['nome']))] = $v;
+    }
     $arq = dirname((string)config()['banco']) . '/ixc-planos.json';
     if (is_file($arq)) {
         foreach (json_decode((string)file_get_contents($arq), true) ?: [] as $o) {
             $v = dinheiro((string)($o['valor'] ?? ''));
             if ($v !== '' && (float)$v > 0) $out[up(sem_acento((string)($o['nome'] ?? '')))] = $v;
         }
-    }
-    foreach (db()->query('SELECT nome, valor FROM planos') as $p) {
-        $v = dinheiro((string)$p['valor']);
-        if ($v !== '' && (float)$v > 0) $out[up(sem_acento((string)$p['nome']))] = $v;
     }
     return $out;
 }
@@ -166,26 +166,46 @@ function comissoes_pagas_em(string $mes): array
 /**
  * Busca no IXC o ID do cliente e o primeiro boleto depois da venda, e marca "cliente pagou"
  * quando esse boleto foi recebido (ou "não" quando venceu em aberto). Não mexe no valor da
- * comissão nem no mês em que ela foi paga. Devolve quantas vendas mudaram.
+ * comissão nem no mês em que ela foi paga. Também preenche o valor do plano (valor_contrato do
+ * plano de venda no IXC, pelo nome; no upgrade, o novo valor informado) quando ainda está vazio.
+ * Devolve quantas vendas mudaram.
  */
 function comissoes_atualizar_ixc(int $limite = 40, int $id = 0): int
 {
     if (destino() !== 'ixc') return 0;
     require_once __DIR__ . '/ixc.php';
-    $sql = "SELECT v.id, v.tipo, v.dados, v.ixc_passos, v.recebido_em, c.venda_id AS tem, c.ixc_cliente, c.vencimento, c.cliente_pagou
+    $sql = "SELECT v.id, v.tipo, v.dados, v.ixc_passos, v.recebido_em, c.venda_id AS tem, c.ixc_cliente, c.vencimento, c.cliente_pagou, c.valor_plano
             FROM vendas v LEFT JOIN comissoes c ON c.venda_id = v.id
             WHERE v.status = 'crm' AND v.tipo IN ('venda','upgrade','segundo')"
         . ($id ? ' AND v.id = ' . $id : " AND v.recebido_em >= datetime('now','-150 days')
-            AND (c.venda_id IS NULL OR c.ixc_cliente = '' OR c.vencimento = '' OR c.cliente_pagou <> 'S')")
+            AND (c.venda_id IS NULL OR c.ixc_cliente = '' OR c.vencimento = '' OR c.cliente_pagou <> 'S' OR c.valor_plano = '')")
         . ' ORDER BY v.id DESC LIMIT ' . max(1, $limite);
     $api = ixc();
     $hoje = date('Y-m-d');
     $mudou = 0;
     $ins = db()->prepare("INSERT OR IGNORE INTO comissoes (venda_id, instalacao, roteador) VALUES (?, ?, ?)");
+    $upPlano = db()->prepare("UPDATE comissoes SET valor_plano = ? WHERE venda_id = ? AND valor_plano = ''");
+    $precos = null; // valor de cada plano de venda no IXC, lido uma vez só
     $up = db()->prepare("UPDATE comissoes SET ixc_cliente = ?, vencimento = ?, cliente_pagou = ?, atualizado_em = datetime('now','localtime'), por = 'IXC' WHERE venda_id = ?");
     foreach (db()->query($sql)->fetchAll() as $v) {
         $dados = json_decode((string)$v['dados'], true) ?: [];
         $passos = json_decode((string)$v['ixc_passos'], true) ?: [];
+        if ($v['tem'] === null) $ins->execute([(int)$v['id'], dinheiro((string)($dados['valInst'] ?? '')), dinheiro((string)($dados['valRot'] ?? ''))]);
+        if ((string)($v['valor_plano'] ?? '') === '') {
+            if ($v['tipo'] === 'upgrade') {
+                $vp = dinheiro((string)($dados['valNovo'] ?? ''));
+            } else {
+                if ($precos === null) {
+                    $precos = [];
+                    foreach ($api->listar('vd_contratos', 'id', '0', '>', 1000, 'asc') as $o) {
+                        $pv = dinheiro((string)($o['valor_contrato'] ?? ''));
+                        if ($pv !== '' && (float)$pv > 0) $precos[up(sem_acento((string)($o['nome'] ?? '')))] = $pv;
+                    }
+                }
+                $vp = (string)($precos[up(sem_acento((string)($dados['plano'] ?? '')))] ?? '');
+            }
+            if ($vp !== '') { $upPlano->execute([$vp, (int)$v['id']]); $mudou++; }
+        }
         $cli = (string)($v['ixc_cliente'] ?? '');
         if ($cli === '') $cli = (string)($passos['prospect'] ?? '');
         if ($cli === '') $cli = (string)(ixc_cliente_por_cpf((string)($dados['cpf'] ?? ''))['id'] ?? '');
@@ -206,7 +226,6 @@ function comissoes_atualizar_ixc(int $limite = 40, int $id = 0): int
             if (($bol['status'] ?? '') === 'R') $pagou = 'S';
             elseif ($pagou === '' && $venc !== '' && $venc < $hoje) $pagou = 'N';
         }
-        if ($v['tem'] === null) $ins->execute([(int)$v['id'], dinheiro((string)($dados['valInst'] ?? '')), dinheiro((string)($dados['valRot'] ?? ''))]);
         if ($cli !== (string)$v['ixc_cliente'] || $venc !== (string)$v['vencimento'] || $pagou !== (string)$v['cliente_pagou']) {
             $up->execute([$cli, $venc, $pagou, (int)$v['id']]);
             $mudou++;
