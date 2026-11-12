@@ -106,6 +106,20 @@ function criar_tabelas(PDO $pdo): void
         acao TEXT NOT NULL,
         detalhe TEXT NOT NULL DEFAULT ''
     );
+    -- comissão de cada venda (fica no mês da venda; pago_em = mês em que foi paga, AAAA-MM)
+    CREATE TABLE IF NOT EXISTS comissoes (
+        venda_id INTEGER PRIMARY KEY,
+        ixc_cliente TEXT NOT NULL DEFAULT '',
+        vencimento TEXT NOT NULL DEFAULT '',
+        instalacao TEXT NOT NULL DEFAULT '',
+        roteador TEXT NOT NULL DEFAULT '',
+        valor TEXT NOT NULL DEFAULT '',
+        cliente_pagou TEXT NOT NULL DEFAULT '',
+        pago_em TEXT NOT NULL DEFAULT '',
+        obs TEXT NOT NULL DEFAULT '',
+        atualizado_em TEXT,
+        por TEXT NOT NULL DEFAULT ''
+    );
     -- planos que aparecem no app para todos os vendedores (definidos no painel)
     CREATE TABLE IF NOT EXISTS planos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,11 +149,17 @@ function criar_tabelas(PDO $pdo): void
         $pdo->exec("ALTER TABLE vendedores ADD COLUMN senha_hash TEXT NOT NULL DEFAULT ''");
         $pdo->exec("CREATE UNIQUE INDEX IF NOT EXISTS vendedores_usuario ON vendedores(usuario)");
     }
+    // gestor admin: só ele vê as comissões. O primeiro gestor já nasce admin.
+    $colsG = array_column($pdo->query('PRAGMA table_info(gestores)')->fetchAll(), 'name');
+    if (!in_array('admin', $colsG, true)) {
+        $pdo->exec('ALTER TABLE gestores ADD COLUMN admin INTEGER NOT NULL DEFAULT 0');
+        $pdo->exec('UPDATE gestores SET admin = 1 WHERE id = (SELECT MIN(id) FROM gestores)');
+    }
     // primeiro gestor: "admin" com a senha do painel que já estava na configuração
     if ((int)$pdo->query('SELECT COUNT(*) FROM gestores')->fetchColumn() === 0) {
         $hash = (string)(config()['painel_senha_hash'] ?? '');
         if ($hash !== '') {
-            $pdo->prepare("INSERT INTO gestores (usuario, nome, senha_hash) VALUES ('admin', 'ADMINISTRADOR', ?)")->execute([$hash]);
+            $pdo->prepare("INSERT INTO gestores (usuario, nome, senha_hash, admin) VALUES ('admin', 'ADMINISTRADOR', ?, 1)")->execute([$hash]);
         }
     }
 }

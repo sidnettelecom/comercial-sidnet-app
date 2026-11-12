@@ -7,6 +7,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../../lib/repasse.php';
 require_once __DIR__ . '/../../lib/vendedores.php';
+require_once __DIR__ . '/../../lib/comissoes.php';
 
 const PAINEL_INATIVO_MAX = 8 * 3600; // sai sozinho depois de 8 horas sem uso
 
@@ -72,9 +73,11 @@ if (isset($_GET['sair'])) {
 $gestor = $_SESSION['gestor'] ?? null;
 if ($gestor) {
     // sessão parada há muito tempo, ou gestor bloqueado/apagado depois que entrou
-    $q = db()->prepare('SELECT ativo FROM gestores WHERE id = ?');
+    $q = db()->prepare('SELECT ativo, admin FROM gestores WHERE id = ?');
     $q->execute([$gestor['id']]);
-    if (time() - (int)($_SESSION['visto'] ?? 0) > PAINEL_INATIVO_MAX || !$q->fetchColumn()) {
+    $gq = $q->fetch() ?: ['ativo' => 0, 'admin' => 0];
+    $gestor['admin'] = (bool)$gq['admin'];
+    if (time() - (int)($_SESSION['visto'] ?? 0) > PAINEL_INATIVO_MAX || !$gq['ativo']) {
         $_SESSION = [];
         session_destroy();
         session_start(['cookie_httponly' => true, 'cookie_secure' => conexao_https(), 'cookie_samesite' => 'Strict', 'use_strict_mode' => true]);
@@ -86,6 +89,7 @@ if ($gestor) {
     }
 }
 $logado = (bool)$gestor;
+$admin = $logado && !empty($gestor['admin']); // só o admin vê e mexe nas comissões
 $quem = $gestor['usuario'] ?? '';
 
 // ---- ações ----
@@ -248,6 +252,16 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             db()->prepare('INSERT INTO gestores (usuario, nome, senha_hash) VALUES (?, ?, ?)')->execute([$u, up($_POST['nome']), password_hash($senha, PASSWORD_DEFAULT)]);
             $novaSenha = ['quem' => up($_POST['nome']), 'usuario' => $u, 'senha' => $senha];
             registrar($quem, 'criou gestor', $u);
+        } elseif ($a === 'comissoes_salvar') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin mexe nas comissões.');
+            $n = comissoes_salvar((array)($_POST['c'] ?? []), $quem);
+            registrar($quem, 'salvou comissões', $n . ' venda(s)');
+            $msg = "Comissões salvas ($n venda" . ($n === 1 ? '' : 's') . ').';
+        } elseif ($a === 'gest_admin' && $id !== $gestor['id']) {
+            if (!$admin) throw new RuntimeException('Só um gestor admin pode dar ou tirar admin.');
+            db()->prepare('UPDATE gestores SET admin = 1 - admin WHERE id = ?')->execute([$id]);
+            registrar($quem, 'deu/tirou admin', '#' . $id);
+            $msg = 'Permissão de admin alterada.';
         } elseif ($a === 'gest_ativo' && $id !== $gestor['id']) {
             db()->prepare('UPDATE gestores SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
             registrar($quem, 'bloqueou/liberou gestor', '#' . $id);
@@ -296,6 +310,7 @@ $ICONES = [
     'vendas' => '<path d="M4 6h16M4 12h16M4 18h10"/>',
     'vendedores' => '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.4 3.6 5.2"/>',
     'planos' => '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10h6M7 14h10"/>',
+    'comissoes' => '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.8 0-3 .9-3 2.1 0 2.9 6 1.6 6 4.6 0 1.3-1.3 2.3-3 2.3-1.5 0-2.7-.6-3.2-1.7M12 6.5V8m0 9v1.5"/>',
     'gestores' => '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
 ];
 $aba = fn(string $k, string $t) => '<a href="?p=' . $k . '"' . (($p === $k || ($k === 'vendas' && $p === 'excluir')) ? ' aria-current="page"' : '') . '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $ICONES[$k] . '</svg>' . $t . '</a>';
@@ -306,7 +321,7 @@ $aba = fn(string $k, string $t) => '<a href="?p=' . $k . '"' . (($p === $k || ($
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Painel Comercial + Sidnet</title>
+<title>Central do Gestor · Comercial + Sidnet</title>
 <link rel="icon" href="/app/icon-192.png">
 <style>
 /* Painel de operação: barra no topo, uma tabela por tela, estado em selos coloridos */
@@ -384,7 +399,57 @@ th{background:transparent}tr:hover td{background:color-mix(in srgb,var(--brand) 
 .entrada .logo-entrada{display:block;margin:0 auto;border-radius:32px}
 .entrada h2{text-align:center;font-size:22px;margin:4px 0 6px}.entrada h2 span{display:block;font-size:13px;color:var(--muted);font-weight:600}
 .entrada button.pri{background:var(--g-cta);color:#1c1203;height:48px;font-weight:800;font-size:16px;margin-top:6px}
-body.fora .msg{margin-bottom:12px}
+
+
+/* comissões */
+.filtros{gap:8px}.filtros label{font-weight:600}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.kpis div{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+.kpis b{display:block;font-size:20px;font-variant-numeric:tabular-nums}.kpis span{font-size:12.5px;color:var(--muted)}
+.kpis .ok b{color:var(--ok)}.kpis .q b{color:#b45309}
+@media (max-width:800px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.com table{min-width:1100px}.com th,.com td{padding:8px 6px}.com td{vertical-align:middle}.com input,.com select{height:34px;padding:0 8px;font-size:13px}.com input{width:82px}.com input[type=date]{width:136px}.com td.small{max-width:130px}
+.com input.forte{font-weight:700}
+.com tr.paga td{background:color-mix(in srgb,var(--ok-bg) 70%,transparent)}
+.com tr.apagar td{background:#fef9c3}
+@media (prefers-color-scheme:dark){.com tr.apagar td{background:#3a3210}}
+.com .salvar{position:sticky;bottom:0;display:flex;gap:12px;justify-content:flex-end;align-items:center;padding:12px 0 2px;background:var(--surface)}
+tr.soma td{font-weight:700;border-top:2px solid var(--line)}
+/* entrada do painel: logo animada à esquerda, formulário à direita */
+body.fora main{max-width:none;margin:0;padding:0;min-height:100vh;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(400px,1fr);gap:0;background:#f8fafc}
+.entra-arte{display:grid;place-items:center;position:relative;overflow:hidden;background:#0a1430}
+.entrada{align-self:center;justify-self:center;width:100%;max-width:400px;padding:24px;display:grid;gap:8px;background:transparent;border:0;box-shadow:none;animation:rise .7s ease-out both;color:#0f1b3d}
+.entrada .sobre{font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#2563eb}
+.entrada h1{font-size:32px;line-height:1.1;margin:0;color:#0f1b3d;letter-spacing:-.02em}
+.entrada .small{margin:0 0 8px;color:#475569}
+.entrada label{font-weight:600;color:#0f1b3d}
+.entrada input{background:#fff;border:1.5px solid #cbd5e1;color:#0f1b3d;height:46px;padding:0 12px}
+.entrada input:focus{outline:0;border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.2)}
+.entrada .msg{margin:0 0 4px}
+@media (max-width:899px){body.fora main{grid-template-columns:1fr;grid-template-rows:auto 1fr}.entra-arte{height:300px}.entra-arte .lg-wrap{width:260px;height:260px}.entra-arte .lg{transform:scale(.5)}}
+.fx{position:absolute;inset:0}
+.fx i{position:absolute;border-radius:50%;filter:blur(60px);opacity:.75;animation:drift 18s ease-in-out infinite alternate}
+.fx .b1{width:420px;height:420px;background:#2563eb;left:-120px;top:-100px}
+.fx .b2{width:360px;height:360px;background:#7c3aed;right:-120px;top:30%;animation-duration:22s;animation-delay:-6s}
+.fx .b3{width:380px;height:380px;background:#0891b2;left:20%;bottom:-160px;animation-duration:26s;animation-delay:-12s}
+.fx canvas{position:absolute;inset:0;width:100%;height:100%}
+@keyframes drift{0%{transform:translate(0,0) scale(1)}50%{transform:translate(60px,40px) scale(1.15)}100%{transform:translate(-40px,70px) scale(.95)}}
+.lg-wrap{position:relative;width:420px;height:420px}
+.lg{transform:scale(.8077);transform-origin:0 0}
+.lg-ring{animation:spin 40s linear infinite}
+.lg-conic{position:absolute;inset:-30%;background:conic-gradient(from 0deg,#2563eb,#7c3aed,#e11d48,#d97706,#059669,#0891b2,#2563eb);animation:spin 6s linear infinite;z-index:0}
+.lg-glow{animation:breathe 3.2s ease-in-out infinite}
+.lg-sat{animation:bob 3.4s ease-in-out infinite;animation-delay:var(--d)}
+.lg-spoke::after{content:"";position:absolute;top:-2px;left:0;width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 0 12px 4px #ffffffaa;animation:packet 2.4s ease-in infinite}
+.lg-spoke:nth-of-type(2n)::after{animation-delay:-.8s}.lg-spoke:nth-of-type(3n)::after{animation-delay:-1.6s}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes breathe{0%,100%{transform:scale(.92);opacity:.55}50%{transform:scale(1.08);opacity:1}}
+@keyframes bob{0%,100%{translate:0 0}50%{translate:0 -10px}}
+@keyframes packet{0%{transform:translateX(0);opacity:0}15%{opacity:1}100%{transform:translateX(56px);opacity:0}}
+@keyframes rise{from{opacity:.001;transform:translateY(14px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.fx i,.lg-ring,.lg-conic,.lg-glow,.lg-sat,.lg-spoke::after,.entra form{animation:none!important}}
+
+
 td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2px 0 2px 4px;vertical-align:middle}
 </style>
 <style>.senha-box{position:relative;display:block}.senha-box input{width:100%;box-sizing:border-box;padding-right:48px}.olho{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:40px;height:40px;border:0!important;background:transparent!important;box-shadow:none!important;color:#475569;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;padding:0}.olho:hover{background:#eef2ff}.olho .risco{display:none}.olho[aria-pressed="true"] .risco{display:inline}</style>
@@ -395,12 +460,12 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     $ultimo = db()->query("SELECT MAX(enviado_crm_em) FROM vendas")->fetchColumn(); ?>
 <aside class="lado">
   <div class="marca"><img src="/app/logo-96.png" alt="" width="48" height="48"><div><b>Comercial + SIDNET</b><span>Painel do gestor</span></div></div>
-  <nav aria-label="Seções"><?= $aba('vendas', 'Vendas') . $aba('vendedores', 'Vendedores') . $aba('planos', 'Planos') . $aba('gestores', 'Gestores') ?></nav>
+  <nav aria-label="Seções"><?= $aba('vendas', 'Vendas') . $aba('vendedores', 'Vendedores') . $aba('planos', 'Planos') . ($admin ? $aba('comissoes', 'Comissões') : '') . $aba('gestores', 'Gestores') ?></nav>
   <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
 <?php endif ?>
 <main>
-<?php if ($msg): ?><div class="msg" role="status"><?= h($msg) ?></div><?php endif ?>
+<?php if ($msg && $logado): ?><div class="msg" role="status"><?= h($msg) ?></div><?php endif ?>
 <?php if ($novaSenha): ?>
   <div class="card"><b>Acesso de <?= h($novaSenha['quem']) ?></b><br>
     Usuário: <span class="chave"><?= h($novaSenha['usuario']) ?></span> Senha: <span class="chave"><?= h($novaSenha['senha']) ?></span><br>
@@ -408,10 +473,52 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
 <?php endif ?>
 
 <?php if (!$logado): ?>
-  <form method="post" class="card login entrada">
+  <div class="entra-arte" aria-hidden="true"><div class="fx" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></div>
+      <div class="lg-wrap"><div class="lg" data-x="Ícone Comercial + Sidnet: robô da Sidnet ligado a www, navegação, wi-fi, localização, roteador e internet" style="width: 520px; height: 520px; position: relative; background: transparent">
+  <div class="lg-ring" style="position: absolute; left: 70px; top: 70px; width: 380px; height: 380px; box-sizing: border-box; border-radius: 50%; border: 3px dashed #c7d2fe; "></div>
+
+  <div class="lg-spoke" style="position: absolute; left: 260px; top: 256px; width: 60px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, rgba(255,255,255,0), #2563eb); transform-origin: 0 4px; transform: rotate(-90deg) translateX(100px)"></div>
+  <div class="lg-spoke" style="position: absolute; left: 260px; top: 256px; width: 60px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, rgba(255,255,255,0), #7c3aed); transform-origin: 0 4px; transform: rotate(-30deg) translateX(100px)"></div>
+  <div class="lg-spoke" style="position: absolute; left: 260px; top: 256px; width: 60px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, rgba(255,255,255,0), #0891b2); transform-origin: 0 4px; transform: rotate(30deg) translateX(100px)"></div>
+  <div class="lg-spoke" style="position: absolute; left: 260px; top: 256px; width: 60px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, rgba(255,255,255,0), #e11d48); transform-origin: 0 4px; transform: rotate(90deg) translateX(100px)"></div>
+  <div class="lg-spoke" style="position: absolute; left: 260px; top: 256px; width: 60px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, rgba(255,255,255,0), #d97706); transform-origin: 0 4px; transform: rotate(150deg) translateX(100px)"></div>
+  <div class="lg-spoke" style="position: absolute; left: 260px; top: 256px; width: 60px; height: 8px; border-radius: 4px; background: linear-gradient(90deg, rgba(255,255,255,0), #059669); transform-origin: 0 4px; transform: rotate(210deg) translateX(100px)"></div>
+
+  <div class="lg-glow" style="position: absolute; left: 132px; top: 132px; width: 256px; height: 256px; border-radius: 50%; background: radial-gradient(circle,#22d3ee99,#22d3ee00 70%)"></div>
+  <div style="position: absolute; left: 152px; top: 152px; width: 216px; height: 216px; box-sizing: border-box; border-radius: 50%; padding: 10px; background: transparent; --cg: conic-gradient(from 0deg, #2563eb, #7c3aed, #e11d48, #d97706, #059669, #0891b2, #2563eb); box-shadow: 0 16px 40px rgba(37,99,235,0.35); overflow:hidden" class="lg-core"><div class="lg-conic"></div>
+    <div style="position:relative; width: 196px; height: 196px; border-radius: 50%; background: #ffffff; overflow: hidden; display: flex; align-items: center; justify-content: center">
+      <img src="/app/robo.jpg" alt="" style="width: 196px; height: 196px; object-fit: cover; object-position: 50% 30%; mix-blend-mode: multiply; filter: contrast(1.08) brightness(1.04)">
+    </div>
+  </div>
+
+  <div class="lg-sat" style="--d:0.35s; position: absolute; left: 218px; top: 26px; width: 84px; height: 84px; border-radius: 26px; background: linear-gradient(145deg, #3b82f6, #1d4ed8); box-shadow: 0 10px 24px rgba(37,99,235,0.45); color: #ffffff; display: flex; align-items: center; justify-content: center; font: 900 22px/1 'Arial Black', Arial, sans-serif; letter-spacing: -0.03em; ">www</div>
+
+  <div class="lg-sat" style="--d:0.7s; position: absolute; left: 384px; top: 122px; width: 84px; height: 84px; border-radius: 26px; background: linear-gradient(145deg, #8b5cf6, #6d28d9); box-shadow: 0 10px 24px rgba(124,58,237,0.45); display: flex; align-items: center; justify-content: center; ">
+    <svg width="42" height="42" viewBox="0 0 24 24" fill="#ffffff" aria-hidden="true"><path d="M20.5 3.5 3.8 10.3c-.8.3-.7 1.4.1 1.6l6.6 1.6 1.6 6.6c.2.8 1.3.9 1.6.1z"/></svg>
+  </div>
+
+  <div class="lg-sat" style="--d:1.0499999999999998s; position: absolute; left: 384px; top: 314px; width: 84px; height: 84px; border-radius: 26px; background: linear-gradient(145deg, #22d3ee, #0e7490); box-shadow: 0 10px 24px rgba(8,145,178,0.45); display: flex; align-items: center; justify-content: center; ">
+    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M2.5 9a14 14 0 0 1 19 0"/><path d="M5.8 12.6a9 9 0 0 1 12.4 0"/><path d="M9.1 16.1a4.2 4.2 0 0 1 5.8 0"/><circle cx="12" cy="19.6" r="1.3" fill="#ffffff" stroke="none"/></svg>
+  </div>
+
+  <div class="lg-sat" style="--d:1.4s; position: absolute; left: 218px; top: 410px; width: 84px; height: 84px; border-radius: 26px; background: linear-gradient(145deg, #fb7185, #be123c); box-shadow: 0 10px 24px rgba(225,29,72,0.45); display: flex; align-items: center; justify-content: center; ">
+    <svg width="42" height="42" viewBox="0 0 24 24" fill="#ffffff" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7zm0 9.6A2.6 2.6 0 1 1 12 6.4a2.6 2.6 0 0 1 0 5.2z"/></svg>
+  </div>
+
+  <div class="lg-sat" style="--d:1.75s; position: absolute; left: 52px; top: 314px; width: 84px; height: 84px; border-radius: 26px; background: linear-gradient(145deg, #fbbf24, #b45309); box-shadow: 0 10px 24px rgba(217,119,6,0.45); display: flex; align-items: center; justify-content: center; ">
+    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 13V5M17 13V5"/><rect x="2.5" y="13" width="19" height="7" rx="2"/><circle cx="7" cy="16.5" r="1" fill="#ffffff" stroke="none"/><circle cx="10.5" cy="16.5" r="1" fill="#ffffff" stroke="none"/><path d="M15 16.5h3.5"/></svg>
+  </div>
+
+  <div class="lg-sat" style="--d:2.0999999999999996s; position: absolute; left: 52px; top: 122px; width: 84px; height: 84px; border-radius: 26px; background: linear-gradient(145deg, #34d399, #047857); box-shadow: 0 10px 24px rgba(5,150,105,0.45); display: flex; align-items: center; justify-content: center; ">
+    <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M2.5 12h19"/><path d="M12 2.5c2.6 2.6 3.9 5.8 3.9 9.5s-1.3 6.9-3.9 9.5c-2.6-2.6-3.9-5.8-3.9-9.5S9.4 5.1 12 2.5z"/></svg>
+  </div>
+</div></div></div>
+  <form method="post" class="login entrada">
     <?= csrf_campo() ?>
-    <img src="/app/logo-256.png" alt="" width="132" height="132" class="logo-entrada">
-    <h2>Comercial + SIDNET<span>Painel do gestor</span></h2>
+    <span class="sobre">Comercial + Sidnet</span>
+    <h1>Central do Gestor</h1>
+    <p class="small">Entre com seu usuário e senha de gestor.</p>
+    <?php if ($msg): ?><div class="msg" role="status"><?= h($msg) ?></div><?php endif ?>
     <label for="usuario">Usuário</label><input id="usuario" name="usuario" autocomplete="username" autocapitalize="none" autofocus required>
     <label for="senha">Senha</label><input id="senha" type="password" name="senha" autocomplete="current-password" required>
     <button class="pri" name="entrar" value="1">Entrar</button>
@@ -512,12 +619,97 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
   <?php endif ?>
   <datalist id="ixcpl"><?php foreach ($ixcPlanos as $ip): ?><option value="<?= h($ip['nome']) ?>"><?php endforeach ?></datalist>
 
+<?php elseif ($p === 'comissoes' && !$admin): ?>
+  <div class="msg">Só o gestor admin vê as comissões.</div>
+
+<?php elseif ($p === 'comissoes'):
+    $meses = comissoes_meses();
+    $mesAtual = date('Y-m');
+    $mes = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) ? $_GET['mes'] : (array_key_first($meses) ?? $mesAtual);
+    if (!isset($meses[$mes])) $meses[$mes] = ['n' => 0, 'abertas' => 0];
+    krsort($meses);
+    $filtro = ['vend' => (int)($_GET['vend'] ?? 0), 'tipo' => (string)($_GET['tipo'] ?? ''), 'pagou' => (string)($_GET['pagou'] ?? ''), 'paga' => (string)($_GET['paga'] ?? '')];
+    $linhas = comissoes_do_mes($mes, $filtro);
+    $tot = ['n' => count($linhas), 'paga' => 0.0, 'apagar' => 0.0, 'espera' => 0.0, 'semvalor' => 0];
+    foreach ($linhas as $l) {
+        $v = (float)$l['valor'];
+        if ($l['valor'] === '') $tot['semvalor']++;
+        if ($l['pago_em'] !== '') $tot['paga'] += $v;
+        elseif ($l['cliente_pagou'] === 'S') $tot['apagar'] += $v;
+        else $tot['espera'] += $v;
+    }
+    $opMeses = [];
+    for ($m = $mes; $m <= mes_soma($mesAtual, 1); $m = mes_soma($m, 1)) $opMeses[] = $m;
+    $pagoMes = (string)($_GET['pago'] ?? $mesAtual);
+    if (!preg_match('/^\d{4}-\d{2}$/', $pagoMes)) $pagoMes = $mesAtual;
+    $pagas = comissoes_pagas_em($pagoMes);
+    $vendList = db()->query('SELECT id, nome FROM vendedores ORDER BY nome')->fetchAll();
+    $qs = fn(array $mais) => '?' . http_build_query(array_merge(['p' => 'comissoes', 'mes' => $mes], array_filter($filtro), $mais)); ?>
+  <div class="card"><h2>Comissões</h2>
+    <p class="small">Cada comissão fica no mês da venda e é paga uma vez só. Quando o cliente pagar, marque "Cliente pagou: Sim"; quando você pagar o vendedor, escolha o mês em "Comissão paga em". O que ficar sem pagar continua aqui no mês da venda: volte nele para conferir.</p>
+    <form method="get" class="row filtros"><input type="hidden" name="p" value="comissoes">
+      <label for="cmes">Vendas de</label>
+      <select id="cmes" name="mes"><?php foreach ($meses as $m => $i): ?><option value="<?= h($m) ?>" <?= $m === $mes ? 'selected' : '' ?>><?= h(mes_nome($m)) ?> · <?= $i['abertas'] ? $i['abertas'] . ' em aberto' : 'tudo pago' ?></option><?php endforeach ?></select>
+      <select name="vend" aria-label="Vendedor"><option value="">Todos os vendedores</option><?php foreach ($vendList as $vd): ?><option value="<?= (int)$vd['id'] ?>" <?= $filtro['vend'] === (int)$vd['id'] ? 'selected' : '' ?>><?= h($vd['nome']) ?></option><?php endforeach ?></select>
+      <select name="tipo" aria-label="Tipo"><option value="">Todos os tipos</option><?php foreach (COMISSAO_TIPOS as $k => $t): ?><option value="<?= $k ?>" <?= $filtro['tipo'] === $k ? 'selected' : '' ?>><?= $t ?></option><?php endforeach ?></select>
+      <select name="pagou" aria-label="Cliente pagou"><option value="">Cliente pagou: todos</option><option value="S" <?= $filtro['pagou'] === 'S' ? 'selected' : '' ?>>Cliente pagou</option><option value="N" <?= $filtro['pagou'] === 'N' ? 'selected' : '' ?>>Cliente não pagou</option><option value="V" <?= $filtro['pagou'] === 'V' ? 'selected' : '' ?>>A vencer</option></select>
+      <select name="paga" aria-label="Comissão paga"><option value="">Comissão: todas</option><option value="nao" <?= $filtro['paga'] === 'nao' ? 'selected' : '' ?>>Ainda não paga</option><option value="sim" <?= $filtro['paga'] === 'sim' ? 'selected' : '' ?>>Já paga</option></select>
+      <button class="pri">Filtrar</button></form>
+  </div>
+  <div class="kpis">
+    <div><b><?= $tot['n'] ?></b><span>vendas em <?= h(mes_nome($mes)) ?></span></div>
+    <div class="ok"><b>R$ <?= brl(number_format($tot['paga'], 2, '.', '')) ?></b><span>comissão já paga</span></div>
+    <div class="q"><b>R$ <?= brl(number_format($tot['apagar'], 2, '.', '')) ?></b><span>a pagar (cliente já pagou)</span></div>
+    <div><b>R$ <?= brl(number_format($tot['espera'], 2, '.', '')) ?></b><span>esperando o cliente<?= $tot['semvalor'] ? ' · ' . $tot['semvalor'] . ' sem valor' : '' ?></span></div>
+  </div>
+  <form method="post" class="card tw com"><?= csrf_campo() ?><input type="hidden" name="acao" value="comissoes_salvar">
+    <table>
+      <tr><th>ID cliente IXC</th><th>Cliente</th><th>Vendedor</th><th>Tipo</th><th>Plano</th><th>Vencimento do boleto</th><th>Instalação</th><th>Roteador</th><th>Comissão</th><th>Cliente pagou?</th><th>Comissão paga em</th></tr>
+      <?php foreach ($linhas as $l): $k = 'c[' . (int)$l['id'] . ']'; $cls = $l['pago_em'] !== '' ? 'paga' : ($l['cliente_pagou'] === 'S' ? 'apagar' : ''); ?>
+      <tr class="<?= $cls ?>">
+        <td><input name="<?= $k ?>[ixc_cliente]" value="<?= h($l['ixc_cliente']) ?>" size="7" inputmode="numeric" aria-label="ID do cliente no IXC"></td>
+        <td><b><?= h($l['nome']) ?></b><br><span class="small">venda <?= h(date('d/m', strtotime($l['recebido_em']))) ?> · <?= h($l['cpf']) ?></span></td>
+        <td><?= h($l['vendedor']) ?></td>
+        <td><span class="tp tp-<?= h($l['tipo']) ?>"><?= h(COMISSAO_TIPOS[$l['tipo']] ?? $l['tipo']) ?></span></td>
+        <td class="small"><?= h($l['plano']) ?></td>
+        <td><input type="date" name="<?= $k ?>[vencimento]" value="<?= h($l['vencimento']) ?>" aria-label="Vencimento do boleto"><?= $l['dia_venc'] !== '' && $l['vencimento'] === '' ? '<br><span class="small">dia ' . h($l['dia_venc']) . '</span>' : '' ?></td>
+        <td><input name="<?= $k ?>[instalacao]" value="<?= h(brl($l['instalacao'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor da instalação"></td>
+        <td><input name="<?= $k ?>[roteador]" value="<?= h(brl($l['roteador'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor do roteador"></td>
+        <td><input name="<?= $k ?>[valor]" value="<?= h(brl($l['valor'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor da comissão" class="forte"></td>
+        <td><select name="<?= $k ?>[cliente_pagou]" aria-label="Cliente pagou"><option value="">A vencer</option><option value="S" <?= $l['cliente_pagou'] === 'S' ? 'selected' : '' ?>>Sim</option><option value="N" <?= $l['cliente_pagou'] === 'N' ? 'selected' : '' ?>>Não</option></select></td>
+        <td><select name="<?= $k ?>[pago_em]" aria-label="Comissão paga em"><option value="">Não paga</option><?php foreach ($opMeses as $om): ?><option value="<?= $om ?>" <?= $l['pago_em'] === $om ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select>
+          <input type="hidden" name="<?= $k ?>[obs]" value="<?= h($l['obs']) ?>"></td>
+      </tr>
+      <?php endforeach ?>
+      <?php if (!$linhas): ?><tr><td colspan="11" class="small">Nenhuma venda nesse mês com esses filtros.</td></tr><?php endif ?>
+    </table>
+    <?php if ($linhas): ?><div class="salvar"><span class="small">Mudou alguma coisa? Salve antes de trocar de mês.</span><button class="pri">Salvar comissões</button></div><?php endif ?>
+  </form>
+  <div class="card tw"><form method="get" class="row"><input type="hidden" name="p" value="comissoes"><input type="hidden" name="mes" value="<?= h($mes) ?>">
+      <h2 style="margin:0">Pago aos vendedores em</h2>
+      <select name="pago" aria-label="Mês do pagamento"><?php for ($i = -1; $i <= 12; $i++): $om = mes_soma($mesAtual, -$i); ?><option value="<?= $om ?>" <?= $om === $pagoMes ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endfor ?></select>
+      <button>Ver</button></form>
+    <table>
+      <tr><th>Vendedor</th><th>Vendas</th><th>Upgrades</th><th>2º ponto</th><th>Total</th><th>Inclui vendas de outros meses</th></tr>
+      <?php $g = ['venda' => 0, 'upgrade' => 0, 'segundo' => 0, 'total' => 0]; foreach ($pagas as $nome => $pg): foreach (['venda', 'upgrade', 'segundo'] as $t) $g[$t] += $pg['tipos'][$t] ?? 0; $g['total'] += $pg['total']; ?>
+      <tr><td><?= h($nome) ?></td>
+        <?php foreach (['venda', 'upgrade', 'segundo'] as $t): ?><td class="n">R$ <?= brl(number_format($pg['tipos'][$t] ?? 0, 2, '.', '')) ?></td><?php endforeach ?>
+        <td class="n"><b>R$ <?= brl(number_format($pg['total'], 2, '.', '')) ?></b></td>
+        <td class="small"><?= h(implode(', ', array_unique($pg['atrasadas'] ?? [])) ?: '—') ?></td></tr>
+      <?php endforeach ?>
+      <?php if ($pagas): ?><tr class="soma"><td>Total</td><?php foreach (['venda', 'upgrade', 'segundo'] as $t): ?><td class="n">R$ <?= brl(number_format($g[$t], 2, '.', '')) ?></td><?php endforeach ?><td class="n"><b>R$ <?= brl(number_format($g['total'], 2, '.', '')) ?></b></td><td></td></tr>
+      <?php else: ?><tr><td colspan="6" class="small">Nenhuma comissão marcada como paga em <?= h(mes_nome($pagoMes)) ?>.</td></tr><?php endif ?>
+    </table></div>
+
 <?php elseif ($p === 'gestores'): ?>
   <div class="card tw"><table>
-    <tr><th>Gestor</th><th>Usuário</th><th>Acesso</th><th>Último acesso</th><th></th></tr>
+    <tr><th>Gestor</th><th>Usuário</th><th>Acesso</th><th>Admin (comissões)</th><th>Último acesso</th><th></th></tr>
     <?php foreach (db()->query('SELECT * FROM gestores ORDER BY ativo DESC, nome') as $g): ?>
     <tr><td><?= h($g['nome']) ?></td><td><?= h($g['usuario']) ?></td>
-      <td><?= $g['ativo'] ? '<span class="pill ok">Ativo</span>' : '<span class="pill er">Bloqueado</span>' ?></td><td class="n"><?= h($g['ultimo_acesso'] ?? '—') ?></td>
+      <td><?= $g['ativo'] ? '<span class="pill ok">Ativo</span>' : '<span class="pill er">Bloqueado</span>' ?></td>
+      <td><?= $g['admin'] ? '<span class="pill ok">Admin</span>' : '<span class="small">não</span>' ?>
+        <?php if ($admin && (int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_admin"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button><?= $g['admin'] ? 'Tirar admin' : 'Tornar admin' ?></button></form><?php endif ?></td>
+      <td class="n"><?= h($g['ultimo_acesso'] ?? '—') ?></td>
       <td><?php if ((int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_ativo"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button class="<?= $g['ativo'] ? 'del' : '' ?>"><?= $g['ativo'] ? 'Bloquear' : 'Liberar' ?></button></form><?php else: ?><span class="small">você</span><?php endif ?></td></tr>
     <?php endforeach ?>
   </table></div>
