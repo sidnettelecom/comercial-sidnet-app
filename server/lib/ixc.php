@@ -164,6 +164,13 @@ const IXC_CLIENTE_PADRAO = [
     'inss_retem' => 'S', 'cli_desconta_iss_retido_total' => 'S', 'percentual_reducao' => '0.00',
 ];
 
+/** Padrões da negociação (documentação da API de crm_negociacoes). */
+const IXC_NEGOCIACAO_PADRAO = [
+    'auto_viabilidade' => 'N', 'alerta' => 'S', 'origem' => 'outros', 'inserir_tarefa' => 'S', 'inserir_atendimento' => 'S',
+    'inserir_acesso' => 'S', 'inserir_contrato' => 'S', 'autenticacao' => 'L', 'tipo_conexao_mapa' => 'F', 'prioridade' => 'M',
+    'melhor_horario_reserva' => 'Q',
+];
+
 /** Plano de venda (vd_contratos) pelo nome que o app usa. */
 function ixc_plano(string $nome): ?array
 {
@@ -415,6 +422,25 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
             'status' => 'N',
             'obs' => ixc_descricao($r, $venda, $vendedor),
         ];
+        // aba Endereço da negociação: o IXC exige preenchida; usa o endereço do prospect
+        $cli = $api->um('cliente', 'id', (string)$p['prospect']) ?? [];
+        $end = [
+            'cep' => (string)($cli['cep'] ?? ''), 'endereco' => (string)($cli['endereco'] ?? ''), 'numero' => (string)($cli['numero'] ?? ''),
+            'complemento' => (string)($cli['complemento'] ?? ''), 'bairro' => (string)($cli['bairro'] ?? ''), 'cidade' => (string)($cli['cidade'] ?? ''),
+            'referencia' => (string)($cli['referencia'] ?? ''), 'bloco' => (string)($cli['bloco'] ?? ''), 'apartamento' => (string)($cli['apartamento'] ?? ''),
+            'moradia' => (string)($cli['moradia'] ?? ''), 'tipo_localidade' => (string)($cli['tipo_localidade'] ?? '') ?: 'U',
+            'latitude' => (string)($cli['latitude'] ?? ''), 'longitude' => (string)($cli['longitude'] ?? ''),
+        ];
+        if ($end['cep'] === '' || $end['endereco'] === '' || $end['cidade'] === '') {
+            throw new ErroCrm('O prospect #' . $p['prospect'] . ' está sem CEP, rua ou cidade no IXC. Complete o endereço dele no IXC e use "Tentar de novo".');
+        }
+        $d['considera_endereco_cliente'] = 'S';
+        foreach ($end as $k => $v) {
+            $d[$k . '_cliente'] = $v;
+            $d[$k . '_negociacao'] = $v;
+        }
+        $d['uf_negociacao'] = (string)($cli['uf'] ?? '');
+        $d += IXC_NEGOCIACAO_PADRAO;
         $p['negociacao'] = $api->inserir('crm_negociacoes', limpar_campos($d));
         ixc_salvar_passos($venda, $p);
     }
