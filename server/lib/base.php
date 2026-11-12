@@ -134,6 +134,11 @@ function criar_tabelas(PDO $pdo): void
     if (!in_array('ixc_passos', $colsV, true)) {
         $pdo->exec("ALTER TABLE vendas ADD COLUMN ixc_passos TEXT NOT NULL DEFAULT ''");
     }
+    $colsC = array_column($pdo->query('PRAGMA table_info(comissoes)')->fetchAll(), 'name');
+    if (!in_array('valor_plano', $colsC, true)) {
+        // valor mensal do plano vendido (vem do cadastro de planos; o admin pode corrigir)
+        $pdo->exec("ALTER TABLE comissoes ADD COLUMN valor_plano TEXT NOT NULL DEFAULT ''");
+    }
     $colsD = array_column($pdo->query('PRAGMA table_info(vendedores)')->fetchAll(), 'name');
     if (!in_array('ixc_vendedor_id', $colsD, true)) {
         $pdo->exec("ALTER TABLE vendedores ADD COLUMN ixc_vendedor_id TEXT NOT NULL DEFAULT ''");

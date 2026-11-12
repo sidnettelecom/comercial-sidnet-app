@@ -425,7 +425,7 @@ th{background:transparent}tr:hover td{background:color-mix(in srgb,var(--brand) 
 .kpis b{display:block;font-size:20px;font-variant-numeric:tabular-nums}.kpis span{font-size:12.5px;color:var(--muted)}
 .kpis .ok b{color:var(--ok)}.kpis .q b{color:#b45309}
 @media (max-width:800px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
-.com table{min-width:1100px}.com th,.com td{padding:8px 6px}.com td{vertical-align:middle}.com input,.com select{height:34px;padding:0 8px;font-size:13px}.com input{width:82px}.com input[type=date]{width:136px}.com td.small{max-width:130px}
+.com table{min-width:1180px}.com th,.com td{padding:8px 6px}.com td{vertical-align:middle}.com input,.com select{height:34px;padding:0 8px;font-size:13px}.com input{width:82px}.com input[type=date]{width:136px}.com td.small{max-width:130px}
 .com input.forte{font-weight:700}
 .com tr.paga td{background:color-mix(in srgb,var(--ok-bg) 70%,transparent)}
 .com tr.apagar td{background:#fef9c3}
@@ -672,7 +672,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     $vendList = db()->query('SELECT id, nome FROM vendedores ORDER BY nome')->fetchAll();
     $qs = fn(array $mais) => '?' . http_build_query(array_merge(['p' => 'comissoes', 'mes' => $mes], array_filter($filtro), $mais)); ?>
   <div class="card"><h2>Comissões</h2>
-    <p class="small"><b>Automático do IXC</b> (a cada 30 minutos): ID do cliente, vencimento do primeiro boleto depois da venda e "Cliente pagou" (Sim quando o boleto é recebido, Não quando vence em aberto). Instalação e roteador vêm do que o vendedor preencheu no app.<br>Cada comissão fica no mês da venda e é paga uma vez só. Quando o cliente pagar, marque "Cliente pagou: Sim"; quando você pagar o vendedor, escolha o mês em "Comissão paga em". O que ficar sem pagar continua aqui no mês da venda: volte nele para conferir.</p>
+    <p class="small"><b>Automático do IXC</b> (a cada 30 minutos): ID do cliente, vencimento do primeiro boleto depois da venda e "Cliente pagou" (Sim quando o boleto é recebido, Não quando vence em aberto). Instalação e roteador vêm do que o vendedor preencheu no app. O valor do plano vem da aba Planos (no upgrade, do novo valor informado).<br>Cada comissão fica no mês da venda e é paga uma vez só. Quando o cliente pagar, marque "Cliente pagou: Sim"; quando você pagar o vendedor, escolha o mês em "Comissão paga em". O que ficar sem pagar continua aqui no mês da venda: volte nele para conferir.</p>
     <form method="get" class="row filtros"><input type="hidden" name="p" value="comissoes">
       <label for="cmes">Vendas de</label>
       <select id="cmes" name="mes"><?php foreach ($meses as $m => $i): ?><option value="<?= h($m) ?>" <?= $m === $mes ? 'selected' : '' ?>><?= h(mes_nome($m)) ?> · <?= $i['abertas'] ? $i['abertas'] . ' em aberto' : 'tudo pago' ?></option><?php endforeach ?></select>
@@ -691,7 +691,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
   </div>
   <form method="post" class="card tw com"><?= csrf_campo() ?><input type="hidden" name="acao" value="comissoes_salvar">
     <table>
-      <tr><th>ID cliente IXC</th><th>Cliente</th><th>Vendedor</th><th>Tipo</th><th>Plano</th><th>Vencimento do boleto</th><th>Instalação</th><th>Roteador</th><th>Comissão</th><th>Cliente pagou?</th><th>Comissão paga em</th></tr>
+      <tr><th>ID cliente IXC</th><th>Cliente</th><th>Vendedor</th><th>Tipo</th><th>Plano</th><th>Valor do plano</th><th>Vencimento do boleto</th><th>Instalação</th><th>Roteador</th><th>Comissão</th><th>Cliente pagou?</th><th>Comissão paga em</th></tr>
       <?php foreach ($linhas as $l): $k = 'c[' . (int)$l['id'] . ']'; $cls = $l['pago_em'] !== '' ? 'paga' : ($l['cliente_pagou'] === 'S' ? 'apagar' : ''); ?>
       <tr class="<?= $cls ?>">
         <td><input name="<?= $k ?>[ixc_cliente]" value="<?= h($l['ixc_cliente']) ?>" size="7" inputmode="numeric" aria-label="ID do cliente no IXC"></td>
@@ -699,6 +699,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
         <td><?= h($l['vendedor']) ?></td>
         <td><span class="tp tp-<?= h($l['tipo']) ?>"><?= h(COMISSAO_TIPOS[$l['tipo']] ?? $l['tipo']) ?></span></td>
         <td class="small"><?= h($l['plano']) ?></td>
+        <td><input name="<?= $k ?>[valor_plano]" value="<?= h(brl($l['valor_plano'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor mensal do plano"></td>
         <td><input type="date" name="<?= $k ?>[vencimento]" value="<?= h($l['vencimento']) ?>" aria-label="Vencimento do boleto"><?= $l['dia_venc'] !== '' && $l['vencimento'] === '' ? '<br><span class="small">dia ' . h($l['dia_venc']) . '</span>' : '' ?></td>
         <td><input name="<?= $k ?>[instalacao]" value="<?= h(brl($l['instalacao'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor da instalação"></td>
         <td><input name="<?= $k ?>[roteador]" value="<?= h(brl($l['roteador'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor do roteador"></td>
@@ -708,7 +709,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
           <input type="hidden" name="<?= $k ?>[obs]" value="<?= h($l['obs']) ?>"></td>
       </tr>
       <?php endforeach ?>
-      <?php if (!$linhas): ?><tr><td colspan="11" class="small">Nenhuma venda nesse mês com esses filtros.</td></tr><?php endif ?>
+      <?php if (!$linhas): ?><tr><td colspan="12" class="small">Nenhuma venda nesse mês com esses filtros.</td></tr><?php endif ?>
     </table>
     <?php if ($linhas): ?><div class="salvar"><span class="small">Mudou alguma coisa? Salve antes de trocar de mês.</span><button class="pri">Salvar comissões</button></div><?php endif ?>
   </form>
