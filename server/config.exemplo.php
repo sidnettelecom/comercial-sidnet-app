@@ -27,7 +27,8 @@ return [
         'venda_ate' => 'negociacao',
         'responsavel_id' => 0,         // colaborador responsável no CRM (php server/bin/ixc.php listar colaboradores)
         'regiao_cobertura_id' => 4,    // tipo de região de cobertura do lead (4 = Região de Cobertura)
-        'canal_padrao' => 12,          // canal de venda quando o app não manda (12 = PRESENCIAL)
+        'canal_padrao' => 12,
+        'tipo_cliente_id' => 1,        // tipo de cliente do prospect (1 = Clientes em geral)          // canal de venda quando o app não manda (12 = PRESENCIAL)
     ],
 
     // CRM antigo (só se 'destino' => 'crm')
