@@ -332,8 +332,20 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
         $cidReg = $cid !== '' ? $api->um('cidade', 'id', $cid) : null;
         $cep = so_digitos($r['cep'] ?? '');
         $cpf = so_digitos($r['cpf'] ?? '');
+        if ($cid === '') {
+            throw new ErroCrm('A cidade "' . up($r['cidade'] ?? '') . '" não foi achada no IXC. Corrija o nome da cidade no cadastro e envie de novo. (O lead #' . $p['lead'] . ' já foi criado e não será repetido.)');
+        }
+        if (strlen($cep) !== 8) {
+            throw new ErroCrm('O IXC exige o CEP com 8 números. Preencha o CEP no cadastro e envie de novo. (O lead #' . $p['lead'] . ' já foi criado e não será repetido.)');
+        }
+        $tel1 = (string)($r['tel1'] ?? '');
+        $tel2 = (string)($r['tel2'] ?? '') !== '' ? (string)$r['tel2'] : $tel1;
         $d = [
             'ativo' => 'S',
+            'id_tipo_cliente' => (string)($cfg['tipo_cliente_id'] ?? '1'),
+            'tipo_assinante' => '3',
+            'iss_classificacao_padrao' => '99',
+            'contribuinte_icms' => 'N',
             'crm' => 'S',
             'status_prospeccao' => 'N',
             'tipo_pessoa' => 'F',
@@ -357,9 +369,9 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
             'uf' => (string)($cidReg['uf'] ?? ''),
             'referencia' => up($r['referencia'] ?? ''),
             'tipo_localidade' => up($r['zona'] ?? '') === 'R' ? 'R' : 'U',
-            'fone_celular' => (string)($r['tel1'] ?? ''),
-            'whatsapp' => (string)($r['tel1'] ?? ''),
-            'fone_residencial' => (string)($r['tel2'] ?? ''),
+            'telefone_celular' => $tel1,
+            'whatsapp' => $tel1,
+            'fone' => $tel2,
             'email' => strtolower(trim((string)($r['email'] ?? ''))),
             'obs' => ixc_descricao($r, $venda, $vendedor),
         ];
