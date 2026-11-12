@@ -94,7 +94,8 @@ function comissoes_salvar(array $linhas, string $quem): int
 {
     $up = db()->prepare("INSERT INTO comissoes (venda_id, ixc_cliente, vencimento, instalacao, roteador, valor, cliente_pagou, pago_em, obs, atualizado_em, por)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'), ?)
-        ON CONFLICT(venda_id) DO UPDATE SET ixc_cliente=excluded.ixc_cliente, vencimento=excluded.vencimento, instalacao=excluded.instalacao,
+        ON CONFLICT(venda_id) DO UPDATE SET ixc_cliente=CASE WHEN excluded.ixc_cliente = '' THEN comissoes.ixc_cliente ELSE excluded.ixc_cliente END,
+            vencimento=CASE WHEN excluded.vencimento = '' THEN comissoes.vencimento ELSE excluded.vencimento END, instalacao=excluded.instalacao,
             roteador=excluded.roteador, valor=excluded.valor, cliente_pagou=excluded.cliente_pagou, pago_em=excluded.pago_em, obs=excluded.obs,
             atualizado_em=excluded.atualizado_em, por=excluded.por");
     $mesVenda = db()->prepare("SELECT strftime('%Y-%m', recebido_em, 'localtime') FROM vendas WHERE id = ?");
@@ -135,4 +136,56 @@ function comissoes_pagas_em(string $mes): array
         unset($o);
     }
     return $out;
+}
+
+/**
+ * Busca no IXC o ID do cliente e o primeiro boleto depois da venda, e marca "cliente pagou"
+ * quando esse boleto foi recebido (ou "não" quando venceu em aberto). Não mexe no valor da
+ * comissão nem no mês em que ela foi paga. Devolve quantas vendas mudaram.
+ */
+function comissoes_atualizar_ixc(int $limite = 40, int $id = 0): int
+{
+    if (destino() !== 'ixc') return 0;
+    require_once __DIR__ . '/ixc.php';
+    $sql = "SELECT v.id, v.tipo, v.dados, v.ixc_passos, v.recebido_em, c.venda_id AS tem, c.ixc_cliente, c.vencimento, c.cliente_pagou
+            FROM vendas v LEFT JOIN comissoes c ON c.venda_id = v.id
+            WHERE v.status = 'crm' AND v.tipo IN ('venda','upgrade','segundo')"
+        . ($id ? ' AND v.id = ' . $id : " AND v.recebido_em >= datetime('now','-150 days')
+            AND (c.venda_id IS NULL OR c.ixc_cliente = '' OR c.vencimento = '' OR c.cliente_pagou <> 'S')")
+        . ' ORDER BY v.id DESC LIMIT ' . max(1, $limite);
+    $api = ixc();
+    $hoje = date('Y-m-d');
+    $mudou = 0;
+    $ins = db()->prepare("INSERT OR IGNORE INTO comissoes (venda_id, instalacao, roteador) VALUES (?, ?, ?)");
+    $up = db()->prepare("UPDATE comissoes SET ixc_cliente = ?, vencimento = ?, cliente_pagou = ?, atualizado_em = datetime('now','localtime'), por = 'IXC' WHERE venda_id = ?");
+    foreach (db()->query($sql)->fetchAll() as $v) {
+        $dados = json_decode((string)$v['dados'], true) ?: [];
+        $passos = json_decode((string)$v['ixc_passos'], true) ?: [];
+        $cli = (string)($v['ixc_cliente'] ?? '');
+        if ($cli === '') $cli = (string)($passos['prospect'] ?? '');
+        if ($cli === '') $cli = (string)(ixc_cliente_por_cpf((string)($dados['cpf'] ?? ''))['id'] ?? '');
+        if ($cli === '') continue;
+        // primeiro boleto que vence a partir do dia da venda (no 2º ponto, o do contrato novo)
+        $dia = date('Y-m-d', strtotime((string)$v['recebido_em']));
+        $contrato = (string)($passos['contrato'] ?? '');
+        $bol = null;
+        foreach ($api->listar('fn_areceber', 'id_cliente', $cli, '=', 100, 'asc') as $b) {
+            $venc = substr((string)($b['data_vencimento'] ?? ''), 0, 10);
+            if (($b['status'] ?? '') === 'C' || $venc < $dia) continue;
+            if ($contrato !== '' && (string)($b['id_contrato'] ?? '') !== '' && (string)$b['id_contrato'] !== $contrato) continue;
+            if (!$bol || $venc < substr((string)$bol['data_vencimento'], 0, 10)) $bol = $b;
+        }
+        $venc = $bol ? substr((string)$bol['data_vencimento'], 0, 10) : (string)($v['vencimento'] ?? '');
+        $pagou = (string)($v['cliente_pagou'] ?? '');
+        if ($bol) {
+            if (($bol['status'] ?? '') === 'R') $pagou = 'S';
+            elseif ($pagou === '' && $venc !== '' && $venc < $hoje) $pagou = 'N';
+        }
+        if ($v['tem'] === null) $ins->execute([(int)$v['id'], dinheiro((string)($dados['valInst'] ?? '')), dinheiro((string)($dados['valRot'] ?? ''))]);
+        if ($cli !== (string)$v['ixc_cliente'] || $venc !== (string)$v['vencimento'] || $pagou !== (string)$v['cliente_pagou']) {
+            $up->execute([$cli, $venc, $pagou, (int)$v['id']]);
+            $mudou++;
+        }
+    }
+    return $mudou;
 }
