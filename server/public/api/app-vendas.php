@@ -9,6 +9,7 @@
  *        -> {ok:true, id:"Recebido #12"}  e logo em seguida o servidor manda ao CRM
  *   GET  /api/app-vendas.php?acao=status&ids=a,b,c   -> situação no CRM de cada cadastro
  *   GET  /api/app-vendas.php?acao=eu                  -> confere o login, devolve o nome do vendedor
+ *   GET  /api/app-vendas.php?acao=planos              -> planos definidos no painel (vazio = o celular usa a lista dele)
  *
  * Reenviar o mesmo id_app não duplica: devolve o que já foi recebido.
  */
@@ -102,7 +103,7 @@ try {
             usleep(400000);
             responder(401, ['ok' => false, 'erro' => $e->getMessage()]);
         }
-        responder(200, ['ok' => true, 'token' => $token, 'nome' => $v['nome'], 'usuario' => $v['usuario']]);
+        responder(200, ['ok' => true, 'token' => $token, 'nome' => $v['nome'], 'usuario' => $v['usuario'], 'planos' => planos_ativos()]);
     }
 
     $vend = vendedor_da_chave();
@@ -115,6 +116,10 @@ try {
 
     if ($acao === 'eu') {
         responder(200, ['ok' => true, 'nome' => $vend['nome']]);
+    }
+
+    if ($acao === 'planos') {
+        responder(200, ['ok' => true, 'planos' => planos_ativos()]);
     }
 
     if ($acao === 'status') {
