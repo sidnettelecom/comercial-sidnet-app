@@ -31,7 +31,7 @@ function vendedor_novo(string $nome, string $crmId, string $usuario, string $sen
     $q = db()->prepare('SELECT 1 FROM vendedores WHERE usuario = ?');
     $q->execute([$u]);
     if ($q->fetchColumn()) throw new RuntimeException("Já existe um vendedor com o usuário \"$u\".");
-    db()->prepare('INSERT INTO vendedores (nome, crm_vendedor_id, usuario, senha_hash) VALUES (?, ?, ?, ?)')
+    db()->prepare('INSERT INTO vendedores (nome, crm_vendedor_id, usuario, senha_hash, trocar_senha) VALUES (?, ?, ?, ?, 1)')
         ->execute([up($nome), trim($crmId), $u, password_hash($senha, PASSWORD_DEFAULT)]);
     return (int)db()->lastInsertId();
 }
@@ -45,9 +45,25 @@ function vendedor_definir_acesso(int $id, string $usuario, string $senha): void
     $q = db()->prepare('SELECT 1 FROM vendedores WHERE usuario = ? AND id <> ?');
     $q->execute([$u, $id]);
     if ($q->fetchColumn()) throw new RuntimeException("Já existe outro vendedor com o usuário \"$u\".");
-    db()->prepare('UPDATE vendedores SET usuario = ?, senha_hash = ?, chave_hash = NULL WHERE id = ?')
+    db()->prepare('UPDATE vendedores SET usuario = ?, senha_hash = ?, chave_hash = NULL, trocar_senha = 1 WHERE id = ?')
         ->execute([$u, password_hash($senha, PASSWORD_DEFAULT), $id]);
     vendedor_derrubar_sessoes($id);
+}
+
+/**
+ * O vendedor troca a senha provisória pela dele. Confere a atual; encerra os outros logins dele.
+ * Lança RuntimeException com a mensagem para o vendedor.
+ */
+function vendedor_trocar_senha(array $v, string $atual, string $nova, string $tokenAtual): void
+{
+    $q = db()->prepare('SELECT senha_hash FROM vendedores WHERE id = ?');
+    $q->execute([$v['id']]);
+    if (!password_verify($atual, (string)$q->fetchColumn())) throw new RuntimeException('A senha atual não confere.');
+    if ($p = problema_senha($nova)) throw new RuntimeException($p);
+    if ($nova === $atual) throw new RuntimeException('A senha nova precisa ser diferente da provisória.');
+    if (strcasecmp($nova, (string)($v['usuario'] ?? '')) === 0) throw new RuntimeException('A senha não pode ser igual ao usuário.');
+    db()->prepare('UPDATE vendedores SET senha_hash = ?, trocar_senha = 0 WHERE id = ?')->execute([password_hash($nova, PASSWORD_DEFAULT), $v['id']]);
+    db()->prepare('DELETE FROM sessoes WHERE vendedor_id = ? AND token_hash <> ?')->execute([$v['id'], hash('sha256', $tokenAtual)]);
 }
 
 /** Login do celular vale até 7 dias sem uso e no máximo 30 dias; depois o vendedor entra de novo. */

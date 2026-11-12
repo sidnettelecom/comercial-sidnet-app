@@ -149,6 +149,15 @@ function criar_tabelas(PDO $pdo): void
         $pdo->exec("ALTER TABLE vendedores ADD COLUMN senha_hash TEXT NOT NULL DEFAULT ''");
         $pdo->exec("CREATE UNIQUE INDEX IF NOT EXISTS vendedores_usuario ON vendedores(usuario)");
     }
+    // senha provisória (gerada no painel): obriga a criar a própria no próximo login
+    if (!in_array('trocar_senha', $colsD, true)) {
+        $pdo->exec('ALTER TABLE vendedores ADD COLUMN trocar_senha INTEGER NOT NULL DEFAULT 0');
+        $pdo->exec("UPDATE vendedores SET trocar_senha = 1 WHERE COALESCE(usuario, '') <> ''"); // os de hoje usam a senha que o gestor gerou
+    }
+    $colsG0 = array_column($pdo->query('PRAGMA table_info(gestores)')->fetchAll(), 'name');
+    if (!in_array('trocar_senha', $colsG0, true)) {
+        $pdo->exec('ALTER TABLE gestores ADD COLUMN trocar_senha INTEGER NOT NULL DEFAULT 0');
+    }
     // gestor admin: só ele vê as comissões. O primeiro gestor já nasce admin.
     $colsG = array_column($pdo->query('PRAGMA table_info(gestores)')->fetchAll(), 'name');
     if (!in_array('admin', $colsG, true)) {

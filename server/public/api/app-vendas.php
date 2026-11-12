@@ -9,6 +9,8 @@
  *        -> {ok:true, id:"Recebido #12"}  e logo em seguida o servidor manda ao CRM
  *   GET  /api/app-vendas.php?acao=status&ids=a,b,c   -> situação no CRM de cada cadastro
  *   GET  /api/app-vendas.php?acao=eu                  -> confere o login, devolve o nome do vendedor
+ *   POST /api/app-vendas.php?acao=senha               {atual, nova} troca a senha provisória pela do vendedor
+ *   GET  /api/app-vendas.php?acao=boletos&ids=a,b     -> 1º boleto de cada venda: pagou S/N/'' e vencimento
  *   GET  /api/app-vendas.php?acao=planos              -> planos definidos no painel (vazio = o celular usa a lista dele)
  *
  * Reenviar o mesmo id_app não duplica: devolve o que já foi recebido.
@@ -103,7 +105,7 @@ try {
             usleep(400000);
             responder(401, ['ok' => false, 'erro' => $e->getMessage()]);
         }
-        responder(200, ['ok' => true, 'token' => $token, 'nome' => $v['nome'], 'usuario' => $v['usuario'], 'planos' => planos_ativos()]);
+        responder(200, ['ok' => true, 'token' => $token, 'nome' => $v['nome'], 'usuario' => $v['usuario'], 'planos' => planos_ativos(), 'trocar' => (bool)($v['trocar_senha'] ?? 0)]);
     }
 
     $vend = vendedor_da_chave();
@@ -115,11 +117,40 @@ try {
     }
 
     if ($acao === 'eu') {
-        responder(200, ['ok' => true, 'nome' => $vend['nome']]);
+        responder(200, ['ok' => true, 'nome' => $vend['nome'], 'trocar' => (bool)($vend['trocar_senha'] ?? 0)]);
     }
 
     if ($acao === 'planos') {
-        responder(200, ['ok' => true, 'planos' => planos_ativos()]);
+        responder(200, ['ok' => true, 'planos' => planos_ativos(), 'trocar' => (bool)($vend['trocar_senha'] ?? 0)]);
+    }
+
+    if ($acao === 'senha' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        $in = json_decode(file_get_contents('php://input') ?: '', true) ?: [];
+        $h = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        try {
+            vendedor_trocar_senha($vend, (string)($in['atual'] ?? ''), (string)($in['nova'] ?? ''), trim(substr($h, 7)));
+        } catch (RuntimeException $e) {
+            usleep(300000);
+            responder(422, ['ok' => false, 'erro' => $e->getMessage()]);
+        }
+        responder(200, ['ok' => true]);
+    }
+
+    if ($acao === 'boletos') {
+        // situação do 1º boleto das vendas deste vendedor (vem do IXC pela tela de comissões)
+        $ids = array_slice(array_filter(explode(',', (string)($_GET['ids'] ?? ''))), 0, 300);
+        $res = [];
+        if ($ids) {
+            $marcas = implode(',', array_fill(0, count($ids), '?'));
+            $q = db()->prepare("SELECT v.id_app, c.cliente_pagou, c.vencimento FROM vendas v JOIN comissoes c ON c.venda_id = v.id
+                                WHERE v.vendedor_id = ? AND v.id_app IN ($marcas)");
+            $q->execute(array_merge([$vend['id']], $ids));
+            foreach ($q as $r) {
+                if ($r['vencimento'] === '' && $r['cliente_pagou'] === '') continue;
+                $res[$r['id_app']] = ['pagou' => $r['cliente_pagou'], 'venc' => $r['vencimento']];
+            }
+        }
+        responder(200, ['ok' => true, 'boletos' => $res]);
     }
 
     if ($acao === 'status') {
