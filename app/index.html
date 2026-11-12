@@ -418,7 +418,7 @@ body.travado>*:not(.gate):not(.toast){visibility:hidden}
         <datalist id="dl-cidades"></datalist>
         <span class="msg">Informe a cidade.</span>
       </div>
-      <div class="f" data-k="referencia">
+      <div class="f" data-k="referencia" hidden style="display:none">
         <label for="referencia" class="req">Ponto de referência</label>
         <textarea id="referencia" name="referencia" rows="2" placeholder="Cor da casa, perto de igreja, bar, posto…" autocapitalize="characters"></textarea>
         <span class="msg">O ponto de referência é obrigatório.</span>
@@ -830,7 +830,6 @@ function validar(o){
   }
   if(!up(o.rua))erros.rua=1;if(!up(o.numero))erros.numero=1;if(!up(o.bairro))erros.bairro=1;
   if(!up(o.cidade))erros.cidade=1;
-  if(!up(o.referencia))erros.referencia=1;
   if(!telOk(o.tel1))erros.tel1=1;
   if(!telOk(o.tel2))erros.tel2="Use DDD + número (10 ou 11 dígitos).";else if(dig(o.tel2)===dig(o.tel1))erros.tel2="O telefone 2 precisa ser diferente do principal.";
   if(!emailOk(o.email))erros.email=1;
@@ -903,7 +902,7 @@ function mensagem(r){
   L.push("* ENDEREÇO COMPLETO:");L.push(up(r.endereco)+(r.cep?" - CEP "+r.cep:"")+(up(r.bloco)?" - BLOCO "+up(r.bloco):"")+(up(r.apartamento)?" APTO "+up(r.apartamento):""));L.push("");
   if(!seg){var dp=[];if(up(r.rg))dp.push("RG "+up(r.rg)+(up(r.rgOrgao)?" "+up(r.rgOrgao):""));if(r.sexo)dp.push("SEXO "+r.sexo);if(r.estadoCivil)dp.push(up(r.estadoCivil));if(up(r.profissao))dp.push(up(r.profissao));if(r.moradia)dp.push("MORADIA "+(r.moradia==="P"?"PRÓPRIA":"ALUGADA"));if(dp.length){L.push("- DADOS PESSOAIS: "+dp.join(" | "));L.push("")}}
   L.push("- CIDADE:");L.push(up(r.cidade));L.push("");
-  L.push("- PONTO DE REFERÊNCIA:");L.push(up(r.referencia));L.push("");
+  if(up(r.referencia)){L.push("- PONTO DE REFERÊNCIA:");L.push(up(r.referencia));L.push("")}
   L.push("- LOCALIZAÇÃO DO LOCAL A INSTALAR:");L.push(r.local?r.local.trim():"NÃO INFORMADA");L.push("");
   L.push("* TELEFONE DE CONTATO PRINCIPAL:");L.push(fmtTel(r.tel1));L.push("");
   L.push("* TELEFONE DE CONTATO 2:");L.push(fmtTel(r.tel2));L.push("");
