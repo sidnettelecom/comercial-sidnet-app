@@ -150,6 +150,20 @@ function ixc_cliente_por_cpf(string $cpf): ?array
     return $api->um('cliente', 'cnpj_cpf', cpf_mascara($d)) ?? $api->um('cliente', 'cnpj_cpf', $d);
 }
 
+/**
+ * Valores padrão do cadastro de cliente no IXC (os mesmos da documentação da API e da tela).
+ * Pela API, campo de seleção que não vai fica vazio e o IXC recusa ("valor ... inválido").
+ */
+const IXC_CLIENTE_PADRAO = [
+    'tipo_cliente_scm' => '01', 'pais' => 'Brasil', 'cadunico' => 'N', 'filtra_filial' => 'S', 'convert_cliente_forn' => 'N',
+    'acesso_automatico_central' => 'P', 'alterar_senha_primeiro_acesso' => 'P', 'senha_hotsite_md5' => 'N', 'hotsite_acesso' => '2',
+    'cadastrado_via_viabilidade' => 'N', 'participa_cobranca' => 'S', 'participa_pre_cobranca' => 'S',
+    'cob_envia_email' => 'S', 'cob_envia_sms' => 'S', 'tipo_pessoa_titular_conta' => 'F',
+    'regua_cobranca_considera' => 'P', 'regua_cobranca_wpp' => 'S', 'regua_cobranca_notificacao' => 'S', 'orgao_publico' => 'N',
+    'pis_retem' => 'S', 'cofins_retem' => 'S', 'csll_retem' => 'S', 'irrf_retem' => 'S', 'desconto_irrf_valor_inferior' => 'N',
+    'inss_retem' => 'S', 'cli_desconta_iss_retido_total' => 'S', 'percentual_reducao' => '0.00',
+];
+
 /** Plano de venda (vd_contratos) pelo nome que o app usa. */
 function ixc_plano(string $nome): ?array
 {
@@ -377,6 +391,7 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
         ];
         $mor = up($r['moradia'] ?? '');
         if (in_array($mor, ['P', 'A'], true)) $d['moradia'] = $mor;
+        $d += IXC_CLIENTE_PADRAO; // o que a tela do IXC já marca sozinha; pela API vai vazio e ele recusa
         $p['prospect'] = $api->inserir('cliente', limpar_campos($d));
         ixc_salvar_passos($venda, $p);
     }
