@@ -5,7 +5,7 @@
  *   php server/bin/ixc.php token        grava o token do usuário do app no IXC (digitado, sem aparecer na tela)
  *   php server/bin/ixc.php teste        confere se o servidor fala com o IXC usando o token
  *   php server/bin/ixc.php listar X     mostra id e nome, para preencher o config.php. X pode ser:
- *        assuntos | setores | filiais | planos | vendedores | tipos-contrato | estagios
+ *        assuntos | setores | filiais | planos | vendedores | colaboradores | canais | concorrentes | planos-negociacao | tipos-contrato | estagios
  */
 declare(strict_types=1);
 
@@ -56,6 +56,10 @@ try {
             'filiais' => ['filial', ['fantasia', 'razao']],
             'planos' => ['vd_contratos', ['nome']],
             'vendedores' => ['vendedor', ['nome']],
+            'colaboradores' => ['funcionarios', ['funcionario', 'nome']],
+            'canais' => ['crm_tipo_candidato', ['tipo_candidato', 'descricao', 'nome']],
+            'concorrentes' => ['crm_concorrente', ['nome', 'descricao']],
+            'planos-negociacao' => ['crm_planos_negociacoes', ['descricao']],
             'tipos-contrato' => ['cliente_contrato_tipo', ['tipo_contrato', 'descricao', 'nome']],
             'estagios' => ['crm_negociacoes_estagios', ['descricao', 'nome', 'estagio']],
         ];
@@ -80,5 +84,5 @@ try {
     exit(1);
 }
 
-fwrite(STDERR, "Use: php server/bin/ixc.php token | teste | listar <assuntos|setores|filiais|planos|vendedores|tipos-contrato|estagios>\n");
+fwrite(STDERR, "Use: php server/bin/ixc.php token | teste | listar <assuntos|setores|filiais|planos|vendedores|colaboradores|canais|concorrentes|planos-negociacao|tipos-contrato|estagios>\n");
 exit(1);

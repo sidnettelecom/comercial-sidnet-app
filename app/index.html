@@ -336,6 +336,9 @@ body.travado>*:not(.gate):not(.toast){visibility:hidden}
         <div class="f" data-k="profissao"><label for="profissao">Profissão</label><input id="profissao" autocapitalize="characters"></div>
         <div class="f" data-k="moradia"><label for="moradia">Moradia</label><select id="moradia"><option value="">—</option><option value="P">Própria</option><option value="A">Alugada</option></select></div>
       </div>
+      <div class="two">
+        <div class="f" data-k="zona"><label for="zona">Localidade</label><select id="zona"><option value="U">Zona urbana</option><option value="R">Zona rural</option></select></div>
+      </div>
     </fieldset>
 
     <fieldset class="only-upg">
@@ -495,6 +498,11 @@ body.travado>*:not(.gate):not(.toast){visibility:hidden}
         <input id="provedor" name="provedor" list="dl-prov" placeholder="Ou NENHUM" autocapitalize="characters">
         <datalist id="dl-prov"></datalist>
         <span class="msg">Informe o provedor atual (ou NENHUM).</span>
+      </div>
+      <div class="f only-venda" data-k="canal">
+        <label for="canal" class="req">Canal de venda</label>
+        <select id="canal"><option value="">Escolha…</option><option>PRESENCIAL</option><option>WHATSAPP COMERCIAL</option><option>TELEFONE</option><option>INDICAÇÃO DE CLIENTE</option><option>SOLICITADO PELO CLIENTE</option><option>SONDAGEM</option><option>OPA! SUITE</option><option>GOOGLE</option><option>FACEBOOK</option><option>FEIRAS</option></select>
+        <span class="msg">Escolha por onde a venda veio.</span>
       </div>
     </fieldset>
     <fieldset class="not-orc">
@@ -760,7 +768,7 @@ function compartilhar(r,txt,outro){
 }
 
 /* ---------- formulário ---------- */
-var F=["nome","apelido","cpf","nasc","cidade","referencia","local","tel1","tel2","email","plano","provedor","obs","valAtual","valNovo","velNova","valInst","valRot","exRoteadorObs","exCaboObs","exTrocaObs","servico","valOrc","validade","cep","uf","rua","numero","bairro","complemento","bloco","apartamento","rg","rgOrgao","sexo","estadoCivil","profissao","moradia"];
+var F=["nome","apelido","cpf","nasc","cidade","referencia","local","tel1","tel2","email","plano","provedor","obs","valAtual","valNovo","velNova","valInst","valRot","exRoteadorObs","exCaboObs","exTrocaObs","servico","valOrc","validade","cep","uf","rua","numero","bairro","complemento","bloco","apartamento","rg","rgOrgao","sexo","estadoCivil","profissao","moradia","zona","canal"];
 var CK=["exRoteador","exCabo","exTroca"];
 function mostraObsServ(){CK.forEach(function(k){var t=$(k+"Obs");var was=t.hidden;t.hidden=!$(k).checked;if(was&&!t.hidden&&document.activeElement===$(k))t.focus()})}
 CK.forEach(function(k){$(k).addEventListener("change",mostraObsServ)});
@@ -777,7 +785,7 @@ function totalExtras(r){return moneyVal(r.valInst)+moneyVal(r.valRot)}
 function atualizaTotal(){$("valTotal").textContent="R$ "+brl(totalExtras({valInst:$("valInst").value,valRot:$("valRot").value}))}
 ["valAtual","valNovo","valInst","valRot","valOrc"].forEach(function(id){$(id).addEventListener("input",function(){this.value=fmtMoney(this.value);atualizaTotal()})});
 function getForm(){var o={};F.forEach(function(k){o[k]=$(k).value});var v=document.querySelector('input[name="venc"]:checked');o.venc=v?v.value:"";o.tipo=tipoAtual();o.endereco=montarEnd(o);o.midias=midias.slice();CK.forEach(function(k){o[k]=$(k).checked});return o}
-function setForm(o){if(o&&o.endereco&&!o.rua){o=Object.assign({},o,{rua:o.endereco})}F.forEach(function(k){$(k).value=o&&o[k]||""});CK.forEach(function(k){$(k).checked=!!(o&&o[k])});setTipo(o&&o.tipo||tipoAtual());atualizaTotal();mostraObsServ();midias=(o&&o.midias||[]).slice();renderMidias();
+function setForm(o){if(o&&o.endereco&&!o.rua){o=Object.assign({},o,{rua:o.endereco})}F.forEach(function(k){$(k).value=o&&o[k]||""});if(!$("zona").value)$("zona").value="U";CK.forEach(function(k){$(k).checked=!!(o&&o[k])});setTipo(o&&o.tipo||tipoAtual());atualizaTotal();mostraObsServ();midias=(o&&o.midias||[]).slice();renderMidias();
   if(o&&o.plano&&cfg.planos.indexOf(o.plano)<0){var op=document.createElement("option");op.textContent=o.plano;$("plano").appendChild(op);$("plano").value=o.plano}
   document.querySelectorAll('input[name="venc"]').forEach(function(r){r.checked=!!o&&r.value===o.venc});
   document.querySelectorAll(".f").forEach(function(f){f.classList.remove("bad","good")});$("formAlert").hidden=true}
@@ -815,6 +823,7 @@ function validar(o){
     return erros;
   }
   if(!cpfOk(o.cpf))erros.cpf=1;
+  if(o.tipo==="venda"&&!o.canal)erros.canal=1;
   if(o.tipo!=="segundo"){
   var dt=parseData(o.nasc);
   if(!dt){erros.nasc="Data inválida. Use dd/mm/aaaa."}else{var a=idade(dt);if(a<18)erros.nasc="O titular precisa ter 18 anos ou mais (tem "+Math.max(a,0)+").";else if(a>110)erros.nasc="Confira o ano de nascimento."}
@@ -981,7 +990,7 @@ function renderBadge(){renderSync();var n=recs.filter(function(r){return ehOrc(r
 function renderListas(){
   function uniq(arr){var s={};return arr.filter(function(x){x=up(x);if(!x||s[x])return false;s[x]=1;return true}).map(up)}
   $("dl-cidades").innerHTML=uniq(recs.map(function(r){return r.cidade})).map(function(c){return'<option value="'+esc(c)+'">'}).join("");
-  $("dl-prov").innerHTML=uniq(["NENHUM"].concat(recs.map(function(r){return r.provedor}))).map(function(c){return'<option value="'+esc(c)+'">'}).join("");
+  $("dl-prov").innerHTML=uniq(["NENHUM","IGAP NET TELECOM","FIBRON TELECOM","JL TELECON","MAIS TELECOM","MG NET TELECOM","STATUS TELECOM","SUPERNET TELECOM","WAVE TELECOM","OUTROS"].concat(recs.map(function(r){return r.provedor}))).map(function(c){return'<option value="'+esc(c)+'">'}).join("");
 }
 var MESES=["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
 function mesDe(r){var m=/^(\d{2})\/(\d{2})\/(\d{4})/.exec(r.criado||"");return m?m[3]+"-"+m[2]:""}
@@ -1106,7 +1115,7 @@ $("btnExemplo").addEventListener("click",function(){
   if(tipoAtual()==="upgrade"){setForm({tipo:"upgrade",nome:"JOSE DE TESTE SOUZA",tel1:"(33) 98888-0003",tel2:"(33) 98888-0004",email:"jose.teste@gmail.com",valAtual:"79,90",valNovo:"109,90",velNova:"500 MEGAS",exRoteador:true,exCabo:true,exCaboObs:"DA SALA ATÉ O QUARTO DOS FUNDOS",valInst:"",valRot:"150,00",obs:"CADASTRO DE TREINO, NÃO EXECUTAR"});rascunho();toast("Exemplo preenchido. Ele é fictício.");return}
   if(tipoAtual()==="orcamento"){setForm({tipo:"orcamento",nome:"CARLOS DE TESTE LIMA",rua:"RUA DAS ACÁCIAS",numero:"80",bairro:"CENTRO",cidade:"CIDADE EXEMPLO",referencia:"PORTÃO VERDE",tel1:"(33) 98888-0007",servico:"PASSAGEM DE CABO DA SALA ATÉ O ESCRITÓRIO (15 M) E INSTALAÇÃO DE SEGUNDO ROTEADOR",valOrc:"180,00",validade:"15",obs:"ORÇAMENTO DE TREINO"});rascunho();toast("Exemplo preenchido. Ele é fictício.");return}
   if(tipoAtual()==="segundo"){setForm({tipo:"segundo",nome:"ANA DE TESTE PEREIRA",cpf:cpfFake(),cep:"",rua:"RUA DO COMÉRCIO",numero:"45",complemento:"LOJA 2",bairro:"CENTRO",cidade:"CIDADE EXEMPLO",referencia:"LOJA AO LADO DO MERCADO",tel1:"(33) 98888-0005",tel2:"(33) 98888-0006",email:"ana.teste@gmail.com",venc:"20",plano:cfg.planos[0],provedor:"SIDNET (1º PONTO)",valInst:"50,00",obs:"SEGUNDO PONTO NA LOJA DA CLIENTE. TREINO"});rascunho();toast("Exemplo preenchido. Ele é fictício.");return}
-  setForm({tipo:"venda",nome:"MARIA DE TESTE SILVA",apelido:"",cpf:cpfFake(),nasc:"14/03/1990",rua:"RUA DAS FLORES",numero:"120",bairro:"CENTRO",cidade:"CIDADE EXEMPLO",uf:"MG",rg:"MG-12.345.678",rgOrgao:"SSP/MG",sexo:"F",estadoCivil:"Solteiro",profissao:"PROFESSORA",moradia:"P",referencia:"CASA AZUL AO LADO DA PADARIA",local:"",tel1:"(33) 98888-0001",tel2:"(33) 98888-0002",email:"maria.teste@gmail.com",venc:"10",plano:cfg.planos[0],provedor:"NENHUM",valInst:"100,00",valRot:"",obs:"CADASTRO DE TREINO, NÃO INSTALAR"});
+  setForm({tipo:"venda",nome:"MARIA DE TESTE SILVA",apelido:"",cpf:cpfFake(),nasc:"14/03/1990",rua:"RUA DAS FLORES",numero:"120",bairro:"CENTRO",cidade:"CIDADE EXEMPLO",uf:"MG",rg:"MG-12.345.678",rgOrgao:"SSP/MG",sexo:"F",estadoCivil:"Solteiro",profissao:"PROFESSORA",moradia:"P",zona:"U",canal:"PRESENCIAL",referencia:"CASA AZUL AO LADO DA PADARIA",local:"",tel1:"(33) 98888-0001",tel2:"(33) 98888-0002",email:"maria.teste@gmail.com",venc:"10",plano:cfg.planos[0],provedor:"NENHUM",valInst:"100,00",valRot:"",obs:"CADASTRO DE TREINO, NÃO INSTALAR"});
   rascunho();toast("Exemplo preenchido. Ele é fictício.");
 });
 

@@ -23,6 +23,11 @@ return [
         'estagio_lead' => 0,           // estágio do lead no funil do CRM do IXC (0 = o padrão)
         'origem_lead' => 'outros',
         'uf_padrao' => 'MG',
+        // venda nova: 'negociacao' = lead + prospecção + negociação (o Vencemos é feito no IXC); 'lead' = só o lead
+        'venda_ate' => 'negociacao',
+        'responsavel_id' => 0,         // colaborador responsável no CRM (php server/bin/ixc.php listar colaboradores)
+        'regiao_cobertura_id' => 4,    // tipo de região de cobertura do lead (4 = Região de Cobertura)
+        'canal_padrao' => 12,          // canal de venda quando o app não manda (12 = PRESENCIAL)
     ],
 
     // CRM antigo (só se 'destino' => 'crm')

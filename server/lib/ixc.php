@@ -225,6 +225,8 @@ function ixc_descricao(array $r, array $venda, array $vendedor): string
         $add('CEP', $r['cep'] ?? '');
         $add('REFERÊNCIA', up($r['referencia'] ?? ''));
         $add('PROVEDOR ATUAL', up($r['provedor'] ?? ''));
+        $add('CANAL DE VENDA', up($r['canal'] ?? ''));
+        if (up($r['zona'] ?? '') === 'R') $L[] = 'ZONA RURAL';
         $add('LOCAL (GPS)', $r['local'] ?? '');
         if ($tipo === 'venda') $add('APELIDO', up($r['apelido'] ?? ''));
     }
@@ -255,8 +257,142 @@ function repassar_ixc(array $venda, array $vendedor): string
     return match ($venda['tipo']) {
         'upgrade' => ixc_upgrade($r, $venda, $vendedor),
         'segundo' => ixc_segundo($r, $venda, $vendedor),
-        default => ixc_lead($r, $venda, $vendedor),
+        default => ixc_venda($r, $venda, $vendedor),
     };
+}
+
+/** Ids do IXC da Sidnet (vídeo do cadastro, 11/11/2026). O config.php pode trocar: ixc.canais / ixc.concorrentes. */
+const IXC_CANAIS = [
+    'WHATSAPP COMERCIAL' => '11', 'TELEFONE' => '13', 'SONDAGEM' => '6', 'SOLICITADO PELO CLIENTE' => '1',
+    'PRESENCIAL' => '12', 'OPA! SUITE' => '10', 'INDICACAO DE OUTROS CLIENTES' => '4', 'INDICACAO DE CLIENTE' => '9',
+    'GOOGLE' => '2', 'FEIRAS' => '7', 'FACEBOOK' => '3',
+];
+const IXC_CONCORRENTES = [
+    'FIBRON TELECOM' => '7', 'IGAP NET TELECOM' => '2', 'JL TELECON' => '10', 'MAIS TELECOM' => '6', 'MG NET TELECOM' => '4',
+    'NAO POSSUI' => '9', 'NENHUM' => '9', 'OUTROS' => '8', 'STATUS TELECOM' => '1', 'SUPERNET TELECOM' => '3', 'WAVE TELECOM' => '5',
+];
+
+/** Acha o id pelo nome numa lista nome => id (sem acento; aceita nome parcial como "IGAP"). */
+function ixc_id_por_nome(array $mapa, string $nome, string $padrao = ''): string
+{
+    $n = up(sem_acento(trim($nome)));
+    if ($n === '') return $padrao;
+    $m = [];
+    foreach ($mapa as $k => $v) $m[up(sem_acento((string)$k))] = (string)$v;
+    if (isset($m[$n])) return $m[$n];
+    foreach ($m as $k => $v) {
+        if (str_starts_with($k, $n) || str_starts_with($n, explode(' ', $k)[0] . ' ') || $n === explode(' ', $k)[0]) return $v;
+    }
+    return $padrao;
+}
+
+/** Plano de negociação do CRM (crm_planos_negociacoes) ligado ao plano de venda. */
+function ixc_plano_negociacao(array $plano): ?array
+{
+    $api = ixc();
+    try {
+        foreach ($api->listar('crm_planos_negociacoes', 'id_vd_contrato', (string)$plano['id'], '=', 5) as $p) return $p;
+    } catch (ErroCrm) {
+    }
+    foreach ($api->listar('crm_planos_negociacoes', 'descricao', up($plano['nome']), 'L', 20) as $p) {
+        if (up($p['descricao'] ?? '') === up($plano['nome'])) return $p;
+    }
+    return null;
+}
+
+/**
+ * Venda nova, como no processo da Sidnet no IXC:
+ *   1) Lead (CRM › Leads)  2) Prospecção (cliente em negociação)  3) Negociação com o plano.
+ * O "Vencemos" (contrato, login e O.S.) fica para o escritório conferir no IXC.
+ * Com ixc.venda_ate = 'lead' no config.php, faz só o passo 1.
+ */
+function ixc_venda(array $r, array $venda, array $vendedor): string
+{
+    $cfg = ixc_config();
+    $api = ixc();
+    $p = ixc_passos($venda);
+    if (empty($p['lead'])) {
+        $p['lead'] = so_digitos(ixc_lead($r, $venda, $vendedor));
+        ixc_salvar_passos($venda, $p);
+    }
+    if (($cfg['venda_ate'] ?? 'negociacao') === 'lead') {
+        return 'Lead IXC #' . $p['lead'];
+    }
+    $plano = ixc_plano((string)($r['plano'] ?? ''));
+    $canal = ixc_id_por_nome(($cfg['canais'] ?? []) + IXC_CANAIS, (string)($r['canal'] ?? ''), (string)($cfg['canal_padrao'] ?? '12'));
+    $conc = ixc_id_por_nome(($cfg['concorrentes'] ?? []) + IXC_CONCORRENTES, (string)($r['provedor'] ?? ''), '8');
+    $resp = ($vendedor['ixc_colaborador_id'] ?? '') !== '' ? (string)$vendedor['ixc_colaborador_id'] : (string)($cfg['responsavel_id'] ?? '');
+    $filial = (string)($cfg['filial_id'] ?? '1');
+
+    // 2) prospecção: o cadastro do cliente "em negociação" (crm = S), igual ao "Converter em Prospect"
+    if (empty($p['prospect'])) {
+        $uf = up($r['uf'] ?? '');
+        if (!preg_match('/^[A-Z]{2}$/', $uf)) $uf = UF_POR_DDD[substr(so_digitos($r['tel1'] ?? ''), 0, 2)] ?? (string)($cfg['uf_padrao'] ?? 'MG');
+        $cid = ixc_cidade((string)($r['cidade'] ?? ''), $uf);
+        $cidReg = $cid !== '' ? $api->um('cidade', 'id', $cid) : null;
+        $cep = so_digitos($r['cep'] ?? '');
+        $cpf = so_digitos($r['cpf'] ?? '');
+        $d = [
+            'ativo' => 'S',
+            'crm' => 'S',
+            'status_prospeccao' => 'N',
+            'tipo_pessoa' => 'F',
+            'razao' => up($r['nome'] ?? ''),
+            'cnpj_cpf' => cpf_mascara($cpf),
+            'ie_identidade' => up($r['rg'] ?? ''),
+            'data_nascimento' => preg_match('#^\d{2}/\d{2}/\d{4}$#', (string)($r['nasc'] ?? '')) ? $r['nasc'] : '',
+            'filial_id' => $filial,
+            'id_candato_tipo' => $canal,
+            'id_concorrente' => $conc,
+            'responsavel' => $resp,
+            'data_cadastro' => date('d/m/Y'),
+            'cep' => strlen($cep) === 8 ? substr($cep, 0, 5) . '-' . substr($cep, 5) : '',
+            'endereco' => up(($r['rua'] ?? '') !== '' ? $r['rua'] : ($r['endereco'] ?? '')),
+            'numero' => up($r['numero'] ?? '') ?: 'SN',
+            'bairro' => up($r['bairro'] ?? ''),
+            'complemento' => up($r['complemento'] ?? ''),
+            'bloco' => up($r['bloco'] ?? ''),
+            'apartamento' => up($r['apartamento'] ?? ''),
+            'cidade' => $cid,
+            'uf' => (string)($cidReg['uf'] ?? ''),
+            'referencia' => up($r['referencia'] ?? ''),
+            'tipo_localidade' => up($r['zona'] ?? '') === 'R' ? 'R' : 'U',
+            'fone_celular' => (string)($r['tel1'] ?? ''),
+            'whatsapp' => (string)($r['tel1'] ?? ''),
+            'fone_residencial' => (string)($r['tel2'] ?? ''),
+            'email' => strtolower(trim((string)($r['email'] ?? ''))),
+            'obs' => ixc_descricao($r, $venda, $vendedor),
+        ];
+        $mor = up($r['moradia'] ?? '');
+        if (in_array($mor, ['P', 'A'], true)) $d['moradia'] = $mor;
+        $p['prospect'] = $api->inserir('cliente', limpar_campos($d));
+        ixc_salvar_passos($venda, $p);
+    }
+
+    // 3) negociação com o plano, em "Negociando"
+    if (empty($p['negociacao'])) {
+        $pn = $plano ? ixc_plano_negociacao($plano) : null;
+        $nome = $plano ? up($plano['nome']) : up($r['plano'] ?? 'VENDA PELO APP');
+        $valor = (string)($pn['valor_mensal'] ?? '') !== '' && (float)($pn['valor_mensal'] ?? 0) > 0 ? (string)$pn['valor_mensal'] : (string)($plano['valor_contrato'] ?? '');
+        $d = [
+            'id_cliente' => $p['prospect'],
+            'id_plano_negocio' => $pn ? (string)$pn['id'] : '',
+            'descricao' => $nome,
+            'id_contato' => $p['lead'],
+            'id_canal_origem' => $canal,
+            'id_concorrente' => $conc,
+            'id_responsavel' => $resp,
+            'id_filial' => $filial,
+            'valor_mensal' => $valor,
+            'previsao_fechamento' => date('d/m/Y'),
+            'status' => 'N',
+            'obs' => ixc_descricao($r, $venda, $vendedor),
+        ];
+        $p['negociacao'] = $api->inserir('crm_negociacoes', limpar_campos($d));
+        ixc_salvar_passos($venda, $p);
+    }
+    return 'Lead IXC #' . $p['lead'] . ' · Prospect #' . $p['prospect'] . ' · Negociação #' . $p['negociacao']
+        . ($plano ? '' : ' (plano não achado no IXC: confira)');
 }
 
 function ixc_lead(array $r, array $venda, array $vendedor): string
@@ -309,6 +445,13 @@ function ixc_lead(array $r, array $venda, array $vendedor): string
     $mor = up($r['moradia'] ?? '');
     if (in_array($mor, ['P', 'A'], true)) $d['moradia'] = $mor;
     if (!empty($cfg['estagio_lead'])) $d['id_estagio'] = (string)$cfg['estagio_lead'];
+    $d['principal'] = 'N';
+    $d['id_candidato_tipo'] = ixc_id_por_nome(($cfg['canais'] ?? []) + IXC_CANAIS, (string)($r['canal'] ?? ''), (string)($cfg['canal_padrao'] ?? '12'));
+    $d['id_concorrente'] = ixc_id_por_nome(($cfg['concorrentes'] ?? []) + IXC_CONCORRENTES, (string)($r['provedor'] ?? ''), '8');
+    $resp = ($vendedor['ixc_colaborador_id'] ?? '') !== '' ? (string)$vendedor['ixc_colaborador_id'] : (string)($cfg['responsavel_id'] ?? '');
+    if ($resp !== '') $d['id_responsavel'] = $resp;
+    if (!empty($cfg['regiao_cobertura_id'])) $d['id_tipo_elemento'] = (string)$cfg['regiao_cobertura_id'];
+    $d['tipo_localidade'] = up($r['zona'] ?? '') === 'R' ? 'R' : 'U';
     $id = $api->inserir('contato', limpar_campos($d));
     return 'Lead IXC #' . $id . ($plano ? '' : ' (plano não achado no IXC: confira)');
 }
