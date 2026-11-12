@@ -7,6 +7,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/base.php';
+require_once __DIR__ . '/ixc.php'; // sem_acento
 
 const COMISSAO_TIPOS = ['venda' => 'Venda', 'upgrade' => 'Upgrade', 'segundo' => '2º ponto'];
 const MESES_PT = ['', 'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
@@ -55,7 +56,7 @@ function comissoes_meses(): array
 function comissoes_do_mes(string $mes, array $filtro = []): array
 {
     $sql = "SELECT v.id, v.tipo, v.nome, v.dados, v.status, v.crm_id, v.ixc_passos, v.recebido_em, v.vendedor_id, d.nome AS vendedor,
-                   c.venda_id AS tem, c.ixc_cliente, c.vencimento, c.instalacao, c.roteador, c.valor, c.cliente_pagou, c.pago_em, c.obs
+                   c.venda_id AS tem, c.ixc_cliente, c.vencimento, c.instalacao, c.roteador, c.valor, c.valor_plano, c.cliente_pagou, c.pago_em, c.obs
             FROM vendas v JOIN vendedores d ON d.id = v.vendedor_id LEFT JOIN comissoes c ON c.venda_id = v.id
             WHERE v.status <> 'descartada' AND v.tipo IN ('venda','upgrade','segundo')
               AND strftime('%Y-%m', v.recebido_em, 'localtime') = ?";
@@ -65,6 +66,7 @@ function comissoes_do_mes(string $mes, array $filtro = []): array
     $sql .= ' ORDER BY d.nome, v.recebido_em';
     $q = db()->prepare($sql);
     $q->execute($args);
+    $precos = comissoes_precos_planos();
     $out = [];
     foreach ($q as $r) {
         $dados = json_decode((string)$r['dados'], true) ?: [];
@@ -80,6 +82,11 @@ function comissoes_do_mes(string $mes, array $filtro = []): array
         $r['plano'] = $r['tipo'] === 'upgrade'
             ? trim(up((string)($dados['velNova'] ?? '')) . (($dados['valNovo'] ?? '') !== '' ? ' · R$ ' . $dados['valNovo'] : ''))
             : up((string)($dados['plano'] ?? ''));
+        if ((string)($r['valor_plano'] ?? '') === '') {
+            $r['valor_plano'] = $r['tipo'] === 'upgrade'
+                ? dinheiro((string)($dados['valNovo'] ?? ''))
+                : (string)($precos[up(sem_acento((string)($dados['plano'] ?? '')))] ?? '');
+        }
         $r['dia_venc'] = (string)($dados['venc'] ?? '');
         $pagou = $r['cliente_pagou'];
         if (!empty($filtro['pagou']) && !($filtro['pagou'] === 'S' ? $pagou === 'S' : ($filtro['pagou'] === 'N' ? $pagou === 'N' : $pagou === ''))) continue;
@@ -89,14 +96,32 @@ function comissoes_do_mes(string $mes, array $filtro = []): array
     return $out;
 }
 
+/** Valor mensal de cada plano pelo nome: primeiro o cadastro do painel, depois a lista lida do IXC. */
+function comissoes_precos_planos(): array
+{
+    $out = [];
+    $arq = dirname((string)config()['banco']) . '/ixc-planos.json';
+    if (is_file($arq)) {
+        foreach (json_decode((string)file_get_contents($arq), true) ?: [] as $o) {
+            $v = dinheiro((string)($o['valor'] ?? ''));
+            if ($v !== '' && (float)$v > 0) $out[up(sem_acento((string)($o['nome'] ?? '')))] = $v;
+        }
+    }
+    foreach (db()->query('SELECT nome, valor FROM planos') as $p) {
+        $v = dinheiro((string)$p['valor']);
+        if ($v !== '' && (float)$v > 0) $out[up(sem_acento((string)$p['nome']))] = $v;
+    }
+    return $out;
+}
+
 /** Grava as linhas editadas. $linhas = [venda_id => [campo => valor]] */
 function comissoes_salvar(array $linhas, string $quem): int
 {
-    $up = db()->prepare("INSERT INTO comissoes (venda_id, ixc_cliente, vencimento, instalacao, roteador, valor, cliente_pagou, pago_em, obs, atualizado_em, por)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'), ?)
+    $up = db()->prepare("INSERT INTO comissoes (venda_id, ixc_cliente, vencimento, instalacao, roteador, valor, valor_plano, cliente_pagou, pago_em, obs, atualizado_em, por)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'), ?)
         ON CONFLICT(venda_id) DO UPDATE SET ixc_cliente=CASE WHEN excluded.ixc_cliente = '' THEN comissoes.ixc_cliente ELSE excluded.ixc_cliente END,
             vencimento=CASE WHEN excluded.vencimento = '' THEN comissoes.vencimento ELSE excluded.vencimento END, instalacao=excluded.instalacao,
-            roteador=excluded.roteador, valor=excluded.valor, cliente_pagou=excluded.cliente_pagou, pago_em=excluded.pago_em, obs=excluded.obs,
+            roteador=excluded.roteador, valor=excluded.valor, valor_plano=excluded.valor_plano, cliente_pagou=excluded.cliente_pagou, pago_em=excluded.pago_em, obs=excluded.obs,
             atualizado_em=excluded.atualizado_em, por=excluded.por");
     $mesVenda = db()->prepare("SELECT strftime('%Y-%m', recebido_em, 'localtime') FROM vendas WHERE id = ?");
     $n = 0;
@@ -112,7 +137,7 @@ function comissoes_salvar(array $linhas, string $quem): int
         if ($pago !== '' && (!preg_match('/^\d{4}-\d{2}$/', $pago) || $pago < $mv)) $pago = '';
         $up->execute([(int)$id, mb_substr(so_digitos((string)($c['ixc_cliente'] ?? '')), 0, 12), $venc,
             dinheiro((string)($c['instalacao'] ?? '')), dinheiro((string)($c['roteador'] ?? '')), dinheiro((string)($c['valor'] ?? '')),
-            $pagou, $pago, mb_substr(trim((string)($c['obs'] ?? '')), 0, 300), $quem]);
+            dinheiro((string)($c['valor_plano'] ?? '')), $pagou, $pago, mb_substr(trim((string)($c['obs'] ?? '')), 0, 300), $quem]);
         $n++;
     }
     return $n;
