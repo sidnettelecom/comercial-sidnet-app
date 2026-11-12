@@ -324,8 +324,8 @@ function ixc_plano_negociacao(array $plano): ?array
 /**
  * Venda nova, como no processo da Sidnet no IXC:
  *   1) Lead (CRM › Leads)  2) Prospecção (cliente em negociação)  3) Negociação com o plano.
- * O "Vencemos" (contrato, login e O.S.) fica para o escritório conferir no IXC.
- * Com ixc.venda_ate = 'lead' no config.php, faz só o passo 1.
+ * Padrão (ixc.venda_ate = 'prospect'): faz 1 e 2; a negociação e o "Vencemos" o escritório faz no IXC.
+ * 'lead' = só o passo 1; 'negociacao' = os três.
  */
 function ixc_venda(array $r, array $venda, array $vendedor): string
 {
@@ -336,8 +336,9 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
         $p['lead'] = so_digitos(ixc_lead($r, $venda, $vendedor));
         ixc_salvar_passos($venda, $p);
     }
-    if (($cfg['venda_ate'] ?? 'negociacao') === 'lead') {
-        return 'Lead IXC #' . $p['lead'];
+    $ate = (string)($cfg['venda_ate'] ?? 'prospect');
+    if ($ate === 'lead') {
+        return 'Lead #' . $p['lead'] . ' registrado. Falta no IXC: converter em prospect, negociação e Vencemos';
     }
     $plano = ixc_plano((string)($r['plano'] ?? ''));
     $canal = ixc_id_por_nome(($cfg['canais'] ?? []) + IXC_CANAIS, (string)($r['canal'] ?? ''), (string)($cfg['canal_padrao'] ?? '12'));
@@ -403,6 +404,10 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
         ixc_salvar_passos($venda, $p);
     }
 
+    if ($ate !== 'negociacao') {
+        return 'Lead #' . $p['lead'] . ' e prospect #' . $p['prospect'] . ' registrados. Falta no IXC: negociação e Vencemos';
+    }
+
     // 3) negociação com o plano, em "Negociando"
     if (empty($p['negociacao'])) {
         $pn = $plano ? ixc_plano_negociacao($plano) : null;
@@ -445,7 +450,7 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
         ixc_salvar_passos($venda, $p);
     }
     return 'Lead IXC #' . $p['lead'] . ' · Prospect #' . $p['prospect'] . ' · Negociação #' . $p['negociacao']
-        . ($plano ? '' : ' (plano não achado no IXC: confira)');
+        . ($plano ? '' : ' (plano não achado no IXC: confira)') . '. Falta no IXC: Vencemos';
 }
 
 function ixc_lead(array $r, array $venda, array $vendedor): string

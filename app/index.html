@@ -1335,7 +1335,7 @@ function renderMapa(r){
   $("mapa").innerHTML='<table>'+p.campos.map(function(c){return'<tr><th>'+esc(c[1])+'<code>'+esc(c[0])+'</code></th><td>'+esc(c[2]||"—")+'</td></tr>'}).join("")+'</table>';
 }
 function pillCrm(r){if(ehOrc(r))return r.status==="enviado"?'<span class="pill wa">Enviado no WhatsApp</span>':'<span class="pill q">Não enviado</span>';var c=r.crm||{st:"fila"};
-  if(c.st==="ok")return'<span class="pill ok">No IXC '+esc(c.crmId)+'</span>';
+  if(c.st==="ok")return/Falta no IXC/i.test(c.crmId||"")?'<span class="pill ok">Lead no IXC</span>':'<span class="pill ok">No IXC '+esc(String(c.crmId||"").slice(0,24))+'</span>';
   if(c.st==="go")return'<span class="pill go">Enviando…</span>';
   if(c.st==="srv")return'<span class="pill go">No servidor</span>';
   if(c.st==="er")return'<span class="pill er">Erro no envio</span>';
@@ -1343,7 +1343,9 @@ function pillCrm(r){if(ehOrc(r))return r.status==="enviado"?'<span class="pill w
 function renderCrmBox(){
   if(!atual||$("sheet").hidden&&!atual)return;var c=atual.crm||{st:"fila"},b=$("crmBox");
   b.className="crmbox "+(c.st==="ok"?"ok":c.st==="er"?"er":"q");
-  if(c.st==="ok")b.innerHTML='<b>Cadastrado no IXC · '+esc(c.crmId)+'</b><span class="small">Enviado em '+esc(c.em)+'. A partir daqui o IXC segue o fluxo dele.</span>';
+  if(c.st==="ok"){var m=/^(.*?)\.\s*Falta no IXC:\s*(.*)$/i.exec(c.crmId||"");
+    b.innerHTML=m?'<b>Venda registrada no IXC</b><span class="small">'+esc(m[1])+'. Enviado em '+esc(c.em)+'.</span><span class="small"><b>Próximo passo no IXC:</b> '+esc(m[2])+'.</span>'
+      :'<b>Cadastrado no IXC · '+esc(c.crmId)+'</b><span class="small">Enviado em '+esc(c.em)+'. A partir daqui o IXC segue o fluxo dele.</span>'}
   else if(c.st==="srv")b.innerHTML='<b>Recebido pelo servidor</b><span class="small">Já saiu do celular. O servidor está colocando no IXC e o número aparece aqui.</span>';
   else if(c.st==="go")b.innerHTML='<b>Enviando para o IXC…</b><span class="small">Pode fechar esta tela.</span>';
   else if(c.st==="er")b.innerHTML='<b>O IXC não aceitou</b><span class="small">'+esc(c.msg||"")+' Corrija e salve de novo.</span>';
