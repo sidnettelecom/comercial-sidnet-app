@@ -243,6 +243,8 @@ main{padding-block:16px 150px}
 .gate .erro{color:var(--err);font-weight:600;min-height:1.2em}
 .gate input{width:100%}
 body.travado>*:not(.gate):not(.toast){visibility:hidden}
+body.trocando>*:not(#troca):not(.toast){visibility:hidden}
+.boleto{display:inline-block;margin-top:6px;font-size:12px;font-weight:800;border-radius:10px;padding:3px 9px}.boleto.ok{background:#dcfce7;color:#166534}.boleto.er{background:#fee2e2;color:#991b1b}.boleto.av{background:#e0e7ff;color:#3730a3}
 .gate{background:linear-gradient(165deg,#0b1e5b 0%,#1d4ed8 48%,#0891b2 100%);color:#fff}
 .gate form{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-radius:26px;color:#fff;box-shadow:0 20px 50px rgba(0,0,0,.25)}
 .gate h1{color:#fff;font-size:26px;font-weight:800;letter-spacing:-.02em}
@@ -286,6 +288,7 @@ html.web .gate{grid-template-columns:minmax(0,1.15fr) minmax(420px,1fr);padding:
 html.web .gate-arte{display:grid;place-items:center;position:relative;overflow:hidden;background:#0a1430}
 html.web .gate form{align-self:center;justify-self:center;max-width:400px;background:transparent;border:0;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;color:var(--ink);padding:0 24px;animation:rise .7s ease-out both}
 html.web .gate .logo-gate{display:none}
+html.web #troca{grid-template-columns:1fr}
 html.web .gate h1{color:#0f1b3d;text-align:left;font-size:30px}
 html.web .gate .small,html.web .gate summary{color:#475569}
 html.web .gate label{color:#0f1b3d}
@@ -367,6 +370,19 @@ html.web .gate .olho{color:#475569}
     <button type="submit" class="btn primary" id="lgBtn" style="width:100%">Entrar</button>
     <p class="small" id="lgOff" hidden>Sem internet: dá para entrar com a última senha usada neste celular.</p>
     <details><summary class="small">Servidor</summary><div class="f" style="margin-top:8px"><label for="lgSrv">Endereço do servidor do app</label><input id="lgSrv" class="mono" inputmode="url" autocapitalize="none"></div></details>
+  </form>
+</div>
+
+
+<div class="gate" id="troca" hidden>
+  <form id="trocaForm" novalidate autocomplete="on">
+    <h1>Crie a sua senha</h1>
+    <p class="small">Você entrou com a senha provisória que o gestor passou. Para continuar, crie uma senha só sua. Ninguém mais vai saber.</p>
+    <div class="f" id="tsAtualBox"><label for="tsAtual">Senha provisória</label><input id="tsAtual" type="password" autocomplete="current-password"></div>
+    <div class="f"><label for="tsNova">Senha nova</label><input id="tsNova" type="password" autocomplete="new-password"><span class="small">8 ou mais caracteres, com letras e números.</span></div>
+    <div class="f"><label for="tsNova2">Repita a senha nova</label><input id="tsNova2" type="password" autocomplete="new-password"></div>
+    <p class="erro" id="tsErro" role="alert"></p>
+    <button type="submit" class="btn primary" id="tsBtn" style="width:100%">Criar senha e entrar</button>
   </form>
 </div>
 
@@ -651,7 +667,7 @@ html.web .gate .olho{color:#475569}
   <h2 class="sec">Cadastros salvos neste celular</h2>
   <div class="filters">
     <select id="fMes" aria-label="Mês"></select>
-    <select id="fTipo" aria-label="Tipo"><option value="">Todos os tipos</option><option value="venda">Só vendas</option><option value="upgrade">Só upgrades</option><option value="segundo">Só 2º plano</option><option value="orcamento">Só orçamentos</option></select>
+    <select id="fTipo" aria-label="Tipo"><option value="">Todos os tipos</option><option value="boleto">1º boleto em aberto</option><option value="venda">Só vendas</option><option value="upgrade">Só upgrades</option><option value="segundo">Só 2º plano</option><option value="orcamento">Só orçamentos</option></select>
     <input id="busca" placeholder="Buscar por nome, CPF, telefone ou cidade">
   </div>
   <div class="resumo" id="resumo"></div>
@@ -805,6 +821,45 @@ function renderCfg(){
   var sel=$("plano"),cur=sel.value;sel.innerHTML='<option value="">Escolha o plano…</option>'+cfg.planos.map(function(p){return'<option>'+esc(p)+'</option>'}).join("");
   if(cur&&cfg.planos.indexOf(cur)<0){var o=document.createElement("option");o.textContent=cur;sel.appendChild(o)}sel.value=cur;
 }
+
+/* ---------- senha provisória: o vendedor cria a dele ---------- */
+var senhaLogin="";
+function pedirTroca(atual){
+  senhaLogin=atual||"";$("tsAtualBox").hidden=!!senhaLogin;$("tsAtual").value=senhaLogin;$("tsNova").value=$("tsNova2").value="";$("tsErro").textContent="";
+  $("troca").hidden=false;document.body.classList.add("trocando");setTimeout(function(){(senhaLogin?$("tsNova"):$("tsAtual")).focus()},50);
+}
+$("trocaForm").addEventListener("submit",function(e){e.preventDefault();
+  var at=$("tsAtual").value,n=$("tsNova").value,n2=$("tsNova2").value,er=$("tsErro");
+  if(!at){er.textContent="Digite a senha provisória.";return}
+  if(n.length<8||!/[A-Za-z]/.test(n)||!/\d/.test(n)){er.textContent="A senha nova precisa de 8 ou mais caracteres, com letras e números.";return}
+  if(n!==n2){er.textContent="As duas senhas novas não são iguais.";return}
+  if(!online()){er.textContent="Precisa de internet para criar a senha.";return}
+  $("tsBtn").disabled=true;er.textContent="";
+  fetch(cfg.crmUrl+"/api/app-vendas.php?acao=senha",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+cfg.chave},body:JSON.stringify({atual:at,nova:n})})
+    .then(function(res){return res.json()}).then(function(j){
+      if(!j.ok){$("tsBtn").disabled=false;if(j.login){$("troca").hidden=true;document.body.classList.remove("trocando");travar(j.erro,true);return}er.textContent=j.erro||"Não deu para trocar a senha.";return}
+      var sal=hex(crypto.getRandomValues(new Uint8Array(16)));
+      return impressao(cfg.usuario,n,sal).then(function(v){cfg.sal=sal;cfg.verif=v;save(K.cfg,cfg);$("tsBtn").disabled=false;
+        $("troca").hidden=true;document.body.classList.remove("trocando");senhaLogin="";toast("Senha criada. Use ela das próximas vezes.")});
+    }).catch(function(){$("tsBtn").disabled=false;er.textContent="Não deu para falar com o servidor. Tente de novo."});
+});
+/* ---------- 1º boleto das vendas (o servidor pega do IXC) ---------- */
+function consultarBoletos(){
+  if(DEMO||!online()||!cfg.chave||travadoAgora())return;
+  var lim=Date.now()-150*864e5;
+  var L=recs.filter(function(r){return r.crm&&r.crm.st==="ok"&&!ehOrc(r)&&!(r.bol&&r.bol.p==="S")&&(!r.ts||r.ts>lim)}).slice(0,300);if(!L.length)return;
+  fetch(cfg.crmUrl+"/api/app-vendas.php?acao=boletos&ids="+L.map(function(r){return r.id}).join(","),{headers:{"Authorization":"Bearer "+cfg.chave}})
+    .then(function(res){return res.json()}).then(function(j){if(!j.ok||!j.boletos)return;var mud=false;
+      L.forEach(function(r){var b=j.boletos[r.id];if(!b)return;var nb={p:b.pagou||"",v:b.venc||""};if(!r.bol||r.bol.p!==nb.p||r.bol.v!==nb.v){r.bol=nb;mud=true}});
+      if(mud){save(K.recs,recs);if(!$("v-hist").hidden)renderLista()}}).catch(function(){});
+}
+function pillBoleto(r){
+  var b=r.bol;if(!b||(!b.p&&!b.v))return"";var d=b.v?b.v.slice(8,10)+"/"+b.v.slice(5,7):"";
+  if(b.p==="S")return'<span class="boleto ok">1º boleto pago</span>';
+  if(b.p==="N")return'<span class="boleto er">1º boleto em aberto'+(d?" · venceu "+d:"")+' · cobrar o cliente</span>';
+  return'<span class="boleto av">1º boleto vence '+d+'</span>';
+}
+setInterval(consultarBoletos,300000);
 /* planos definidos pelo gestor no painel: valem para todos os vendedores */
 function aplicarPlanos(L){
   if(!Array.isArray(L))return;
@@ -813,9 +868,10 @@ function aplicarPlanos(L){
   save(K.cfg,cfg);renderCfg();
 }
 function buscarPlanos(){
+  setTimeout(consultarBoletos,1500);
   if(DEMO||!online()||!cfg.chave||travadoAgora())return;
   fetch(cfg.crmUrl+"/api/app-vendas.php?acao=planos",{headers:{"Authorization":"Bearer "+cfg.chave}})
-    .then(function(res){return res.json()}).then(function(j){if(j.ok)aplicarPlanos(j.planos);else if(j.login)travar(j.erro,true)}).catch(function(){});
+    .then(function(res){return res.json()}).then(function(j){if(j.ok){aplicarPlanos(j.planos);if(j.trocar&&$("troca").hidden)pedirTroca("")}else if(j.login)travar(j.erro,true)}).catch(function(){});
 }
 $("cfgWa").addEventListener("input",function(){this.value=fmtTel(this.value)});
 $("cfg").addEventListener("submit",function(e){e.preventDefault();
@@ -1118,7 +1174,7 @@ function filtrados(){
   var q=up($("busca").value),qd=dig($("busca").value),m=$("fMes").value,t=$("fTipo").value;
   return recs.filter(function(r){
     if(m&&mesDe(r)!==m)return false;
-    if(t&&(r.tipo||"venda")!==t)return false;
+    if(t==="boleto"){if(!r.bol||r.bol.p!=="N")return false}else if(t&&(r.tipo||"venda")!==t)return false;
     if(!q)return true;return up(r.nome).indexOf(q)>=0||up(r.cidade).indexOf(q)>=0||(qd&&(dig(r.cpf).indexOf(qd)>=0||dig(r.tel1).indexOf(qd)>=0))});
 }
 function somar(L){var o={v:0,u:0,s:0,o:0,vo:0,inst:0,rot:0,aum:0,f:0};L.forEach(function(r){if(ehOrc(r)){o.o++;o.vo+=moneyVal(r.valOrc);return}if(!r.crm||r.crm.st!=="ok")o.f++;if(r.tipo==="upgrade"){o.u++;o.aum+=Math.max(0,moneyVal(r.valNovo)-moneyVal(r.valAtual))}else if(r.tipo==="segundo")o.s++;else o.v++;o.inst+=moneyVal(r.valInst);o.rot+=moneyVal(r.valRot)});return o}
@@ -1134,7 +1190,7 @@ function renderLista(){
     '<div class="pills"><span class="pill tp">'+nomeTipo(r.tipo)+'</span>'+pillCrm(r)+'</div></div>'+
     (ehOrc(r)?'<div class="meta">'+esc(r.criado)+' · '+esc(up(r.cidade))+' · '+esc(fmtTel(r.tel1))+'<br>R$ '+esc(fmtMoney(r.valOrc))+' · '+esc(up(r.servico).slice(0,80))+'</div>':r.tipo==="upgrade"?'<div class="meta">'+esc(r.criado)+' · '+esc(fmtTel(r.tel1))+'<br>R$ '+esc(fmtMoney(r.valAtual))+' → R$ '+esc(fmtMoney(r.valNovo))+' · '+esc(up(r.velNova))+'</div>'
     :'<div class="meta">'+esc(r.criado)+' · '+esc(up(r.cidade))+' · CPF '+esc(r.cpf)+'<br>'+esc(r.plano)+' · venc. dia '+esc(r.venc)+'</div>')+
-    ((r.midias||[]).length?'<div class="meta">'+r.midias.length+((r.midias.length===1)?' anexo':' anexos')+'</div>':'')+(r.crm&&r.crm.st==="er"?'<div class="meta" style="color:var(--err)">'+esc(r.crm.msg||"")+'</div>':"")+'<div class="acts"><button class="btn sm primary" data-a="enviar">Detalhes</button><button class="btn sm" data-a="editar">Editar</button><button class="btn sm" data-a="copiar">Copiar</button><button class="btn sm danger" data-a="excluir">Excluir</button></div></div>'}).join("");
+    (pillBoleto(r)?'<div>'+pillBoleto(r)+'</div>':'')+((r.midias||[]).length?'<div class="meta">'+r.midias.length+((r.midias.length===1)?' anexo':' anexos')+'</div>':'')+(r.crm&&r.crm.st==="er"?'<div class="meta" style="color:var(--err)">'+esc(r.crm.msg||"")+'</div>':"")+'<div class="acts"><button class="btn sm primary" data-a="enviar">Detalhes</button><button class="btn sm" data-a="editar">Editar</button><button class="btn sm" data-a="copiar">Copiar</button><button class="btn sm danger" data-a="excluir">Excluir</button></div></div>'}).join("");
 }
 $("busca").addEventListener("input",renderLista);$("fMes").addEventListener("change",renderLista);$("fTipo").addEventListener("change",renderLista);
 $("lista").addEventListener("click",function(e){
@@ -1406,7 +1462,7 @@ $("loginForm").addEventListener("submit",function(e){e.preventDefault();
       var sal=hex(crypto.getRandomValues(new Uint8Array(16)));
       return impressao(u,p,sal).then(function(v){
         cfg.crmUrl=srv;cfg.chave=j.token;cfg.chaveOff=j.token;cfg.usuario=u;cfg.vend=j.nome;cfg.sal=sal;cfg.verif=v;cfg.entrou=Date.now();aplicarPlanos(j.planos);
-        save(K.cfg,cfg);fim();destravar();toast(trocou?"Entrou como "+j.nome+". O histórico deste celular continua aqui.":"Bem-vindo, "+j.nome);
+        save(K.cfg,cfg);fim();destravar();if(j.trocar){pedirTroca(p);return}toast(trocou?"Entrou como "+j.nome+". O histórico deste celular continua aqui.":"Bem-vindo, "+j.nome);
       });
     }).catch(function(){fim();$("lgErro").textContent="Não deu para falar com o servidor "+srv+". Confira a internet e tente de novo."});
 });

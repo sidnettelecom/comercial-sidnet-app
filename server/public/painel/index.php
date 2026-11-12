@@ -73,10 +73,11 @@ if (isset($_GET['sair'])) {
 $gestor = $_SESSION['gestor'] ?? null;
 if ($gestor) {
     // sessão parada há muito tempo, ou gestor bloqueado/apagado depois que entrou
-    $q = db()->prepare('SELECT ativo, admin FROM gestores WHERE id = ?');
+    $q = db()->prepare('SELECT ativo, admin, trocar_senha FROM gestores WHERE id = ?');
     $q->execute([$gestor['id']]);
-    $gq = $q->fetch() ?: ['ativo' => 0, 'admin' => 0];
+    $gq = $q->fetch() ?: ['ativo' => 0, 'admin' => 0, 'trocar_senha' => 0];
     $gestor['admin'] = (bool)$gq['admin'];
+    $gestor['trocar'] = (bool)$gq['trocar_senha']; // senha provisória: só deixa trocar a senha
     if (time() - (int)($_SESSION['visto'] ?? 0) > PAINEL_INATIVO_MAX || !$gq['ativo']) {
         $_SESSION = [];
         session_destroy();
@@ -117,6 +118,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
     confere_csrf();
     $a = $_POST['acao'] ?? '';
     $id = (int)($_POST['id'] ?? 0);
+    if (!empty($gestor['trocar']) && $a !== 'minha_senha') $a = '';
     try {
         if ($a === 'tentar') {
             db()->prepare("UPDATE vendas SET status='fila', erro='', tentativas=0 WHERE id=? AND status<>'crm'")->execute([$id]);
@@ -249,7 +251,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $q->execute([$u]);
             if ($q->fetchColumn()) throw new RuntimeException("Já existe o gestor \"$u\".");
             $senha = gerar_senha();
-            db()->prepare('INSERT INTO gestores (usuario, nome, senha_hash) VALUES (?, ?, ?)')->execute([$u, up($_POST['nome']), password_hash($senha, PASSWORD_DEFAULT)]);
+            db()->prepare('INSERT INTO gestores (usuario, nome, senha_hash, trocar_senha) VALUES (?, ?, ?, 1)')->execute([$u, up($_POST['nome']), password_hash($senha, PASSWORD_DEFAULT)]);
             $novaSenha = ['quem' => up($_POST['nome']), 'usuario' => $u, 'senha' => $senha];
             registrar($quem, 'criou gestor', $u);
         } elseif ($a === 'comissoes_salvar') {
@@ -267,6 +269,14 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             db()->prepare('UPDATE gestores SET admin = 1 - admin WHERE id = ?')->execute([$id]);
             registrar($quem, 'deu/tirou admin', '#' . $id);
             $msg = 'Permissão de admin alterada.';
+        } elseif ($a === 'gest_senha' && $id !== $gestor['id']) {
+            if (!$admin) throw new RuntimeException('Só um gestor admin pode trocar a senha de outro gestor.');
+            $g = db()->query('SELECT nome, usuario FROM gestores WHERE id = ' . $id)->fetch();
+            if (!$g) throw new RuntimeException('Gestor não encontrado.');
+            $senha = gerar_senha();
+            db()->prepare('UPDATE gestores SET senha_hash = ?, trocar_senha = 1 WHERE id = ?')->execute([password_hash($senha, PASSWORD_DEFAULT), $id]);
+            $novaSenha = ['quem' => $g['nome'], 'usuario' => $g['usuario'], 'senha' => $senha];
+            registrar($quem, 'nova senha de gestor', $g['usuario']);
         } elseif ($a === 'gest_ativo' && $id !== $gestor['id']) {
             db()->prepare('UPDATE gestores SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
             registrar($quem, 'bloqueou/liberou gestor', '#' . $id);
@@ -278,7 +288,9 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!password_verify((string)($_POST['atual'] ?? ''), (string)$q->fetchColumn())) throw new RuntimeException('A senha atual não confere.');
             if ($p = problema_senha($nova)) throw new RuntimeException($p);
             if ($nova !== (string)($_POST['nova2'] ?? '')) throw new RuntimeException('A confirmação não é igual à senha nova.');
-            db()->prepare('UPDATE gestores SET senha_hash = ? WHERE id = ?')->execute([password_hash($nova, PASSWORD_DEFAULT), $gestor['id']]);
+            if ($nova === (string)($_POST['atual'] ?? '')) throw new RuntimeException('A senha nova precisa ser diferente da atual.');
+            db()->prepare('UPDATE gestores SET senha_hash = ?, trocar_senha = 0 WHERE id = ?')->execute([password_hash($nova, PASSWORD_DEFAULT), $gestor['id']]);
+            $gestor['trocar'] = false;
             registrar($quem, 'trocou a própria senha');
             $msg = 'Senha trocada.';
         }
@@ -287,7 +299,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$p = $_GET['p'] ?? 'vendas';
+$p = !empty($gestor['trocar']) ? 'trocar' : ($_GET['p'] ?? 'vendas');
 $NOMES = ['venda' => 'Venda', 'segundo' => '2º plano', 'upgrade' => 'Upgrade'];
 $SITUACAO = ['fila' => ['Na fila', 'q'], 'forcar' => ['Na fila', 'q'], 'tentar' => ['Tentando de novo', 'q'], 'crm' => ['No ' . $DEST, 'ok'], 'erro' => ['Erro', 'er'], 'descartada' => ['Descartada', 'mu']];
 $crmVend = [];
@@ -577,7 +589,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
       <td><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="vend_ativo"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>"><button class="<?= $v['ativo'] ? 'del' : '' ?>"><?= $v['ativo'] ? 'Bloquear' : 'Liberar' ?></button></form></td></tr>
     <?php endforeach ?>
   </table></div>
-  <p class="small">Senha gerada aqui é provisória e aparece uma vez só. Gerar senha nova tira o vendedor de todos os celulares em que ele estava logado.</p>
+  <p class="small">Senha gerada aqui é provisória e aparece uma vez só: no primeiro login o vendedor é obrigado a criar a dele. Gerar senha nova tira o vendedor de todos os celulares em que ele estava logado.</p>
 
 <?php elseif ($p === 'planos'):
     $planos = db()->query('SELECT * FROM planos ORDER BY ordem, nome')->fetchAll();
@@ -623,6 +635,15 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
   <?php endif ?>
   <?php endif ?>
   <datalist id="ixcpl"><?php foreach ($ixcPlanos as $ip): ?><option value="<?= h($ip['nome']) ?>"><?php endforeach ?></datalist>
+
+<?php elseif ($p === 'trocar'): ?>
+  <form method="post" class="card login"><?= csrf_campo() ?><input type="hidden" name="acao" value="minha_senha">
+    <h2>Crie a sua senha</h2>
+    <p class="small">Você entrou com uma senha provisória. Para continuar, crie uma senha só sua.</p>
+    <label for="atual">Senha provisória</label><input id="atual" name="atual" type="password" autocomplete="current-password" required>
+    <label for="nova">Senha nova (8+ caracteres, letras e números)</label><input id="nova" name="nova" type="password" autocomplete="new-password" minlength="8" required>
+    <label for="nova2">Repita a senha nova</label><input id="nova2" name="nova2" type="password" autocomplete="new-password" minlength="8" required>
+    <button class="pri">Criar senha e entrar</button></form>
 
 <?php elseif ($p === 'comissoes' && !$admin): ?>
   <div class="msg">Só o gestor admin vê as comissões.</div>
@@ -714,7 +735,8 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     <tr><td><?= h($g['nome']) ?></td><td><?= h($g['usuario']) ?></td>
       <td><?= $g['ativo'] ? '<span class="pill ok">Ativo</span>' : '<span class="pill er">Bloqueado</span>' ?></td>
       <td><?= $g['admin'] ? '<span class="pill ok">Admin</span>' : '<span class="small">não</span>' ?>
-        <?php if ($admin && (int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_admin"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button><?= $g['admin'] ? 'Tirar admin' : 'Tornar admin' ?></button></form><?php endif ?></td>
+        <?php if ($admin && (int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_senha"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button>Gerar senha nova</button></form>
+        <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_admin"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button><?= $g['admin'] ? 'Tirar admin' : 'Tornar admin' ?></button></form><?php endif ?></td>
       <td class="n"><?= h($g['ultimo_acesso'] ?? '—') ?></td>
       <td><?php if ((int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_ativo"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button class="<?= $g['ativo'] ? 'del' : '' ?>"><?= $g['ativo'] ? 'Bloquear' : 'Liberar' ?></button></form><?php else: ?><span class="small">você</span><?php endif ?></td></tr>
     <?php endforeach ?>
