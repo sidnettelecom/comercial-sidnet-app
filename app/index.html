@@ -633,7 +633,13 @@ html.web .gate .olho{color:#475569}
           <div class="money"><span>R$</span><input id="valRot" class="mono" inputmode="numeric" placeholder="0,00"></div>
         </div>
       </div>
-      <div class="total" aria-live="polite"><span>Total (instalação + roteador)</span><strong id="valTotal">R$ 0,00</strong></div>
+      <div class="two">
+        <div class="f" data-k="valTv">
+          <label for="valTv">Valor da Smart TV Box vendida</label>
+          <div class="money"><span>R$</span><input id="valTv" class="mono" inputmode="numeric" placeholder="0,00"></div>
+        </div>
+      </div>
+      <div class="total" aria-live="polite"><span>Total (instalação + roteador + TV Box)</span><strong id="valTotal">R$ 0,00</strong></div>
       <span class="hint small">Deixe vazio se não houver cobrança.</span>
     </fieldset>
 
@@ -754,9 +760,10 @@ html.web .gate .olho{color:#475569}
 <div class="sheet" id="valores" hidden>
   <form class="box" id="valForm" role="dialog" aria-modal="true" aria-labelledby="valTitle" novalidate>
     <h2 id="valTitle">Valores da venda</h2>
-    <p class="small" id="valTxt" style="margin:0">Esta venda já está no IXC. Só os valores de instalação e roteador podem ser alterados.</p>
+    <p class="small" id="valTxt" style="margin:0">Esta venda já está no IXC. Só os valores de instalação, roteador e Smart TV Box podem ser alterados.</p>
     <div class="f"><label for="valInstEd">Valor da instalação</label><div class="money"><span>R$</span><input id="valInstEd" class="mono" inputmode="numeric" placeholder="0,00"></div></div>
     <div class="f"><label for="valRotEd">Valor do roteador</label><div class="money"><span>R$</span><input id="valRotEd" class="mono" inputmode="numeric" placeholder="0,00"></div></div>
+    <div class="f"><label for="valTvEd">Valor da Smart TV Box</label><div class="money"><span>R$</span><input id="valTvEd" class="mono" inputmode="numeric" placeholder="0,00"></div></div>
     <div class="row">
       <button type="button" class="btn" id="valNo">Cancelar</button>
       <button type="submit" class="btn primary" id="valYes">Salvar valores</button>
@@ -950,7 +957,7 @@ function compartilhar(r,txt,outro){
 }
 
 /* ---------- formulário ---------- */
-var F=["nome","apelido","cpf","nasc","cidade","referencia","local","tel1","tel2","email","plano","provedor","obs","valAtual","valNovo","velNova","valInst","valRot","exRoteadorObs","exCaboObs","exTrocaObs","servico","valOrc","validade","cep","uf","rua","numero","bairro","complemento","bloco","apartamento","rg","rgOrgao","sexo","estadoCivil","profissao","moradia","zona","canal"];
+var F=["nome","apelido","cpf","nasc","cidade","referencia","local","tel1","tel2","email","plano","provedor","obs","valAtual","valNovo","velNova","valInst","valRot","valTv","exRoteadorObs","exCaboObs","exTrocaObs","servico","valOrc","validade","cep","uf","rua","numero","bairro","complemento","bloco","apartamento","rg","rgOrgao","sexo","estadoCivil","profissao","moradia","zona","canal"];
 var CK=["exRoteador","exCabo","exTroca"];
 function mostraObsServ(){CK.forEach(function(k){var t=$(k+"Obs");var was=t.hidden;t.hidden=!$(k).checked;if(was&&!t.hidden&&document.activeElement===$(k))t.focus()})}
 CK.forEach(function(k){$(k).addEventListener("change",mostraObsServ)});
@@ -963,9 +970,9 @@ document.querySelectorAll('input[name="tipo"]').forEach(function(r){r.addEventLi
 function fmtMoney(v){var d=dig(v).replace(/^0+(?=\d)/,"").slice(0,7);if(!d)return"";while(d.length<3)d="0"+d;var i=d.slice(0,-2),c=d.slice(-2);i=i.replace(/\B(?=(\d{3})+(?!\d))/g,".");return i+","+c}
 function moneyVal(v){return +dig(v)/100}
 function brl(n){return fmtMoney(String(Math.round(n*100)))||"0,00"}
-function totalExtras(r){return moneyVal(r.valInst)+moneyVal(r.valRot)}
-function atualizaTotal(){$("valTotal").textContent="R$ "+brl(totalExtras({valInst:$("valInst").value,valRot:$("valRot").value}))}
-["valAtual","valNovo","valInst","valRot","valOrc"].forEach(function(id){$(id).addEventListener("input",function(){this.value=fmtMoney(this.value);atualizaTotal()})});
+function totalExtras(r){return moneyVal(r.valInst)+moneyVal(r.valRot)+moneyVal(r.valTv)}
+function atualizaTotal(){$("valTotal").textContent="R$ "+brl(totalExtras({valInst:$("valInst").value,valRot:$("valRot").value,valTv:$("valTv").value}))}
+["valAtual","valNovo","valInst","valRot","valTv","valOrc"].forEach(function(id){$(id).addEventListener("input",function(){this.value=fmtMoney(this.value);atualizaTotal()})});
 function getForm(){var o={};F.forEach(function(k){o[k]=$(k).value});var v=document.querySelector('input[name="venc"]:checked');o.venc=v?v.value:"";o.tipo=tipoAtual();o.endereco=montarEnd(o);o.midias=midias.slice();CK.forEach(function(k){o[k]=$(k).checked});return o}
 function setForm(o){if(o&&o.endereco&&!o.rua){o=Object.assign({},o,{rua:o.endereco})}F.forEach(function(k){$(k).value=o&&o[k]||""});if(!$("zona").value)$("zona").value="U";CK.forEach(function(k){$(k).checked=!!(o&&o[k])});setTipo(o&&o.tipo||tipoAtual());atualizaTotal();mostraObsServ();midias=(o&&o.midias||[]).slice();renderMidias();
   if(o&&o.plano&&cfg.planos.indexOf(o.plano)<0){var op=document.createElement("option");op.textContent=o.plano;$("plano").appendChild(op);$("plano").value=o.plano}
@@ -1068,7 +1075,8 @@ function mensagem(r){
     L.push("E-MAIL "+String(r.email).trim().toLowerCase());L.push("");
     L.push("VALOR DA INSTALAÇÃO : R$ "+brl(moneyVal(r.valInst)));
     L.push("VALOR DO ROTEADOR VENDIDO : R$ "+brl(moneyVal(r.valRot)));
-    L.push("TOTAL (INSTALAÇÃO + ROTEADOR) : R$ "+brl(totalExtras(r)));
+    L.push("VALOR DA SMART TV BOX VENDIDA : R$ "+brl(moneyVal(r.valTv)));
+    L.push("TOTAL (INSTALAÇÃO + ROTEADOR + TV BOX) : R$ "+brl(totalExtras(r)));
     if(r.obs&&r.obs.trim()){L.push("");L.push("OBS : "+up(r.obs))}
     return L.join("\n");
   }
@@ -1094,7 +1102,8 @@ function mensagem(r){
   L.push("- PROVEDOR ATUAL: "+up(r.provedor));L.push("");
   L.push("* VALOR DA INSTALAÇÃO: R$ "+brl(moneyVal(r.valInst)));
   L.push("* VALOR DO ROTEADOR VENDIDO: R$ "+brl(moneyVal(r.valRot)));
-  L.push("* TOTAL (INSTALAÇÃO + ROTEADOR): R$ "+brl(totalExtras(r)));
+  L.push("* VALOR DA SMART TV BOX VENDIDA: R$ "+brl(moneyVal(r.valTv)));
+  L.push("* TOTAL (INSTALAÇÃO + ROTEADOR + TV BOX): R$ "+brl(totalExtras(r)));
   if(r.obs&&r.obs.trim()){L.push("");L.push("- OBSERVAÇÕES: "+r.obs.trim())}
   return L.join("\n");
 }
@@ -1150,17 +1159,17 @@ $("btnNovo").addEventListener("click",function(){var t=atual&&atual.tipo||"venda
 var confCb=null;
 /* venda que já está no IXC: só instalação e roteador podem mudar (vão para o painel / comissões) */
 var valRec=null;
-function editarValores(r){valRec=r;$("valTxt").textContent=up(r.nome)+" já está no IXC. Só os valores de instalação e roteador podem ser alterados; o resto, corrija direto no IXC.";
-  $("valInstEd").value=fmtMoney(r.valInst||"");$("valRotEd").value=fmtMoney(r.valRot||"");$("valores").hidden=false;$("valInstEd").focus()}
-["valInstEd","valRotEd"].forEach(function(id){$(id).addEventListener("input",function(){this.value=fmtMoney(this.value)})});
+function editarValores(r){valRec=r;$("valTxt").textContent=up(r.nome)+" já está no IXC. Só os valores de instalação, roteador e Smart TV Box podem ser alterados; o resto, corrija direto no IXC.";
+  $("valInstEd").value=fmtMoney(r.valInst||"");$("valRotEd").value=fmtMoney(r.valRot||"");$("valTvEd").value=fmtMoney(r.valTv||"");$("valores").hidden=false;$("valInstEd").focus()}
+["valInstEd","valRotEd","valTvEd"].forEach(function(id){$(id).addEventListener("input",function(){this.value=fmtMoney(this.value)})});
 $("valNo").addEventListener("click",function(){$("valores").hidden=true;valRec=null});
 $("valForm").addEventListener("submit",function(e){e.preventDefault();var r=valRec;if(!r)return;
-  r.valInst=$("valInstEd").value;r.valRot=$("valRotEd").value;r.valPend=true;save(K.recs,recs);$("valores").hidden=true;valRec=null;
+  r.valInst=$("valInstEd").value;r.valRot=$("valRotEd").value;r.valTv=$("valTvEd").value;r.valPend=true;save(K.recs,recs);$("valores").hidden=true;valRec=null;
   renderLista();enviarValores();toast("Valores salvos")});
 function enviarValores(){
   if(DEMO||!online()||travadoAgora())return;
   recs.filter(function(r){return r.valPend}).forEach(function(r){
-    fetch(cfg.crmUrl+"/api/app-vendas.php?acao=valores",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+cfg.chave},body:JSON.stringify({id_app:r.id,valInst:r.valInst||"",valRot:r.valRot||""})})
+    fetch(cfg.crmUrl+"/api/app-vendas.php?acao=valores",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+cfg.chave},body:JSON.stringify({id_app:r.id,valInst:r.valInst||"",valRot:r.valRot||"",valTv:r.valTv||""})})
       .then(function(res){return res.json()}).then(function(j){if(j.ok||j.fim){delete r.valPend;save(K.recs,recs)}else if(j.login)travar(j.erro,true)}).catch(function(){});
   });
 }
@@ -1207,7 +1216,7 @@ function filtrados(){
     if(t==="boleto"){if(!r.bol||r.bol.p!=="N")return false}else if(t&&(r.tipo||"venda")!==t)return false;
     if(!q)return true;return up(r.nome).indexOf(q)>=0||up(r.cidade).indexOf(q)>=0||(qd&&(dig(r.cpf).indexOf(qd)>=0||dig(r.tel1).indexOf(qd)>=0))});
 }
-function somar(L){var o={v:0,u:0,s:0,o:0,vo:0,inst:0,rot:0,aum:0,f:0};L.forEach(function(r){if(ehOrc(r)){o.o++;o.vo+=moneyVal(r.valOrc);return}if(!r.crm||r.crm.st!=="ok")o.f++;if(r.tipo==="upgrade"){o.u++;o.aum+=Math.max(0,moneyVal(r.valNovo)-moneyVal(r.valAtual))}else if(r.tipo==="segundo")o.s++;else o.v++;o.inst+=moneyVal(r.valInst);o.rot+=moneyVal(r.valRot)});return o}
+function somar(L){var o={v:0,u:0,s:0,o:0,vo:0,inst:0,rot:0,tv:0,aum:0,f:0};L.forEach(function(r){if(ehOrc(r)){o.o++;o.vo+=moneyVal(r.valOrc);return}if(!r.crm||r.crm.st!=="ok")o.f++;if(r.tipo==="upgrade"){o.u++;o.aum+=Math.max(0,moneyVal(r.valNovo)-moneyVal(r.valAtual))}else if(r.tipo==="segundo")o.s++;else o.v++;o.inst+=moneyVal(r.valInst);o.rot+=moneyVal(r.valRot);o.tv+=moneyVal(r.valTv)});return o}
 function renderLista(){
   renderMeses();
   var L=filtrados();
@@ -1234,7 +1243,7 @@ $("lista").addEventListener("click",function(e){
 });
 $("btnCsv").addEventListener("click",function(){
   var FL=filtrados();if(!FL.length){toast("Não há cadastros nesse filtro");return}
-  var cols=[["tipo","Tipo"],["criado","Data cadastro"],["vend","Vendedor"],["sup","Supervisor"],["nome","Nome"],["apelido","Apelido"],["cpf","CPF"],["nasc","Nascimento"],["endereco","Endereço"],["cidade","Cidade"],["referencia","Referência"],["local","Localização"],["tel1","Telefone 1"],["tel2","Telefone 2"],["email","E-mail"],["venc","Vencimento"],["plano","Plano"],["provedor","Provedor atual"],["valAtual","Paga hoje (upgrade)"],["valNovo","Vai pagar (upgrade)"],["velNova","Novo plano (upgrade)"],["extras","Serviços (upgrade)"],["valInst","Valor instalação"],["valRot","Valor roteador vendido"],["total","Total instalação + roteador"],["servico","Serviço (orçamento)"],["valOrc","Valor orçamento"],["obs","Observações"],["status","Status"]];
+  var cols=[["tipo","Tipo"],["criado","Data cadastro"],["vend","Vendedor"],["sup","Supervisor"],["nome","Nome"],["apelido","Apelido"],["cpf","CPF"],["nasc","Nascimento"],["endereco","Endereço"],["cidade","Cidade"],["referencia","Referência"],["local","Localização"],["tel1","Telefone 1"],["tel2","Telefone 2"],["email","E-mail"],["venc","Vencimento"],["plano","Plano"],["provedor","Provedor atual"],["valAtual","Paga hoje (upgrade)"],["valNovo","Vai pagar (upgrade)"],["velNova","Novo plano (upgrade)"],["extras","Serviços (upgrade)"],["valInst","Valor instalação"],["valRot","Valor roteador vendido"],["valTv","Valor Smart TV Box vendida"],["total","Total instalação + roteador + TV Box"],["servico","Serviço (orçamento)"],["valOrc","Valor orçamento"],["obs","Observações"],["status","Status"]];
   var lines=[cols.map(function(c){return c[1]}).join("\t")].concat(FL.map(function(r){var rr=Object.assign({},r,{tipo:nomeTipo(r.tipo).toUpperCase(),extras:r.tipo==="upgrade"?extrasUpg(r).join(" / "):"",total:brl(totalExtras(r))});return cols.map(function(c){return String(rr[c[0]]||"").replace(/[\t\n\r]+/g," ")}).join("\t")}));
   copiar(lines.join("\n"),"Copiado. Cole na planilha (célula A1).");
 });
@@ -1277,10 +1286,10 @@ function relatorioPdf(L,mes,tipo){
   d.y=d.H-104;
   d.t(M,d.y,"Vendedor: "+(cfg.vend||"-")+(cfg.sup?"     Supervisor: "+cfg.sup:""),10,false);d.y-=15;
   d.t(M,d.y,"Gerado em "+agora()+" pelo app Comercial + Sidnet",9,false,"0.36 0.44 0.47");d.y-=26;
-  var cards=[["Vendas",String(S.v)],["Upgrades",String(S.u)],["Instalação","R$ "+brl(S.inst)],["Roteador vendido","R$ "+brl(S.rot)],["Total inst. + roteador","R$ "+brl(S.inst+S.rot)],["Aumento mensal (upgrades)","R$ "+brl(S.aum)]];
+  var cards=[["Vendas",String(S.v)],["Upgrades",String(S.u)],["Instalação","R$ "+brl(S.inst)],["Roteador vendido","R$ "+brl(S.rot)],["Smart TV Box vendida","R$ "+brl(S.tv)],["Total inst. + rot. + TV Box","R$ "+brl(S.inst+S.rot+S.tv)],["Aumento mensal (upgrades)","R$ "+brl(S.aum)]];
   var cw=(d.W-2*M-2*10)/3;
   cards.forEach(function(c,i){var x=M+(i%3)*(cw+10),yy=d.y-Math.floor(i/3)*54;d.box(x,yy-42,cw,46,"0.93 0.96 0.97");d.t(x+10,yy-14,c[0],8.5,false,"0.36 0.44 0.47");d.t(x+10,yy-33,c[1],14,true,"0.04 0.44 0.64")});
-  d.y-=124;
+  d.y-=124+(Math.ceil(cards.length/3)-2)*54;
   var cols=[["Data",58],["Tipo",50],["Cliente",130],["Plano / upgrade",140],["Instal.",50],["Roteador",50],["Status",37]];
   function head(){var x=M;d.box(M,d.y-5,d.W-2*M,18,"0.07 0.16 0.19");cols.forEach(function(c){d.t(x+3,d.y,c[0],8,true,"1 1 1");x+=c[1]});d.y-=20}
   head();
@@ -1335,6 +1344,7 @@ function payload(r){
     obs.push("TEL: "+fmtTel(r.tel1)+" / "+fmtTel(r.tel2));obs.push("E-MAIL: "+String(r.email||"").trim().toLowerCase());
     if(moneyVal(r.valInst))obs.push("INSTALAÇÃO R$ "+brl(moneyVal(r.valInst)));
     if(moneyVal(r.valRot))obs.push("ROTEADOR VENDIDO R$ "+brl(moneyVal(r.valRot)));
+    if(moneyVal(r.valTv))obs.push("SMART TV BOX VENDIDA R$ "+brl(moneyVal(r.valTv)));
     if(r.obs&&r.obs.trim())obs.push(up(r.obs));
     obs.push("VIA APP · "+r.id);
     return {tela:"Upgrades e Renegociações → Lançar à mão",rota:"servicos-vendedor.php",campos:[
@@ -1348,6 +1358,7 @@ function payload(r){
   if(r.local)obs.push("LOCAL (GPS): "+r.local.trim());
   if(moneyVal(r.valInst))obs.push("INSTALAÇÃO R$ "+brl(moneyVal(r.valInst)));
   if(moneyVal(r.valRot))obs.push("ROTEADOR VENDIDO R$ "+brl(moneyVal(r.valRot)));
+  if(moneyVal(r.valTv))obs.push("SMART TV BOX VENDIDA R$ "+brl(moneyVal(r.valTv)));
   if(r.obs&&r.obs.trim())obs.push(up(r.obs));
   obs.push("VIA APP · "+r.id);
   var preco=(cfg.precos||{})[r.plano]||PRECOS[r.plano];

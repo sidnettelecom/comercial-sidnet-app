@@ -157,7 +157,7 @@ try {
     }
 
     if ($acao === 'valores' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-        // venda que já está no IXC: o vendedor só pode corrigir instalação e roteador (vão para as comissões)
+        // venda que já está no IXC: o vendedor só pode corrigir instalação, roteador (vão para as comissões) e Smart TV Box
         $in = json_decode(file_get_contents('php://input') ?: '', true);
         $idApp = preg_replace('/[^A-Za-z0-9]/', '', (string)($in['id_app'] ?? ''));
         $q = db()->prepare('SELECT id, vendedor_id, dados FROM vendas WHERE id_app = ?');
@@ -172,6 +172,7 @@ try {
         $d = json_decode((string)$v['dados'], true) ?: [];
         $d['valInst'] = mb_substr((string)($in['valInst'] ?? ''), 0, 20);
         $d['valRot'] = mb_substr((string)($in['valRot'] ?? ''), 0, 20);
+        if (array_key_exists('valTv', $in)) $d['valTv'] = mb_substr((string)$in['valTv'], 0, 20);
         db()->prepare("UPDATE vendas SET dados = ?, atualizado_em = datetime('now','localtime') WHERE id = ?")
             ->execute([json_encode($d, JSON_UNESCAPED_UNICODE), $v['id']]);
         // a comissão já paga não muda
