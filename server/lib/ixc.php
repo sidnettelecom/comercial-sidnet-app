@@ -91,11 +91,27 @@ final class Ixc
     /** Inclui um registro e devolve o id criado. */
     public function inserir(string $tabela, array $dados): string
     {
-        $j = $this->chamar($tabela, $dados, false);
+        $j = $this->chamar($tabela, self::limpar($dados), false);
         if (($j['type'] ?? '') !== 'success' || empty($j['id'])) {
             throw new ErroCrm('O IXC não aceitou (' . $tabela . '): ' . self::texto($j['message'] ?? 'sem mensagem'));
         }
         return (string)$j['id'];
+    }
+
+    /**
+     * Tudo o que gravamos no IXC passa pelo texto_crm: tira < > " ` e caracteres de controle,
+     * para ninguém colocar HTML ou script no IXC pelos campos do app (nome, rua, bairro...).
+     */
+    private static function limpar(array $dados): array
+    {
+        foreach ($dados as $k => $v) {
+            if (is_string($v)) {
+                $dados[$k] = texto_crm($v, 6000);
+            } elseif (is_array($v)) {
+                $dados[$k] = self::limpar($v);
+            }
+        }
+        return $dados;
     }
 
     private static function texto(mixed $m): string

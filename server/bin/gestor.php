@@ -19,7 +19,7 @@ if ($cmd === 'novo' && $u !== '') {
     $q = db()->prepare('UPDATE gestores SET senha_hash = ?, ativo = 1 WHERE usuario = ?');
     $q->execute([password_hash($senha, PASSWORD_DEFAULT), $u]);
     echo $q->rowCount() ? "Usuário: $u  Senha nova: $senha\n" : "Gestor \"$u\" não existe.\n";
-    limpar_falhas('painel:u:' . $u);
+    db()->prepare("DELETE FROM tentativas WHERE chave LIKE ?")->execute(['painel:u:' . $u . '|%']);
 } elseif ($cmd === 'lista') {
     foreach (db()->query('SELECT usuario, nome, ativo, ultimo_acesso FROM gestores ORDER BY usuario') as $g) {
         printf("%-15s %-30s %s  último acesso: %s\n", $g['usuario'], $g['nome'], $g['ativo'] ? 'ativo' : 'BLOQUEADO', $g['ultimo_acesso'] ?? '-');

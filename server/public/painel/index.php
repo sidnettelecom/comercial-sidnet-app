@@ -41,7 +41,7 @@ if (isset($_POST['entrar'])) {
     confere_csrf();
     $u = strtolower(trim((string)($_POST['usuario'] ?? '')));
     $ip = ip_cliente();
-    if ($min = travado('painel:u:' . $u, 'painel:ip:' . $ip)) {
+    if ($min = travado('painel:u:' . $u . '|' . $ip, 'painel:ip:' . $ip)) {
         $msg = "Muitas tentativas erradas. Tente de novo em $min min.";
     } else {
         $q = db()->prepare('SELECT * FROM gestores WHERE usuario = ?');
@@ -49,7 +49,7 @@ if (isset($_POST['entrar'])) {
         $g = $q->fetch();
         $hash = $g['senha_hash'] ?? password_hash(gerar_chave(), PASSWORD_DEFAULT);
         if ($g && $g['ativo'] && password_verify((string)($_POST['senha'] ?? ''), $hash)) {
-            limpar_falhas('painel:u:' . $u);
+            limpar_falhas('painel:u:' . $u . '|' . $ip);
             session_regenerate_id(true);
             $_SESSION['gestor'] = ['id' => (int)$g['id'], 'usuario' => $g['usuario'], 'nome' => $g['nome']];
             $_SESSION['visto'] = time();
@@ -58,7 +58,7 @@ if (isset($_POST['entrar'])) {
             header('Location: ./');
             exit;
         }
-        anotar_falha('painel:u:' . $u, 5);
+        anotar_falha('painel:u:' . $u . '|' . $ip, 5);
         anotar_falha('painel:ip:' . $ip, 20);
         sleep(1);
         $msg = 'Usuário ou senha incorretos.';
@@ -245,6 +245,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $ixcPlanos = planos_ixc_ler($arqPlanosIxc);
             $msg = count($lista) . ' planos de venda ativos carregados do IXC. Escolha abaixo quais aparecem no app.';
         } elseif ($a === 'gest_novo') {
+            if (!$admin) throw new RuntimeException('Só um gestor admin pode criar gestores.');
             $u = usuario_valido((string)($_POST['usuario'] ?? ''));
             if ($u === '' || up($_POST['nome'] ?? '') === '') throw new RuntimeException('Preencha nome e usuário (3 a 40 letras minúsculas, números, ponto ou hífen).');
             $q = db()->prepare('SELECT 1 FROM gestores WHERE usuario = ?');
@@ -278,6 +279,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $novaSenha = ['quem' => $g['nome'], 'usuario' => $g['usuario'], 'senha' => $senha];
             registrar($quem, 'nova senha de gestor', $g['usuario']);
         } elseif ($a === 'gest_ativo' && $id !== $gestor['id']) {
+            if (!$admin) throw new RuntimeException('Só um gestor admin pode bloquear ou liberar gestores.');
             db()->prepare('UPDATE gestores SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
             registrar($quem, 'bloqueou/liberou gestor', '#' . $id);
             $msg = 'Acesso do gestor alterado.';
@@ -817,13 +819,13 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
         <?php if ($admin && (int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_senha"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button>Gerar senha nova</button></form>
         <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_admin"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button><?= $g['admin'] ? 'Tirar admin' : 'Tornar admin' ?></button></form><?php endif ?></td>
       <td class="n"><?= h($g['ultimo_acesso'] ?? '—') ?></td>
-      <td><?php if ((int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_ativo"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button class="<?= $g['ativo'] ? 'del' : '' ?>"><?= $g['ativo'] ? 'Bloquear' : 'Liberar' ?></button></form><?php else: ?><span class="small">você</span><?php endif ?></td></tr>
+      <td><?php if ($admin && (int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_ativo"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button class="<?= $g['ativo'] ? 'del' : '' ?>"><?= $g['ativo'] ? 'Bloquear' : 'Liberar' ?></button></form><?php elseif ((int)$g['id'] === $gestor['id']): ?><span class="small">você</span><?php endif ?></td></tr>
     <?php endforeach ?>
   </table></div>
-  <form method="post" class="card row"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_novo">
+  <?php if ($admin): ?><form method="post" class="card row"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_novo">
     <label for="gnome">Novo gestor</label><input id="gnome" name="nome" placeholder="NOME" required>
     <label for="gusu">Usuário</label><input id="gusu" name="usuario" autocapitalize="none" size="12" required pattern="[a-z0-9._-]{3,40}">
-    <button class="pri">Criar e gerar senha</button></form>
+    <button class="pri">Criar e gerar senha</button></form><?php endif ?>
   <form method="post" class="card login"><?= csrf_campo() ?><input type="hidden" name="acao" value="minha_senha">
     <h2>Trocar minha senha</h2>
     <label for="atual">Senha atual</label><input id="atual" name="atual" type="password" autocomplete="current-password" required>

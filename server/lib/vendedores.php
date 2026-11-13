@@ -89,7 +89,7 @@ function vendedor_login(string $usuario, string $senha, string $aparelho): array
 {
     $u = strtolower(trim($usuario));
     $ip = ip_cliente();
-    if ($min = travado('app:u:' . $u, 'app:ip:' . $ip)) {
+    if ($min = travado('app:u:' . $u . '|' . $ip, 'app:ip:' . $ip)) {
         throw new RuntimeException("Muitas tentativas erradas. Tente de novo em $min min.");
     }
     $q = db()->prepare('SELECT * FROM vendedores WHERE usuario = ?');
@@ -99,14 +99,14 @@ function vendedor_login(string $usuario, string $senha, string $aparelho): array
     $hash = ($v['senha_hash'] ?? '') !== '' ? $v['senha_hash'] : password_hash(gerar_chave(), PASSWORD_DEFAULT);
     $ok = password_verify($senha, $hash);
     if (!$v || !$ok) {
-        anotar_falha('app:u:' . $u, 5);
+        anotar_falha('app:u:' . $u . '|' . $ip, 5);
         anotar_falha('app:ip:' . $ip, 20);
         throw new RuntimeException('Usuário ou senha incorretos.');
     }
     if (!$v['ativo']) {
         throw new RuntimeException('Seu acesso está bloqueado. Fale com o gestor.');
     }
-    limpar_falhas('app:u:' . $u);
+    limpar_falhas('app:u:' . $u . '|' . $ip);
     if (password_needs_rehash($v['senha_hash'], PASSWORD_DEFAULT)) {
         db()->prepare('UPDATE vendedores SET senha_hash = ? WHERE id = ?')->execute([password_hash($senha, PASSWORD_DEFAULT), $v['id']]);
     }
