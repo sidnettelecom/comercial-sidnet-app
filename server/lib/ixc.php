@@ -269,6 +269,7 @@ function ixc_descricao(array $r, array $venda, array $vendedor): string
     }
     if ((int)so_digitos($r['valInst'] ?? '') > 0) $L[] = 'INSTALAÇÃO: R$ ' . valor_brl($r['valInst']);
     if ((int)so_digitos($r['valRot'] ?? '') > 0) $L[] = 'ROTEADOR VENDIDO: R$ ' . valor_brl($r['valRot']);
+    if ((int)so_digitos($r['valTv'] ?? '') > 0) $L[] = 'SMART TV BOX VENDIDA: R$ ' . valor_brl($r['valTv']);
     $add('OBSERVAÇÕES', up($r['obs'] ?? ''));
     $L[] = 'VENDEDOR: ' . $vendedor['nome'];
     $L[] = 'CADASTRO NO APP: ' . $venda['id_app'];

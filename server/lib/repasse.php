@@ -50,6 +50,7 @@ function observacao(array $r, string $idApp, array $vendedor): string
     }
     if (so_digitos($r['valInst'] ?? '') !== '' && (int)so_digitos($r['valInst']) > 0) $o[] = 'INSTALAÇÃO R$ ' . valor_brl($r['valInst']);
     if (so_digitos($r['valRot'] ?? '') !== '' && (int)so_digitos($r['valRot']) > 0) $o[] = 'ROTEADOR VENDIDO R$ ' . valor_brl($r['valRot']);
+    if ((int)so_digitos($r['valTv'] ?? '') > 0) $o[] = 'SMART TV BOX VENDIDA R$ ' . valor_brl($r['valTv']);
     if (trim((string)($r['obs'] ?? '')) !== '') $o[] = up($r['obs']);
     $o[] = 'VENDEDOR NO APP: ' . $vendedor['nome'];
     $o[] = 'VIA APP · ' . $idApp;
