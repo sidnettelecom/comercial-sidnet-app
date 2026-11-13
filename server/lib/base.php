@@ -218,8 +218,8 @@ function conexao_https(): bool
 }
 
 /**
- * Trava contra quem fica chutando senha: 5 erros em 15 minutos travam por 15 minutos,
- * por usuário e por IP (20 erros no mesmo IP).
+ * Trava contra quem fica chutando senha: 5 erros em 15 minutos travam por 15 minutos o usuário
+ * naquele IP (assim ninguém tranca o admin de fora), e 20 erros travam o IP inteiro.
  * Devolve quantos minutos faltam se estiver travado, ou 0.
  */
 function travado(string ...$chaves): int
