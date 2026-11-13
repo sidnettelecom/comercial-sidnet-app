@@ -887,8 +887,36 @@ function aplicarPlanos(L){
   else if(cfg.planosSrv){cfg.planosSrv=false;cfg.precos={}}
   save(K.cfg,cfg);renderCfg();
 }
+/* O histórico fica guardado no aparelho. Para a mesma venda aparecer no celular, em outro celular e na versão web,
+   o app também traz do servidor o que este vendedor já mandou e junta com o que tem aqui. */
+var ocultos=load("cadvendas.ocultos",[]); /* excluídos "deste celular" pelo vendedor: não voltam do servidor */
+function dataApp(s){var m=/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(s||"");return m?m[3]+"/"+m[2]+"/"+m[1]+" "+m[4]+":"+m[5]:""}
+function chaveData(r){var m=/^(\d{2})\/(\d{2})\/(\d{4})\s*(\d{2}:\d{2})?/.exec(r.criado||"");return m?m[3]+m[2]+m[1]+(m[4]||""):""}
+function buscarHistorico(){
+  if(DEMO||!online()||!cfg.chave||travadoAgora())return;
+  fetch(cfg.crmUrl+"/api/app-vendas.php?acao=historico",{headers:{"Authorization":"Bearer "+cfg.chave}})
+    .then(function(res){return res.json()}).then(function(j){
+      if(!j.ok){if(j.login)travar(j.erro,true);return}
+      if(!Array.isArray(j.vendas))return;
+      var porId={},novos=0,mud=false;recs.forEach(function(r){porId[r.id]=r});
+      j.vendas.forEach(function(v){
+        if(!v||!v.id_app||ocultos.indexOf(v.id_app)>=0)return;
+        var crm=v.st==="ok"?{st:"ok",crmId:v.crmId,em:"",tent:0}:v.st==="er"?{st:"er",msg:v.msg,tent:5,srv:true}:{st:"srv",tent:0};
+        var r=porId[v.id_app];
+        if(r){if(crm.st==="ok"&&(!r.crm||r.crm.st!=="ok")){r.crm=crm;mud=true}return}
+        r=Object.assign({},v.registro||{},{id:v.id_app,tipo:v.tipo||(v.registro&&v.registro.tipo)||"venda",midias:[],crm:crm,doServidor:true});
+        if(!r.criado)r.criado=dataApp(v.recebido_em);
+        if(!r.status)r.status="pendente";
+        recs.push(r);porId[r.id]=r;novos++;mud=true;
+      });
+      if(!mud)return;
+      if(novos)recs.sort(function(a,b){var x=chaveData(a),y=chaveData(b);return x<y?1:x>y?-1:0});
+      save(K.recs,recs);renderBadge();renderListas();if(!$("v-hist").hidden)renderLista();
+      if(novos)setTimeout(consultarBoletos,500);
+    }).catch(function(){});
+}
 function buscarPlanos(){
-  setTimeout(consultarBoletos,1500);
+  setTimeout(consultarBoletos,1500);setTimeout(buscarHistorico,300);
   if(DEMO||!online()||!cfg.chave||travadoAgora())return;
   fetch(cfg.crmUrl+"/api/app-vendas.php?acao=planos",{headers:{"Authorization":"Bearer "+cfg.chave}})
     .then(function(res){return res.json()}).then(function(j){if(j.ok){aplicarPlanos(j.planos);if(j.trocar&&$("troca").hidden)pedirTroca("")}else if(j.login)travar(j.erro,true)}).catch(function(){});
@@ -1239,7 +1267,7 @@ $("lista").addEventListener("click",function(e){
   else if(a==="copiar")copiar(mensagem(r),"Mensagem copiada");
   else if(a==="editar"&&r.crm&&r.crm.st==="ok"&&!ehOrc(r))editarValores(r);
   else if(a==="editar"){editingId=r.id;setForm(r);rascunho();aba("novo");toast("Editando cadastro de "+up(r.nome).split(" ")[0])}
-  else if(a==="excluir")confirmar("Excluir o cadastro de "+up(r.nome)+" deste celular?"+((r.midias||[]).length?" As fotos e vídeos dele também serão apagados.":""),"Excluir",function(){(r.midias||[]).forEach(function(m){apagarMidia(m.id)});recs=recs.filter(function(x){return x.id!==id});if(editingId===id)editingId=null;save(K.recs,recs);renderBadge();renderLista()});
+  else if(a==="excluir")confirmar("Excluir o cadastro de "+up(r.nome)+" deste celular?"+((r.midias||[]).length?" As fotos e vídeos dele também serão apagados.":""),"Excluir",function(){(r.midias||[]).forEach(function(m){apagarMidia(m.id)});recs=recs.filter(function(x){return x.id!==id});if(ocultos.indexOf(id)<0){ocultos.push(id);save("cadvendas.ocultos",ocultos.slice(-1000))}if(editingId===id)editingId=null;save(K.recs,recs);renderBadge();renderLista()});
 });
 $("btnCsv").addEventListener("click",function(){
   var FL=filtrados();if(!FL.length){toast("Não há cadastros nesse filtro");return}
