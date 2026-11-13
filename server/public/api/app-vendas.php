@@ -12,6 +12,8 @@
  *   POST /api/app-vendas.php?acao=senha               {atual, nova} troca a senha provisória pela do vendedor
  *   GET  /api/app-vendas.php?acao=boletos&ids=a,b     -> 1º boleto de cada venda: pagou S/N/'' e vencimento
  *   GET  /api/app-vendas.php?acao=planos              -> planos definidos no painel (vazio = o celular usa a lista dele)
+ *   GET  /api/app-vendas.php?acao=historico           -> cadastros deste vendedor que estão no servidor (para o histórico
+ *                                                        aparecer igual no celular, em outro celular e na versão web)
  *
  * Reenviar o mesmo id_app não duplica: devolve o que já foi recebido.
  */
@@ -198,6 +200,20 @@ try {
             }
         }
         responder(200, ['ok' => true, 'status' => $res]);
+    }
+
+    if ($acao === 'historico') {
+        // o histórico do app fica no aparelho; isto traz o que o vendedor já mandou de qualquer aparelho
+        $q = db()->prepare('SELECT id_app, tipo, dados, status, crm_id, erro, recebido_em FROM vendas
+                            WHERE vendedor_id = ? ORDER BY id DESC LIMIT 500');
+        $q->execute([$vend['id']]);
+        $lista = [];
+        foreach ($q as $v) {
+            $d = json_decode((string)$v['dados'], true) ?: [];
+            unset($d['midias'], $d['crm']);
+            $lista[] = ['id_app' => $v['id_app'], 'tipo' => $v['tipo'], 'recebido_em' => $v['recebido_em'], 'registro' => $d] + situacao($v);
+        }
+        responder(200, ['ok' => true, 'vendas' => $lista]);
     }
 
     if ($acao === 'enviar' && $_SERVER['REQUEST_METHOD'] === 'POST') {
