@@ -105,9 +105,10 @@ nav.tabs .badge{background:var(--signal);color:#2a1a00;border-radius:9px;padding
 .tipo input:focus-visible+label{outline:3px solid color-mix(in srgb,var(--brand) 45%,transparent)}
 form[data-tipo="upgrade"] .only-venda,form[data-tipo="venda"] .only-upg,form[data-tipo="segundo"] .only-upg,form[data-tipo="segundo"] .not-segundo,form[data-tipo="upgrade"] .not-upg{display:none}
 .tipo{grid-template-columns:repeat(4,1fr)}@media (max-width:460px){.tipo{grid-template-columns:repeat(2,1fr)}}
-form[data-tipo="orcamento"] .only-upg,form[data-tipo="orcamento"] .not-segundo,form[data-tipo="orcamento"] .not-orc,form:not([data-tipo="orcamento"]) .only-orc{display:none}
+form[data-tipo="venda"] .only-reg,form[data-tipo="orcamento"] .only-reg,form[data-tipo="orcamento"] .only-upg,form[data-tipo="orcamento"] .not-segundo,form[data-tipo="orcamento"] .not-orc,form:not([data-tipo="orcamento"]) .only-orc{display:none}
 .pill.wa{background:color-mix(in srgb,var(--wa) 18%,var(--surface));color:var(--wa)}.tipo label{padding:10px 4px;font-size:14px}.tipo label small{font-size:11px}
 .pill.q{background:color-mix(in srgb,var(--signal) 22%,var(--surface));color:var(--ink)}
+.busca-ixc{display:flex;gap:8px}.busca-ixc input{flex:1;min-width:0}.busca-ixc .btn{white-space:nowrap}
 .pill.go{background:color-mix(in srgb,var(--brand) 18%,var(--surface));color:var(--brand)}
 .pill.ok{background:var(--ok-bg);color:var(--ok)}
 .pill.er{background:var(--err-bg);color:var(--err)}
@@ -413,6 +414,20 @@ html.web .gate .olho{color:#475569}
       <input type="radio" name="tipo" id="tipoSeg" value="segundo"><label for="tipoSeg"><i class="ti ti-segundo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></i>2º plano<small>Mesmo cliente</small></label>
       <input type="radio" name="tipo" id="tipoOrc" value="orcamento"><label for="tipoOrc"><i class="ti ti-orcamento" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v13H7z"/><path d="M10 13h6M10 17h6"/></svg></i>Orçamento<small>Só WhatsApp</small></label>
     </div>
+    <fieldset class="only-reg">
+      <legend>Cliente no IXC</legend>
+      <p class="small" style="margin:0">Upgrade e 2º plano ficam registrados no sistema comercial para o gestor conferir e vão no WhatsApp. Nada é alterado no IXC.</p>
+      <div class="f" data-k="ixcBusca">
+        <label for="ixcBusca">CPF ou ID do cliente no IXC</label>
+        <div class="busca-ixc"><input id="ixcBusca" class="mono" inputmode="numeric" placeholder="CPF ou ID" maxlength="14" enterkeyhint="search"><button type="button" class="btn" id="btnBuscaIxc">Buscar no IXC</button></div>
+        <span class="hint" id="ixcHint">Preenche nome, contato, endereço e o plano atual. O resto você completa.</span>
+      </div>
+      <div class="f" id="ctBox" hidden>
+        <label for="ctSel">Plano atual do cliente</label>
+        <select id="ctSel"></select>
+      </div>
+      <input type="hidden" id="ixcCliente"><input type="hidden" id="ixcContrato"><input type="hidden" id="planoAtual">
+    </fieldset>
     <fieldset>
       <legend>Cliente</legend>
       <div class="f" data-k="nome">
@@ -985,12 +1000,44 @@ function compartilhar(r,txt,outro){
 }
 
 /* ---------- formulário ---------- */
-var F=["nome","apelido","cpf","nasc","cidade","referencia","local","tel1","tel2","email","plano","provedor","obs","valAtual","valNovo","velNova","valInst","valRot","valTv","exRoteadorObs","exCaboObs","exTrocaObs","servico","valOrc","validade","cep","uf","rua","numero","bairro","complemento","bloco","apartamento","rg","rgOrgao","sexo","estadoCivil","profissao","moradia","zona","canal"];
+var F=["ixcCliente","ixcContrato","planoAtual","nome","apelido","cpf","nasc","cidade","referencia","local","tel1","tel2","email","plano","provedor","obs","valAtual","valNovo","velNova","valInst","valRot","valTv","exRoteadorObs","exCaboObs","exTrocaObs","servico","valOrc","validade","cep","uf","rua","numero","bairro","complemento","bloco","apartamento","rg","rgOrgao","sexo","estadoCivil","profissao","moradia","zona","canal"];
 var CK=["exRoteador","exCabo","exTroca"];
 function mostraObsServ(){CK.forEach(function(k){var t=$(k+"Obs");var was=t.hidden;t.hidden=!$(k).checked;if(was&&!t.hidden&&document.activeElement===$(k))t.focus()})}
 CK.forEach(function(k){$(k).addEventListener("change",mostraObsServ)});
 function tipoAtual(){return $("tipoUpg").checked?"upgrade":$("tipoSeg").checked?"segundo":$("tipoOrc").checked?"orcamento":"venda"}
-function setTipo(t){t=t==="upgrade"||t==="segundo"||t==="orcamento"?t:"venda";$("tipoUpg").checked=t==="upgrade";$("tipoSeg").checked=t==="segundo";$("tipoOrc").checked=t==="orcamento";$("tipoVenda").checked=t==="venda";if(t==="orcamento"&&!$("validade").value)$("validade").value="15";$("form").dataset.tipo=t;$("cpfLbl").classList.toggle("req",t!=="orcamento");$("endLegend").textContent=t==="segundo"?"Endereço do 2º ponto":t==="orcamento"?"Local do serviço":"Endereço de instalação";$("btnEnviarTxt").textContent=t==="orcamento"?"Salvar e enviar no WhatsApp":"Salvar e enviar ao IXC"}
+function setTipo(t){t=t==="upgrade"||t==="segundo"||t==="orcamento"?t:"venda";$("tipoUpg").checked=t==="upgrade";$("tipoSeg").checked=t==="segundo";$("tipoOrc").checked=t==="orcamento";$("tipoVenda").checked=t==="venda";if(t==="orcamento"&&!$("validade").value)$("validade").value="15";$("form").dataset.tipo=t;$("cpfLbl").classList.toggle("req",t!=="orcamento");$("endLegend").textContent=t==="segundo"?"Endereço do 2º ponto":t==="orcamento"?"Local do serviço":"Endereço de instalação";$("btnEnviarTxt").textContent=t==="venda"?"Salvar e enviar ao IXC":"Salvar e enviar no WhatsApp"}
+function ehReg(r){return r&&(r.tipo==="upgrade"||r.tipo==="segundo")}
+/* upgrade e 2º plano: busca o cliente no IXC (só leitura) e preenche o que der */
+var ixcCts=[];
+function ixcHint(t){$("ixcHint").textContent=t}
+function buscarIxc(){
+  var q=dig($("ixcBusca").value);if(!q||q.length>11){ixcHint("Digite o CPF (11 números) ou o ID do cliente.");return}
+  if(!online()){ixcHint("Sem internet: preencha à mão.");return}
+  ixcHint("Buscando no IXC…");$("btnBuscaIxc").disabled=true;
+  fetch(cfg.crmUrl+"/api/app-vendas.php?acao=cliente&q="+q,{headers:{"Authorization":"Bearer "+cfg.chave}})
+    .then(function(res){return res.json()}).then(function(j){if(!j.ok){if(j.login)travar(j.erro,true);ixcHint(j.erro||"Não achei o cliente.");return}preencherIxc(j.cliente)})
+    .catch(function(){ixcHint("Não deu para consultar o IXC. Preencha à mão.")}).then(function(){$("btnBuscaIxc").disabled=false});
+}
+function preencherIxc(c){
+  $("ixcCliente").value=c.id;
+  var m={nome:c.nome,cpf:c.cpf?fmtCPF(c.cpf):"",tel1:c.tel1?fmtTel(c.tel1):"",tel2:c.tel2?fmtTel(c.tel2):"",email:c.email,cep:c.cep,rua:c.rua,numero:c.numero,bairro:c.bairro,complemento:c.complemento,cidade:c.cidade,uf:c.uf};
+  Object.keys(m).forEach(function(k){if(m[k])$(k).value=m[k]});
+  if(dig($("tel2").value)&&dig($("tel2").value)===dig($("tel1").value))$("tel2").value="";
+  ixcCts=c.contratos||[];var sel=$("ctSel");sel.innerHTML="";
+  ixcCts.forEach(function(ct,i){var o=document.createElement("option");o.value=i;o.textContent=(ct.plano||"SEM PLANO")+(ct.valor?" · R$ "+ct.valor:"")+" · "+ct.status+" (contrato "+ct.id+")";sel.appendChild(o)});
+  $("ctBox").hidden=!ixcCts.length;aplicarContrato();
+  document.querySelectorAll("#form .f").forEach(function(f){f.classList.remove("bad")});
+  ixcHint("Cliente #"+c.id+" achado"+(ixcCts.length?"":" (sem contrato ativo)")+". Confira os dados e complete o resto.");rascunho();
+}
+function aplicarContrato(){
+  var ct=ixcCts[+$("ctSel").value||0];
+  $("ixcContrato").value=ct?ct.id:"";$("planoAtual").value=ct?((ct.plano||"")+(ct.valor?" · R$ "+ct.valor:"")):"";
+  if(ct&&ct.valor&&tipoAtual()==="upgrade")$("valAtual").value=fmtMoney(ct.valor);
+  rascunho();
+}
+$("btnBuscaIxc").addEventListener("click",buscarIxc);
+$("ixcBusca").addEventListener("keydown",function(e){if(e.key==="Enter"){e.preventDefault();buscarIxc()}});
+$("ctSel").addEventListener("change",aplicarContrato);
 function montarEnd(o){var p=[up(o.rua),up(o.numero),up(o.complemento),up(o.bairro)].filter(Boolean);return p.join(", ")}
 function nomeTipo(t){return t==="upgrade"?"Upgrade":t==="segundo"?"2º plano":t==="orcamento"?"Orçamento":"Venda"}
 function ehOrc(r){return r&&r.tipo==="orcamento"}
@@ -1036,10 +1083,10 @@ function validar(o){
     if(!telOk(o.tel1))erros.tel1=1;
     if(!telOk(o.tel2))erros.tel2="Use DDD + número (10 ou 11 dígitos).";else if(dig(o.tel2)===dig(o.tel1))erros.tel2="O telefone 2 precisa ser diferente do principal.";
     if(!emailOk(o.email))erros.email=1;
-    if(!cpfOk(o.cpf))erros.cpf="Informe o CPF do titular: é por ele que o cliente é achado no IXC.";
+    if(dig(o.cpf)?!cpfOk(o.cpf):!o.ixcCliente)erros.cpf="Informe o CPF do titular ou busque o cliente no IXC.";
     return erros;
   }
-  if(!cpfOk(o.cpf))erros.cpf=1;
+  if(dig(o.cpf)||!(o.tipo==="segundo"&&o.ixcCliente)){if(!cpfOk(o.cpf))erros.cpf=1}
   if(o.tipo==="venda"&&!o.canal)erros.canal=1;
   if(o.tipo!=="segundo"){
   var dt=parseData(o.nasc);
@@ -1099,6 +1146,9 @@ function mensagem(r){
     L.push("DATA DO CADASTRO: "+r.criado);L.push("");
     L.push(textoUpgrade(r));L.push("");
     L.push("NOME : "+up(r.nome));L.push("");
+    if(r.ixcCliente){L.push("ID CLIENTE IXC : "+r.ixcCliente);L.push("")}
+    if(r.planoAtual){L.push("PLANO ATUAL : "+up(r.planoAtual));L.push("")}
+    if(r.cpf){L.push("CPF : "+fmtCPF(r.cpf));L.push("")}
     L.push("CELL : "+fmtTel(r.tel1));L.push("CELL : "+fmtTel(r.tel2));L.push("");
     L.push("E-MAIL "+String(r.email).trim().toLowerCase());L.push("");
     L.push("VALOR DA INSTALAÇÃO : R$ "+brl(moneyVal(r.valInst)));
@@ -1115,7 +1165,9 @@ function mensagem(r){
   L.push("");
   L.push("* NOME COMPLETO:");L.push(up(r.nome));L.push("");
   if(!seg){L.push("- POSSUI ALGUM APELIDO? SE SIM QUAL?: "+(up(r.apelido)||"NÃO"));L.push("")}
-  L.push("* CPF:");L.push(fmtCPF(r.cpf));L.push("");
+  if(r.cpf){L.push("* CPF:");L.push(fmtCPF(r.cpf));L.push("")}
+  if(seg&&r.ixcCliente){L.push("* ID CLIENTE IXC: "+r.ixcCliente);L.push("")}
+  if(seg&&r.planoAtual){L.push("- PLANO QUE JÁ TEM: "+up(r.planoAtual));L.push("")}
   if(!seg){L.push("* DATA DE NASCIMENTO:");L.push(r.nasc);L.push("")}
   L.push("* ENDEREÇO COMPLETO:");L.push(up(r.endereco)+(r.cep?" - CEP "+r.cep:"")+(up(r.bloco)?" - BLOCO "+up(r.bloco):"")+(up(r.apartamento)?" APTO "+up(r.apartamento):""));L.push("");
   if(!seg){var dp=[];if(up(r.rg))dp.push("RG "+up(r.rg)+(up(r.rgOrgao)?" "+up(r.rgOrgao):""));if(r.sexo)dp.push("SEXO "+r.sexo);if(r.estadoCivil)dp.push(up(r.estadoCivil));if(up(r.profissao))dp.push(up(r.profissao));if(r.moradia)dp.push("MORADIA "+(r.moradia==="P"?"PRÓPRIA":"ALUGADA"));if(dp.length){L.push("- DADOS PESSOAIS: "+dp.join(" | "));L.push("")}}
@@ -1139,7 +1191,7 @@ function waLink(txt){return "https://wa.me/"+(cfg.wa?("55"+cfg.wa.replace(/^55(?
 
 var atual=null;
 function abrirEnvio(r){
-  atual=r;var txt=mensagem(r);$("preview").textContent=txt;var orc=ehOrc(r);$("crmBox").hidden=orc;$("mapWrap").hidden=true;$("sheetTitle").textContent=orc?"Orçamento salvo":"Cadastro salvo";$("waSum").textContent=orc?"Enviar o orçamento no WhatsApp":"Também mandar no WhatsApp (opcional)";$("waBox").open=orc;if(!orc){renderCrmBox()}$("btnWa").href=waLink(txt);
+  atual=r;var txt=mensagem(r);$("preview").textContent=txt;var orc=ehOrc(r);$("crmBox").hidden=orc;$("mapWrap").hidden=true;$("sheetTitle").textContent=orc?"Orçamento salvo":"Cadastro salvo";var reg=ehReg(r);$("waSum").textContent=orc?"Enviar o orçamento no WhatsApp":reg?"Enviar no WhatsApp":"Também mandar no WhatsApp (opcional)";$("waBox").open=orc||reg;if(!orc){renderCrmBox()}$("btnWa").href=waLink(txt);
   var n=(r.midias||[]).length;$("btnShare").hidden=!n;$("btnOutro").hidden=!(n&&APP);
   prontos=null;if(n&&!APP)prepararArquivos(r).then(function(f){prontos=f});
   $("btnShare").textContent=n?"Enviar com "+n+(n===1?" anexo":" anexos")+" (foto/vídeo)":"";
@@ -1405,6 +1457,7 @@ function renderMapa(r){
   $("mapa").innerHTML='<table>'+p.campos.map(function(c){return'<tr><th>'+esc(c[1])+'<code>'+esc(c[0])+'</code></th><td>'+esc(c[2]||"—")+'</td></tr>'}).join("")+'</table>';
 }
 function pillCrm(r){if(ehOrc(r))return r.status==="enviado"?'<span class="pill wa">Enviado no WhatsApp</span>':'<span class="pill q">Não enviado</span>';var c=r.crm||{st:"fila"};
+  if(c.st==="ok"&&/^Registrado no comercial/.test(c.crmId||""))return'<span class="pill ok">Registrado</span>';
   if(c.st==="ok")return/Falta no IXC/i.test(c.crmId||"")?'<span class="pill ok">Lead no IXC</span>':'<span class="pill ok">No IXC '+esc(String(c.crmId||"").slice(0,24))+'</span>';
   if(c.st==="go")return'<span class="pill go">Enviando…</span>';
   if(c.st==="srv")return'<span class="pill go">No servidor</span>';
@@ -1413,10 +1466,11 @@ function pillCrm(r){if(ehOrc(r))return r.status==="enviado"?'<span class="pill w
 function renderCrmBox(){
   if(!atual||$("sheet").hidden&&!atual)return;var c=atual.crm||{st:"fila"},b=$("crmBox");
   b.className="crmbox "+(c.st==="ok"?"ok":c.st==="er"?"er":"q");
-  if(c.st==="ok"){var m=/^(.*?)\.\s*Falta no IXC:\s*(.*)$/i.exec(c.crmId||"");
+  if(c.st==="ok"&&/^Registrado no comercial/.test(c.crmId||""))b.innerHTML='<b>Registrado no sistema comercial</b><span class="small">Fica para o gestor conferir no fechamento do mês. Nada foi alterado no IXC. Enviado em '+esc(c.em)+'.</span>';
+  else if(c.st==="ok"){var m=/^(.*?)\.\s*Falta no IXC:\s*(.*)$/i.exec(c.crmId||"");
     b.innerHTML=m?'<b>Venda registrada no IXC</b><span class="small">'+esc(m[1])+'. Enviado em '+esc(c.em)+'.</span><span class="small"><b>Próximo passo no IXC:</b> '+esc(m[2])+'.</span>'
       :'<b>Cadastrado no IXC · '+esc(c.crmId)+'</b><span class="small">Enviado em '+esc(c.em)+'. A partir daqui o IXC segue o fluxo dele.</span>'}
-  else if(c.st==="srv")b.innerHTML='<b>Recebido pelo servidor</b><span class="small">Já saiu do celular. O servidor está colocando no IXC e o número aparece aqui.</span>';
+  else if(c.st==="srv")b.innerHTML=ehReg(atual)?'<b>Recebido pelo servidor</b><span class="small">Já saiu do celular. Fica registrado no sistema comercial em instantes.</span>':'<b>Recebido pelo servidor</b><span class="small">Já saiu do celular. O servidor está colocando no IXC e o número aparece aqui.</span>';
   else if(c.st==="go")b.innerHTML='<b>Enviando para o IXC…</b><span class="small">Pode fechar esta tela.</span>';
   else if(c.st==="er")b.innerHTML='<b>O IXC não aceitou</b><span class="small">'+esc(c.msg||"")+' Corrija e salve de novo.</span>';
   else b.innerHTML='<b>Salvo no celular, na fila do IXC</b><span class="small">'+(online()?"Enviando em instantes.":"Sem internet agora. Vai sozinho assim que o celular conectar.")+'</span>'+(demoOff?'<button type="button" class="btn sm primary" id="btnVolta" style="justify-self:start;margin-top:6px">Simular: a internet voltou</button>':'');var bv=$("btnVolta");if(bv)bv.addEventListener("click",function(){$("btnNet").click()});

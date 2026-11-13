@@ -158,6 +158,26 @@ try {
         responder(200, ['ok' => true, 'boletos' => $res]);
     }
 
+    if ($acao === 'cliente') {
+        // upgrade e 2º ponto: busca o cliente no IXC pelo CPF ou ID, só para leitura, e preenche o cadastro
+        if (destino() !== 'ixc') responder(400, ['ok' => false, 'erro' => 'A busca de cliente só funciona com o IXC.']);
+        $q = so_digitos((string)($_GET['q'] ?? ''));
+        if ($q === '' || strlen($q) > 11) responder(422, ['ok' => false, 'erro' => 'Digite o CPF (11 números) ou o ID do cliente no IXC.']);
+        $quem = 'vendedor #' . $vend['id'];
+        $c = db()->prepare("SELECT COUNT(*) FROM registro WHERE quem = ? AND acao = 'consulta cliente IXC' AND em > datetime('now','localtime','-1 hour')");
+        $c->execute([$quem]);
+        if ((int)$c->fetchColumn() >= 60) responder(429, ['ok' => false, 'erro' => 'Muitas buscas em pouco tempo. Espere alguns minutos.']);
+        registrar($quem, 'consulta cliente IXC', strlen($q) === 11 ? 'CPF ***' . substr($q, -4) : 'ID ' . $q);
+        try {
+            $cli = ixc_consulta_cliente($q);
+        } catch (Throwable $e) {
+            error_log('app-vendas: consulta cliente IXC: ' . $e->getMessage());
+            responder(502, ['ok' => false, 'erro' => 'Não deu para consultar o IXC agora. Tente de novo ou preencha à mão.']);
+        }
+        if (!$cli) responder(404, ['ok' => false, 'erro' => strlen($q) === 11 ? 'Nenhum cliente com esse CPF no IXC.' : 'Nenhum cliente com esse ID no IXC.']);
+        responder(200, ['ok' => true, 'cliente' => $cli]);
+    }
+
     if ($acao === 'valores' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         // venda que já está no IXC: o vendedor só pode corrigir instalação, roteador (vão para as comissões) e Smart TV Box
         $in = json_decode(file_get_contents('php://input') ?: '', true);

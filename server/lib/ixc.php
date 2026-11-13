@@ -292,11 +292,84 @@ function repassar_ixc(array $venda, array $vendedor): string
 {
     $r = registro_limpo(json_decode($venda['dados'], true) ?: []);
     $r['tipo'] = $venda['tipo'];
+    // Decisão do ALEX (13/11/2026): upgrade e 2º ponto só ficam registrados no sistema comercial
+    // (para o gestor conferir no fechamento e pagar a comissão). Nada é criado no IXC.
+    // ixc.enviar_upgrade_segundo = true volta ao envio antigo (atendimento / pré-contrato).
+    if (in_array($venda['tipo'], ['upgrade', 'segundo'], true) && empty(ixc_config()['enviar_upgrade_segundo'])) {
+        return REGISTRO_SO_COMERCIAL . (($r['ixcCliente'] ?? '') !== '' ? ' · cliente IXC #' . so_digitos((string)$r['ixcCliente']) : '');
+    }
     return match ($venda['tipo']) {
         'upgrade' => ixc_upgrade($r, $venda, $vendedor),
         'segundo' => ixc_segundo($r, $venda, $vendedor),
         default => ixc_venda($r, $venda, $vendedor),
     };
+}
+
+const REGISTRO_SO_COMERCIAL = 'Registrado no comercial';
+
+function registro_so_comercial(?string $crmId): bool
+{
+    return str_starts_with((string)$crmId, REGISTRO_SO_COMERCIAL);
+}
+
+/**
+ * Consulta só de leitura para o app (upgrade e 2º ponto): cliente pelo CPF ou pelo ID do IXC,
+ * com os contratos e o plano de cada um. Não grava nada no IXC.
+ */
+function ixc_consulta_cliente(string $q): ?array
+{
+    $api = ixc();
+    $d = so_digitos($q);
+    if ($d === '') return null;
+    $cli = strlen($d) === 11 ? ixc_cliente_por_cpf($d) : null;
+    if (!$cli && strlen($d) <= 10) $cli = $api->um('cliente', 'id', $d);
+    if (!$cli) return null;
+    $cidade = '';
+    $uf = up((string)($cli['uf'] ?? ''));
+    if (($cli['cidade'] ?? '') !== '' && ctype_digit((string)$cli['cidade'])) {
+        $cidReg = $api->um('cidade', 'id', (string)$cli['cidade']);
+        $cidade = (string)($cidReg['nome'] ?? '');
+        if (!preg_match('/^[A-Z]{2}$/', $uf)) $uf = up((string)($cidReg['uf'] ?? ''));
+    }
+    if (!preg_match('/^[A-Z]{2}$/', $uf) && ctype_digit($uf)) {
+        try { $uf = up((string)($api->um('uf', 'id', $uf)['sigla'] ?? '')); } catch (Throwable) { $uf = ''; }
+    }
+    if (!preg_match('/^[A-Z]{2}$/', $uf)) $uf = '';
+    $planos = [];
+    $contratos = [];
+    foreach (ixc_contratos((string)$cli['id']) as $ct) {
+        $st = (string)($ct['status'] ?? '');
+        if (!in_array($st, ['A', 'P', 'N'], true)) continue; // ativo, pré-contrato, negativado
+        $idPlano = (string)($ct['id_vd_contrato'] ?? '');
+        if ($idPlano !== '' && !array_key_exists($idPlano, $planos)) $planos[$idPlano] = $api->um('vd_contratos', 'id', $idPlano);
+        $pl = $planos[$idPlano] ?? null;
+        $valor = (float)($pl['valor_contrato'] ?? 0);
+        $contratos[] = [
+            'id' => (string)$ct['id'],
+            'plano' => up((string)(($ct['contrato'] ?? '') !== '' ? $ct['contrato'] : ($pl['nome'] ?? ''))),
+            'valor' => $valor > 0 ? number_format($valor, 2, ',', '.') : '',
+            'status' => ['A' => 'Ativo', 'P' => 'Pré-contrato', 'N' => 'Negativado'][$st],
+        ];
+        if (count($contratos) >= 10) break;
+    }
+    $cep = so_digitos((string)($cli['cep'] ?? ''));
+    $cpf = so_digitos((string)($cli['cnpj_cpf'] ?? ''));
+    return [
+        'id' => (string)$cli['id'],
+        'nome' => up((string)($cli['razao'] ?? '')),
+        'cpf' => strlen($cpf) === 11 ? cpf_mascara($cpf) : '',
+        'tel1' => (string)(($cli['telefone_celular'] ?? '') ?: ($cli['whatsapp'] ?? '')),
+        'tel2' => (string)(($cli['fone'] ?? '') ?: ($cli['telefone_comercial'] ?? '')),
+        'email' => strtolower(trim((string)($cli['email'] ?? ''))),
+        'cep' => strlen($cep) === 8 ? substr($cep, 0, 5) . '-' . substr($cep, 5) : '',
+        'rua' => up((string)($cli['endereco'] ?? '')),
+        'numero' => up((string)($cli['numero'] ?? '')),
+        'bairro' => up((string)($cli['bairro'] ?? '')),
+        'complemento' => up((string)($cli['complemento'] ?? '')),
+        'cidade' => up($cidade),
+        'uf' => $uf,
+        'contratos' => $contratos,
+    ];
 }
 
 /** Ids do IXC da Sidnet (vídeo do cadastro, 11/11/2026). O config.php pode trocar: ixc.canais / ixc.concorrentes. */

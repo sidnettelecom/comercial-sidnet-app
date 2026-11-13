@@ -13,8 +13,9 @@ return [
     'ixc' => [
         'url' => 'https://isp.sidnet.com.br',
         'filial_id' => 1,              // filial dos leads novos
-        'assunto_upgrade' => 0,        // assunto do atendimento de upgrade (o processo dele abre a O.S.)
-        'assunto_segundo' => 0,        // assunto do atendimento de 2º ponto
+        'enviar_upgrade_segundo' => false, // false: upgrade e 2º ponto só ficam registrados no comercial (nada no IXC); true: abre atendimento / pré-contrato como antes
+        'assunto_upgrade' => 0,        // (só com enviar_upgrade_segundo) assunto do atendimento de upgrade (o processo dele abre a O.S.)
+        'assunto_segundo' => 0,        // (só com enviar_upgrade_segundo) assunto do atendimento de 2º ponto
         'setor_id' => 0,               // setor (departamento) dos atendimentos
         'tipo_contrato_id' => 0,       // tipo do contrato do 2º ponto; 0 = o mesmo do contrato atual do cliente
         'login_padrao' => '{cpf}-{contrato}', // nome do login PPPoE do 2º ponto ({cpf}, {contrato}, {cliente})
