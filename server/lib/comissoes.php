@@ -72,7 +72,7 @@ function comissoes_do_mes(string $mes, array $filtro = []): array
         $dados = json_decode((string)$r['dados'], true) ?: [];
         $passos = json_decode((string)$r['ixc_passos'], true) ?: [];
         if ($r['tem'] === null) {
-            $r['ixc_cliente'] = (string)($passos['prospect'] ?? '');
+            $r['ixc_cliente'] = (string)($passos['prospect'] ?? '') ?: so_digitos((string)($dados['ixcCliente'] ?? ''));
             $r['vencimento'] = '';
             $r['instalacao'] = dinheiro((string)($dados['valInst'] ?? ''));
             $r['roteador'] = dinheiro((string)($dados['valRot'] ?? ''));
@@ -207,6 +207,7 @@ function comissoes_atualizar_ixc(int $limite = 40, int $id = 0): int
             if ($vp !== '') { $upPlano->execute([$vp, (int)$v['id']]); $mudou++; }
         }
         $cli = (string)($v['ixc_cliente'] ?? '');
+        if ($cli === '') $cli = so_digitos((string)($dados['ixcCliente'] ?? ''));
         if ($cli === '') $cli = (string)($passos['prospect'] ?? '');
         if ($cli === '') $cli = (string)(ixc_cliente_por_cpf((string)($dados['cpf'] ?? ''))['id'] ?? '');
         if ($cli === '') continue;

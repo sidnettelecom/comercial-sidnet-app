@@ -139,7 +139,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->prepare('DELETE FROM vendas WHERE id = ?')->execute([$id]);
                 $pdo->commit();
                 registrar($quem, 'excluiu venda', "#{$v['id']} {$v['nome']} (vendedor {$v['vendedor']}, situação {$v['status']}" . ($v['crm_id'] ? ", {$v['crm_id']} no $DEST" : '') . ')');
-                $msg = "Venda #{$v['id']} de {$v['nome']} excluída do painel." . ($v['status'] === 'crm' ? " Ela já tinha entrado no $DEST ({$v['crm_id']}): apague lá também, se for o caso." : '');
+                $msg = "Venda #{$v['id']} de {$v['nome']} excluída do painel." . ($v['status'] === 'crm' && !registro_so_comercial($v['crm_id']) ? " Ela já tinha entrado no $DEST ({$v['crm_id']}): apague lá também, se for o caso." : '');
             }
         } elseif ($a === 'enviar_agora') {
             $r = processar_fila_com_trava(true);
@@ -560,13 +560,13 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     $q->execute([(int)($_GET['id'] ?? 0)]);
     $v = $q->fetch(); ?>
   <?php if (!$v): ?><div class="msg">Essa venda não existe mais.</div><p><a href="?p=vendas">Voltar às vendas</a></p>
-  <?php else: [$rot] = $SITUACAO[$v['status']] ?? [$v['status']]; ?>
+  <?php else: [$rot] = $v['status'] === 'crm' && registro_so_comercial($v['crm_id']) ? ['Registrado'] : ($SITUACAO[$v['status']] ?? [$v['status']]); ?>
   <form method="post" action="?p=vendas" class="card" style="max-width:560px;display:grid;gap:10px">
     <?= csrf_campo() ?><input type="hidden" name="acao" value="excluir"><input type="hidden" name="id" value="<?= (int)$v['id'] ?>">
     <h2>Excluir a venda #<?= (int)$v['id'] ?>?</h2>
     <p style="margin:0"><b><?= h($v['nome']) ?></b> · <?= h($NOMES[$v['tipo']] ?? $v['tipo']) ?> · vendedor <?= h($v['vendedor']) ?> · recebida em <?= h($v['recebido_em']) ?> · <?= h($rot) ?> <?= h($v['crm_id']) ?></p>
     <p class="small" style="margin:0">Ela some do painel e o celular do vendedor passa a mostrar "Excluída pelo gestor". Não dá para desfazer.
-      <?php if ($v['status'] === 'crm'): ?><br><b>Ela já entrou no <?= $DEST ?> (<?= h($v['crm_id']) ?>).</b> Excluir aqui não apaga lá: apague no <?= $DEST ?> também, se for o caso.<?php endif ?></p>
+      <?php if ($v['status'] === 'crm' && !registro_so_comercial($v['crm_id'])): ?><br><b>Ela já entrou no <?= $DEST ?> (<?= h($v['crm_id']) ?>).</b> Excluir aqui não apaga lá: apague no <?= $DEST ?> também, se for o caso.<?php endif ?></p>
     <div class="row"><button class="del pri">Excluir venda</button><a href="?p=vendas">Cancelar</a></div>
   </form>
   <?php endif ?>
@@ -575,7 +575,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     $mesAtualM = date('Y-m');
     $mesM = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) ? (string)$_GET['mes'] : $mesAtualM;
     $precosM = comissoes_precos_planos();
-    $qM = db()->prepare("SELECT v.id, v.tipo, v.nome, v.dados, v.status, v.recebido_em, d.nome AS vendedor, c.valor_plano
+    $qM = db()->prepare("SELECT v.id, v.tipo, v.nome, v.dados, v.status, v.crm_id, v.recebido_em, d.nome AS vendedor, c.valor_plano
         FROM vendas v JOIN vendedores d ON d.id = v.vendedor_id LEFT JOIN comissoes c ON c.venda_id = v.id
         WHERE v.status <> 'descartada' AND v.tipo IN ('venda','upgrade','segundo') AND strftime('%Y-%m', v.recebido_em, 'localtime') = ?
         ORDER BY d.nome, v.recebido_em");
@@ -615,26 +615,26 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
   <div class="kpis">
     <div><b><?= $totM['n'] ?></b><span>cadastros em <?= h(mes_nome($mesM)) ?></span></div>
     <div><b><?= $totM['venda'] ?> · <?= $totM['upgrade'] ?> · <?= $totM['segundo'] ?></b><span>vendas novas · upgrades · 2º ponto</span></div>
-    <div class="ok"><b><?= $totM['ixc'] ?></b><span>já no <?= $DEST ?><?= $totM['pend'] ? ' · ' . $totM['pend'] . ' pendentes' : '' ?></span></div>
+    <div class="ok"><b><?= $totM['ixc'] ?></b><span>concluídos (no <?= $DEST ?> ou registrados)<?= $totM['pend'] ? ' · ' . $totM['pend'] . ' pendentes' : '' ?></span></div>
     <div><b><?= $R($totM['plano']) ?></b><span>em mensalidades vendidas</span></div>
   </div>
   <div class="card mes">
-    <div class="mes-l mes-h"><span>Vendedor</span><span>Vendas novas</span><span>Upgrades</span><span>2º ponto</span><span>Total</span><span>No <?= $DEST ?></span><span>Mensalidades</span><span>Instalação</span><span>Roteador</span></div>
+    <div class="mes-l mes-h"><span>Vendedor</span><span>Vendas novas</span><span>Upgrades</span><span>2º ponto</span><span>Total</span><span>Concluídos</span><span>Mensalidades</span><span>Instalação</span><span>Roteador</span></div>
     <?php foreach ($porV as $nomeV => $g): ?>
     <details class="mes-v"><summary class="mes-l">
         <span class="quem"><b><?= h($nomeV) ?></b><span class="barra-m"><i style="width:<?= round($g['n'] / $maxM * 100) ?>%"></i></span></span>
         <span data-r="Vendas novas"><?= $g['venda'] ?></span><span data-r="Upgrades"><?= $g['upgrade'] ?></span><span data-r="2º ponto"><?= $g['segundo'] ?></span><span data-r="Total"><b><?= $g['n'] ?></b></span>
-        <span data-r="No <?= $DEST ?>"><?= $g['ixc'] ?><?= $g['pend'] ? ' <small>(' . $g['pend'] . ' pend.)</small>' : '' ?></span>
+        <span data-r="Concluídos"><?= $g['ixc'] ?><?= $g['pend'] ? ' <small>(' . $g['pend'] . ' pend.)</small>' : '' ?></span>
         <span data-r="Mensalidades"><?= $R($g['plano']) ?></span><span data-r="Instalação"><?= $R($g['inst']) ?></span><span data-r="Roteador"><?= $R($g['rot']) ?></span></summary>
       <div class="tw"><table class="det"><tr><th>Dia</th><th>Cliente</th><th>Cidade</th><th>Tipo</th><th>Plano</th><th>Mensalidade</th><th>Situação</th></tr>
-      <?php foreach ($g['linhas'] as $l): $sit = $SITUACAO[$l['status']] ?? [$l['status'], 'mu']; ?>
+      <?php foreach ($g['linhas'] as $l): $sit = $l['status'] === 'crm' && registro_so_comercial($l['crm_id']) ? ['Registrado', 'ok'] : ($SITUACAO[$l['status']] ?? [$l['status'], 'mu']); ?>
         <tr><td><?= h(date('d/m', strtotime($l['recebido_em']))) ?></td><td><?= h($l['nome']) ?></td><td class="small"><?= h($l['cidade']) ?></td>
           <td><span class="tp tp-<?= h($l['tipo']) ?>"><?= h(COMISSAO_TIPOS[$l['tipo']] ?? $l['tipo']) ?></span></td>
           <td class="small"><?= h($l['plano']) ?></td><td class="n"><?= $l['vp'] ? $R($l['vp']) : '—' ?></td>
           <td><span class="pill <?= $sit[1] ?>"><?= h($sit[0]) ?></span></td></tr>
       <?php endforeach ?></table></div></details>
     <?php endforeach ?>
-    <?php if ($porV): ?><div class="mes-l mes-t"><span>Total</span><span data-r="Vendas novas"><?= $totM['venda'] ?></span><span data-r="Upgrades"><?= $totM['upgrade'] ?></span><span data-r="2º ponto"><?= $totM['segundo'] ?></span><span data-r="Total"><?= $totM['n'] ?></span><span data-r="No <?= $DEST ?>"><?= $totM['ixc'] ?></span><span data-r="Mensalidades"><?= $R($totM['plano']) ?></span><span data-r="Instalação"><?= $R($totM['inst']) ?></span><span data-r="Roteador"><?= $R($totM['rot']) ?></span></div>
+    <?php if ($porV): ?><div class="mes-l mes-t"><span>Total</span><span data-r="Vendas novas"><?= $totM['venda'] ?></span><span data-r="Upgrades"><?= $totM['upgrade'] ?></span><span data-r="2º ponto"><?= $totM['segundo'] ?></span><span data-r="Total"><?= $totM['n'] ?></span><span data-r="Concluídos"><?= $totM['ixc'] ?></span><span data-r="Mensalidades"><?= $R($totM['plano']) ?></span><span data-r="Instalação"><?= $R($totM['inst']) ?></span><span data-r="Roteador"><?= $R($totM['rot']) ?></span></div>
     <?php else: ?><p class="small">Nenhum cadastro em <?= h(mes_nome($mesM)) ?>.</p><?php endif ?>
   </div>
 <?php elseif ($p === 'vendedores'): ?>
@@ -869,7 +869,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
   <div class="card tw"><table>
     <tr><th>#</th><th>Recebido</th><th>Tipo</th><th>Cliente</th><th>Vendedor</th><th><?= $DEST ?></th><th></th></tr>
     <?php foreach (db()->query("SELECT v.*, d.nome AS vendedor FROM vendas v JOIN vendedores d ON d.id=v.vendedor_id $where ORDER BY v.id DESC LIMIT 300") as $v):
-        [$rot, $cls] = $SITUACAO[$v['status']] ?? [$v['status'], 'mu']; $r = json_decode($v['dados'], true) ?: []; ?>
+        [$rot, $cls] = $v['status'] === 'crm' && registro_so_comercial($v['crm_id']) ? ['Registrado', 'ok'] : ($SITUACAO[$v['status']] ?? [$v['status'], 'mu']); $r = json_decode($v['dados'], true) ?: []; ?>
     <tr><td class="n"><?= (int)$v['id'] ?></td><td class="n"><?= h($v['recebido_em']) ?></td><td><span class="tp tp-<?= h($v['tipo']) ?>"><?= h($NOMES[$v['tipo']] ?? $v['tipo']) ?></span></td>
       <td><?= h($v['nome']) ?><br><span class="small"><?= h(($r['cpf'] ?? '') . ' · ' . ($r['tel1'] ?? '') . ' · ' . ($r['cidade'] ?? '')) ?></span>
         <details><summary>ver cadastro</summary><pre><?= h(json_encode($r, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) ?></pre></details></td>
