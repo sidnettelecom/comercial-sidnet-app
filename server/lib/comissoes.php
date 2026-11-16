@@ -56,7 +56,7 @@ function comissoes_meses(): array
 function comissoes_do_mes(string $mes, array $filtro = []): array
 {
     $sql = "SELECT v.id, v.tipo, v.nome, v.dados, v.status, v.crm_id, v.ixc_passos, v.recebido_em, v.vendedor_id, d.nome AS vendedor,
-                   c.venda_id AS tem, c.ixc_cliente, c.vencimento, c.instalacao, c.roteador, c.valor, c.valor_plano, c.cliente_pagou, c.pago_em, c.obs
+                   c.venda_id AS tem, c.ixc_cliente, c.vencimento, c.instalacao, c.roteador, c.valor, c.valor_plano, c.venc_previsto, c.cliente_pagou, c.pago_em, c.obs
             FROM vendas v JOIN vendedores d ON d.id = v.vendedor_id LEFT JOIN comissoes c ON c.venda_id = v.id
             WHERE v.status <> 'descartada' AND v.tipo IN ('venda','upgrade','segundo')
               AND strftime('%Y-%m', v.recebido_em, 'localtime') = ?";
@@ -88,6 +88,10 @@ function comissoes_do_mes(string $mes, array $filtro = []): array
                 : (string)($precos[up(sem_acento((string)($dados['plano'] ?? '')))] ?? '');
         }
         $r['dia_venc'] = (string)($dados['venc'] ?? '');
+        $r['venc_previsto'] = (string)($r['venc_previsto'] ?? '');
+        if ($r['venc_previsto'] === '' && $r['vencimento'] === '') {
+            $r['venc_previsto'] = venc_previsto(date('Y-m-d', strtotime((string)$r['recebido_em'])), (int)$r['dia_venc']);
+        }
         $pagou = $r['cliente_pagou'];
         if (!empty($filtro['pagou']) && !($filtro['pagou'] === 'S' ? $pagou === 'S' : ($filtro['pagou'] === 'N' ? $pagou === 'N' : $pagou === ''))) continue;
         if (!empty($filtro['paga']) && ($filtro['paga'] === 'sim') !== ($r['pago_em'] !== '')) continue;
@@ -126,6 +130,19 @@ function comissoes_por_vendedor(array $linhas): array
     }
     foreach ($g as &$v) { $v['tot'] = comissoes_totais($v['linhas']); unset($v['linhas']); }
     return $g;
+}
+
+/** Próximo dia $diaMes depois de $depoisDe (AAAA-MM-DD), para o vencimento previsto; '' se o dia não serve. */
+function venc_previsto(string $depoisDe, int $diaMes): string
+{
+    if ($diaMes < 1 || $diaMes > 31 || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $depoisDe)) return '';
+    $base = new DateTimeImmutable(substr($depoisDe, 0, 7) . '-01');
+    for ($i = 0; $i < 3; $i++) {
+        $m = $base->modify("+$i month");
+        $d = $m->setDate((int)$m->format('Y'), (int)$m->format('m'), min($diaMes, (int)$m->format('t')))->format('Y-m-d');
+        if ($d > $depoisDe) return $d;
+    }
+    return '';
 }
 
 /** Valor mensal de cada plano pelo nome: o da lista lida do IXC vale mais que o da aba Planos. */
@@ -206,7 +223,7 @@ function comissoes_atualizar_ixc(int $limite = 40, int $id = 0): int
 {
     if (destino() !== 'ixc') return 0;
     require_once __DIR__ . '/ixc.php';
-    $sql = "SELECT v.id, v.tipo, v.dados, v.ixc_passos, v.recebido_em, c.venda_id AS tem, c.ixc_cliente, c.vencimento, c.cliente_pagou, c.valor_plano
+    $sql = "SELECT v.id, v.tipo, v.dados, v.ixc_passos, v.recebido_em, c.venda_id AS tem, c.ixc_cliente, c.vencimento, c.cliente_pagou, c.valor_plano, c.venc_previsto
             FROM vendas v LEFT JOIN comissoes c ON c.venda_id = v.id
             WHERE v.status = 'crm' AND v.tipo IN ('venda','upgrade','segundo')"
         . ($id ? ' AND v.id = ' . $id : " AND v.recebido_em >= datetime('now','-150 days')
@@ -216,6 +233,7 @@ function comissoes_atualizar_ixc(int $limite = 40, int $id = 0): int
     $hoje = date('Y-m-d');
     $mudou = 0;
     $ins = db()->prepare("INSERT OR IGNORE INTO comissoes (venda_id, instalacao, roteador) VALUES (?, ?, ?)");
+    $upPrev = db()->prepare("UPDATE comissoes SET venc_previsto = ? WHERE venda_id = ?");
     $upPlano = db()->prepare("UPDATE comissoes SET valor_plano = ? WHERE venda_id = ? AND valor_plano = ''");
     $precos = null; // valor de cada plano de venda no IXC, lido uma vez só
     $up = db()->prepare("UPDATE comissoes SET ixc_cliente = ?, vencimento = ?, cliente_pagou = ?, atualizado_em = datetime('now','localtime'), por = 'IXC' WHERE venda_id = ?");
@@ -247,13 +265,20 @@ function comissoes_atualizar_ixc(int $limite = 40, int $id = 0): int
         $dia = date('Y-m-d', strtotime((string)$v['recebido_em']));
         $contrato = (string)($passos['contrato'] ?? '');
         $bol = null;
-        foreach ($api->listar('fn_areceber', 'id_cliente', $cli, '=', 100, 'asc') as $b) {
+        $ultimoAntes = '';
+        // os mais novos primeiro: cliente antigo (upgrade, 2º ponto) pode ter mais de 100 boletos
+        foreach ($api->listar('fn_areceber', 'id_cliente', $cli, '=', 100, 'desc') as $b) {
             $venc = substr((string)($b['data_vencimento'] ?? ''), 0, 10);
-            if (($b['status'] ?? '') === 'C' || $venc < $dia) continue;
+            if (($b['status'] ?? '') === 'C') continue;
+            if ($venc < $dia) { if ($venc > $ultimoAntes) $ultimoAntes = $venc; continue; }
             if ($contrato !== '' && (string)($b['id_contrato'] ?? '') !== '' && (string)$b['id_contrato'] !== $contrato) continue;
             if (!$bol || $venc < substr((string)$bol['data_vencimento'], 0, 10)) $bol = $b;
         }
         $venc = $bol ? substr((string)$bol['data_vencimento'], 0, 10) : (string)($v['vencimento'] ?? '');
+        // sem boleto ainda: data prevista pelo dia de vencimento do cliente (último boleto no IXC ou o dia escolhido no app)
+        $diaMes = $ultimoAntes !== '' ? (int)substr($ultimoAntes, 8, 2) : (int)($dados['venc'] ?? 0);
+        $prev = $bol ? '' : venc_previsto($dia, $diaMes);
+        if ($prev !== (string)($v['venc_previsto'] ?? '')) { $upPrev->execute([$prev, (int)$v['id']]); }
         $pagou = (string)($v['cliente_pagou'] ?? '');
         if ($bol) {
             if (($bol['status'] ?? '') === 'R') $pagou = 'S';

@@ -429,7 +429,7 @@ th{background:transparent}tr:hover td{background:color-mix(in srgb,var(--brand) 
 .kpis .ok b{color:var(--ok)}.kpis .q b{color:#b45309}
 @media (max-width:800px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .com table{min-width:1260px}.com th,.com td{padding:8px 6px}.com td{vertical-align:middle}.com input,.com select{height:34px;padding:0 8px;font-size:13px}.com input{width:82px}.com input[type=date]{width:136px}.com td.small{max-width:130px}
-.com input.forte{font-weight:700}
+.com input.forte{font-weight:700}.com .prev{color:#b45309;font-weight:600}
 .com tr.vend-h td{background:var(--bg);border-top:2px solid var(--line);padding:10px 8px}.com tr.vend-h b{font-size:15px;margin-right:10px}.com tr.vend-h span{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}.com tr.vend-h a{margin-left:12px;font-size:13px;font-weight:600;color:#1d4ed8}
 .vds h2 .small{font-weight:400}.vds td a{color:#1d4ed8;text-decoration:none}.vds td a:hover{text-decoration:underline}.vds td.n,.vds th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.vds tr.sel td{background:var(--bg)}.vds tr.sel td:first-child{box-shadow:inset 3px 0 0 #2563eb}
 .navv{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.navv .quem{display:grid;flex:1;min-width:160px}.navv .quem b{font-size:18px}.navv .setas{display:flex;gap:8px;flex-wrap:wrap}
@@ -814,7 +814,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
         <td><span class="tp tp-<?= h($l['tipo']) ?>"><?= h(COMISSAO_TIPOS[$l['tipo']] ?? $l['tipo']) ?></span></td>
         <td class="small"><?= h($l['plano']) ?></td>
         <td><span class="rs"><input name="<?= $k ?>[valor_plano]" value="<?= h(brl($l['valor_plano'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor mensal do plano"></span></td>
-        <td><input type="date" name="<?= $k ?>[vencimento]" value="<?= h($l['vencimento']) ?>" aria-label="Vencimento do boleto"><?= $l['dia_venc'] !== '' && $l['vencimento'] === '' ? '<br><span class="small">dia ' . h($l['dia_venc']) . '</span>' : '' ?></td>
+        <td><input type="date" name="<?= $k ?>[vencimento]" value="<?= h($l['vencimento']) ?>" aria-label="Vencimento do boleto"><?= $l['vencimento'] === '' && $l['venc_previsto'] !== '' ? '<br><span class="small prev" title="O IXC ainda não tem o boleto. A data real entra sozinha quando ele for gerado.">previsto ' . h(date('d/m/Y', strtotime($l['venc_previsto']))) . '</span>' : ($l['dia_venc'] !== '' && $l['vencimento'] === '' ? '<br><span class="small">dia ' . h($l['dia_venc']) . '</span>' : '') ?></td>
         <td><span class="rs"><input name="<?= $k ?>[instalacao]" value="<?= h(brl($l['instalacao'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor da instalação"></span></td>
         <td><span class="rs"><input name="<?= $k ?>[roteador]" value="<?= h(brl($l['roteador'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor do roteador"></span></td>
         <td><span class="rs"><input name="<?= $k ?>[valor]" value="<?= h(brl($l['valor'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor da comissão" class="forte"></span></td>
