@@ -430,6 +430,10 @@ th{background:transparent}tr:hover td{background:color-mix(in srgb,var(--brand) 
 @media (max-width:800px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .com table{min-width:1260px}.com th,.com td{padding:8px 6px}.com td{vertical-align:middle}.com input,.com select{height:34px;padding:0 8px;font-size:13px}.com input{width:82px}.com input[type=date]{width:136px}.com td.small{max-width:130px}
 .com input.forte{font-weight:700}
+.com tr.vend-h td{background:var(--bg);border-top:2px solid var(--line);padding:10px 8px}.com tr.vend-h b{font-size:15px;margin-right:10px}.com tr.vend-h span{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}.com tr.vend-h a{margin-left:12px;font-size:13px;font-weight:600;color:#1d4ed8}
+.vds h2 .small{font-weight:400}.vds td a{color:#1d4ed8;text-decoration:none}.vds td a:hover{text-decoration:underline}.vds td.n,.vds th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.vds tr.sel td{background:var(--bg)}.vds tr.sel td:first-child{box-shadow:inset 3px 0 0 #2563eb}
+.navv{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.navv .quem{display:grid;flex:1;min-width:160px}.navv .quem b{font-size:18px}.navv .setas{display:flex;gap:8px;flex-wrap:wrap}
+.navv a.bt{display:inline-flex;align-items:center;height:38px;padding:0 14px;border:1px solid var(--line);border-radius:10px;text-decoration:none;color:var(--fg);font-weight:600;background:var(--surface)}.navv a.bt.pri{background:var(--g-btn);border:0;color:#fff}
 .com .rs{position:relative;display:inline-block}.com .rs::before{content:"R$";position:absolute;left:9px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--muted);pointer-events:none}.com .rs input{padding-left:30px;width:100px}
 .mes{display:grid;gap:0;padding-top:6px}.mes>*{min-width:0}
 .mes-l{display:grid;grid-template-columns:minmax(200px,2fr) repeat(5,minmax(60px,.7fr)) repeat(3,minmax(96px,1fr));gap:10px;align-items:center;padding:12px 8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
@@ -735,21 +739,25 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     if (!isset($meses[$mes])) $meses[$mes] = ['n' => 0, 'abertas' => 0];
     krsort($meses);
     $filtro = ['vend' => (int)($_GET['vend'] ?? 0), 'tipo' => (string)($_GET['tipo'] ?? ''), 'pagou' => (string)($_GET['pagou'] ?? ''), 'paga' => (string)($_GET['paga'] ?? '')];
-    $linhas = comissoes_do_mes($mes, $filtro);
-    $tot = ['n' => count($linhas), 'paga' => 0.0, 'apagar' => 0.0, 'espera' => 0.0, 'semvalor' => 0];
-    foreach ($linhas as $l) {
-        $v = (float)$l['valor'];
-        if ($l['valor'] === '') $tot['semvalor']++;
-        if ($l['pago_em'] !== '') $tot['paga'] += $v;
-        elseif ($l['cliente_pagou'] === 'S') $tot['apagar'] += $v;
-        else $tot['espera'] += $v;
-    }
+    // todas as vendas do mês (com os outros filtros), separadas por vendedor para conferir um de cada vez
+    $todas = comissoes_do_mes($mes, ['vend' => 0] + $filtro);
+    $porVend = comissoes_por_vendedor($todas);
+    $linhas = $filtro['vend'] ? array_values(array_filter($todas, fn($l) => (int)$l['vendedor_id'] === $filtro['vend'])) : $todas;
+    $tot = comissoes_totais($linhas);
+    $ids = array_keys($porVend);
+    $pos = $filtro['vend'] ? array_search($filtro['vend'], $ids, true) : false;
+    $antes = $pos !== false && $pos > 0 ? $ids[$pos - 1] : null;
+    $depois = $pos !== false && $pos < count($ids) - 1 ? $ids[$pos + 1] : null;
+    $grupos = [];
+    foreach ($linhas as $l) $grupos[(int)$l['vendedor_id']][] = $l;
     $opMeses = [];
     for ($m = $mes; $m <= mes_soma($mesAtual, 1); $m = mes_soma($m, 1)) $opMeses[] = $m;
     $pagoMes = (string)($_GET['pago'] ?? $mesAtual);
     if (!preg_match('/^\d{4}-\d{2}$/', $pagoMes)) $pagoMes = $mesAtual;
     $pagas = comissoes_pagas_em($pagoMes);
     $vendList = db()->query('SELECT id, nome FROM vendedores ORDER BY nome')->fetchAll();
+    $vendNome = '';
+    foreach ($vendList as $vd) if ((int)$vd['id'] === $filtro['vend']) $vendNome = $vd['nome'];
     $qs = fn(array $mais) => '?' . http_build_query(array_merge(['p' => 'comissoes', 'mes' => $mes], array_filter($filtro), $mais)); ?>
   <div class="card"><h2>Comissões</h2>
     <p class="small"><b>Automático do IXC</b> (a cada 30 minutos): ID do cliente, valor do plano (pelo plano de venda no IXC), vencimento do primeiro boleto depois da venda e "Cliente pagou" (Sim quando o boleto é recebido, Não quando vence em aberto). Instalação e roteador vêm do que o vendedor preencheu no app. No upgrade, o valor do plano é o novo valor informado pelo vendedor.<br>Cada comissão fica no mês da venda e é paga uma vez só. Quando o cliente pagar, marque "Cliente pagou: Sim"; quando você pagar o vendedor, escolha o mês em "Comissão paga em". O que ficar sem pagar continua aqui no mês da venda: volte nele para conferir.</p>
@@ -763,20 +771,46 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
       <button class="pri">Filtrar</button></form>
     <?php if (destino() === 'ixc'): ?><form method="post" class="row" style="margin-top:8px"><?= csrf_campo() ?><input type="hidden" name="acao" value="comissoes_ixc"><button>Atualizar do IXC agora</button><span class="small">Só lê o IXC.</span></form><?php endif ?>
   </div>
+  <div class="card tw vds"><h2>Por vendedor <span class="small">· clique para conferir um de cada vez</span></h2>
+    <table>
+      <tr><th>Vendedor</th><th class="n">Vendas</th><th class="n">Upgrades</th><th class="n">2º ponto</th><th class="n">Comissão total</th><th class="n">Já paga</th><th class="n">A pagar</th><th class="n">Esperando o cliente</th><th>Situação</th></tr>
+      <?php foreach ($porVend as $vid => $pv): $t = $pv['tot']; ?>
+      <tr class="<?= $vid === $filtro['vend'] ? 'sel' : '' ?>">
+        <td><a href="<?= h($qs(['vend' => $vid])) ?>"><b><?= h($pv['nome']) ?></b></a></td>
+        <?php foreach (['venda', 'upgrade', 'segundo'] as $tp): ?><td class="n"><?= $pv['tipos'][$tp] ?? 0 ?></td><?php endforeach ?>
+        <td class="n"><b>R$ <?= brl(number_format($t['total'], 2, '.', '')) ?></b></td>
+        <td class="n">R$ <?= brl(number_format($t['paga'], 2, '.', '')) ?></td>
+        <td class="n">R$ <?= brl(number_format($t['apagar'], 2, '.', '')) ?></td>
+        <td class="n">R$ <?= brl(number_format($t['espera'], 2, '.', '')) ?></td>
+        <td class="small"><?= $t['abertas'] ? $t['abertas'] . ' em aberto' : 'tudo pago' ?><?= $t['semvalor'] ? ' · ' . $t['semvalor'] . ' sem valor' : '' ?></td>
+      </tr>
+      <?php endforeach ?>
+      <?php if (!$porVend): ?><tr><td colspan="9" class="small">Nenhuma venda nesse mês com esses filtros.</td></tr><?php endif ?>
+    </table></div>
+  <?php if ($filtro['vend']): ?>
+  <div class="card navv">
+    <a class="bt" href="<?= h($qs(['vend' => null])) ?>">Todos os vendedores</a>
+    <div class="quem"><span class="small">Conferindo<?= $pos !== false ? ' · ' . ($pos + 1) . ' de ' . count($ids) : '' ?></span><b><?= h($vendNome ?: 'Vendedor') ?></b></div>
+    <span class="setas"><?php if ($antes): ?><a class="bt" href="<?= h($qs(['vend' => $antes])) ?>">← <?= h($porVend[$antes]['nome']) ?></a><?php endif ?><?php if ($depois): ?><a class="bt pri" href="<?= h($qs(['vend' => $depois])) ?>"><?= h($porVend[$depois]['nome']) ?> →</a><?php endif ?></span>
+  </div>
+  <?php endif ?>
   <div class="kpis">
-    <div><b><?= $tot['n'] ?></b><span>vendas em <?= h(mes_nome($mes)) ?></span></div>
+    <div><b><?= $tot['n'] ?></b><span>vendas em <?= h(mes_nome($mes)) ?><?= $filtro['vend'] ? ' · ' . h($vendNome) : '' ?></span></div>
     <div class="ok"><b>R$ <?= brl(number_format($tot['paga'], 2, '.', '')) ?></b><span>comissão já paga</span></div>
     <div class="q"><b>R$ <?= brl(number_format($tot['apagar'], 2, '.', '')) ?></b><span>a pagar (cliente já pagou)</span></div>
     <div><b>R$ <?= brl(number_format($tot['espera'], 2, '.', '')) ?></b><span>esperando o cliente<?= $tot['semvalor'] ? ' · ' . $tot['semvalor'] . ' sem valor' : '' ?></span></div>
   </div>
   <form method="post" class="card tw com"><?= csrf_campo() ?><input type="hidden" name="acao" value="comissoes_salvar">
     <table>
-      <tr><th>ID cliente IXC</th><th>Cliente</th><th>Vendedor</th><th>Tipo</th><th>Plano</th><th>Valor do plano</th><th>Vencimento do boleto</th><th>Instalação</th><th>Roteador</th><th>Comissão</th><th>Cliente pagou?</th><th>Comissão paga em</th></tr>
-      <?php foreach ($linhas as $l): $k = 'c[' . (int)$l['id'] . ']'; $cls = $l['pago_em'] !== '' ? 'paga' : ($l['cliente_pagou'] === 'S' ? 'apagar' : ''); ?>
+      <tr><th>ID cliente IXC</th><th>Cliente</th><th>Tipo</th><th>Plano</th><th>Valor do plano</th><th>Vencimento do boleto</th><th>Instalação</th><th>Roteador</th><th>Comissão</th><th>Cliente pagou?</th><th>Comissão paga em</th></tr>
+      <?php foreach ($grupos as $vid => $doVend): $gt = comissoes_totais($doVend); ?>
+      <tr class="vend-h"><td colspan="11"><b><?= h($doVend[0]['vendedor']) ?></b>
+        <span><?= $gt['n'] ?> venda<?= $gt['n'] === 1 ? '' : 's' ?> · comissão R$ <?= brl(number_format($gt['total'], 2, '.', '')) ?> · paga R$ <?= brl(number_format($gt['paga'], 2, '.', '')) ?> · a pagar R$ <?= brl(number_format($gt['apagar'], 2, '.', '')) ?> · esperando R$ <?= brl(number_format($gt['espera'], 2, '.', '')) ?></span>
+        <?php if (!$filtro['vend']): ?><a href="<?= h($qs(['vend' => $vid])) ?>">Conferir só este vendedor</a><?php endif ?></td></tr>
+      <?php foreach ($doVend as $l): $k = 'c[' . (int)$l['id'] . ']'; $cls = $l['pago_em'] !== '' ? 'paga' : ($l['cliente_pagou'] === 'S' ? 'apagar' : ''); ?>
       <tr class="<?= $cls ?>">
         <td><input name="<?= $k ?>[ixc_cliente]" value="<?= h($l['ixc_cliente']) ?>" size="7" inputmode="numeric" aria-label="ID do cliente no IXC"></td>
         <td><b><?= h($l['nome']) ?></b><br><span class="small">venda <?= h(date('d/m', strtotime($l['recebido_em']))) ?> · <?= h($l['cpf']) ?></span></td>
-        <td><?= h($l['vendedor']) ?></td>
         <td><span class="tp tp-<?= h($l['tipo']) ?>"><?= h(COMISSAO_TIPOS[$l['tipo']] ?? $l['tipo']) ?></span></td>
         <td class="small"><?= h($l['plano']) ?></td>
         <td><span class="rs"><input name="<?= $k ?>[valor_plano]" value="<?= h(brl($l['valor_plano'])) ?>" size="6" inputmode="decimal" placeholder="0,00" aria-label="Valor mensal do plano"></span></td>
@@ -789,9 +823,10 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
           <input type="hidden" name="<?= $k ?>[obs]" value="<?= h($l['obs']) ?>"></td>
       </tr>
       <?php endforeach ?>
-      <?php if (!$linhas): ?><tr><td colspan="12" class="small">Nenhuma venda nesse mês com esses filtros.</td></tr><?php endif ?>
+      <?php endforeach ?>
+      <?php if (!$linhas): ?><tr><td colspan="11" class="small">Nenhuma venda nesse mês com esses filtros.</td></tr><?php endif ?>
     </table>
-    <?php if ($linhas): ?><div class="salvar"><span class="small">Mudou alguma coisa? Salve antes de trocar de mês.</span><button class="pri">Salvar comissões</button></div><?php endif ?>
+    <?php if ($linhas): ?><div class="salvar"><span class="small">Mudou alguma coisa? Salve antes de trocar de mês ou de vendedor.</span><button class="pri">Salvar comissões</button></div><?php endif ?>
   </form>
   <div class="card tw"><form method="get" class="row"><input type="hidden" name="p" value="comissoes"><input type="hidden" name="mes" value="<?= h($mes) ?>">
       <h2 style="margin:0">Pago aos vendedores em</h2>
