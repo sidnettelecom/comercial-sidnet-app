@@ -96,6 +96,38 @@ function comissoes_do_mes(string $mes, array $filtro = []): array
     return $out;
 }
 
+/** Somas de uma lista de comissões: total, já paga, a pagar (cliente pagou), esperando o cliente. */
+function comissoes_totais(array $linhas): array
+{
+    $t = ['n' => count($linhas), 'total' => 0.0, 'paga' => 0.0, 'apagar' => 0.0, 'espera' => 0.0, 'semvalor' => 0, 'abertas' => 0];
+    foreach ($linhas as $l) {
+        $v = (float)$l['valor'];
+        $t['total'] += $v;
+        if ($l['valor'] === '') $t['semvalor']++;
+        if ($l['pago_em'] !== '') $t['paga'] += $v;
+        else {
+            $t['abertas']++;
+            if ($l['cliente_pagou'] === 'S') $t['apagar'] += $v;
+            else $t['espera'] += $v;
+        }
+    }
+    return $t;
+}
+
+/** Comissões do mês separadas por vendedor (na ordem do nome), com quantas de cada tipo e as somas. */
+function comissoes_por_vendedor(array $linhas): array
+{
+    $g = [];
+    foreach ($linhas as $l) {
+        $id = (int)$l['vendedor_id'];
+        $g[$id]['nome'] = $l['vendedor'];
+        $g[$id]['linhas'][] = $l;
+        $g[$id]['tipos'][$l['tipo']] = ($g[$id]['tipos'][$l['tipo']] ?? 0) + 1;
+    }
+    foreach ($g as &$v) { $v['tot'] = comissoes_totais($v['linhas']); unset($v['linhas']); }
+    return $g;
+}
+
 /** Valor mensal de cada plano pelo nome: o da lista lida do IXC vale mais que o da aba Planos. */
 function comissoes_precos_planos(): array
 {

@@ -14,3 +14,12 @@
     if(i.form)i.form.addEventListener('submit',function(){i.type='password'});
   });
 })();
+
+/* Comissões: avisa antes de trocar de vendedor ou de mês com alterações ainda não salvas. */
+(function(){
+  var f=document.querySelector('form.com');if(!f)return;
+  var mudou=false;
+  f.addEventListener('input',function(){mudou=true});f.addEventListener('change',function(){mudou=true});
+  f.addEventListener('submit',function(){mudou=false});
+  window.addEventListener('beforeunload',function(e){if(mudou){e.preventDefault();e.returnValue=''}});
+})();
