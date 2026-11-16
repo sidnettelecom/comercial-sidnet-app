@@ -24,8 +24,8 @@ return [
         'estagio_lead' => 0,           // estágio do lead no funil do CRM do IXC (0 = o padrão)
         'origem_lead' => 'outros',
         'uf_padrao' => 'MG',
-        // venda nova: 'prospect' = lead + prospecção (negociação e Vencemos no IXC); 'lead' = só o lead; 'negociacao' = até a negociação
-        'venda_ate' => 'prospect',
+        // venda nova: 'lead' = só o lead (o escritório faz negociação, prospecção e Vencemos no IXC); 'negociacao' = lead + prospect + negociação pela API
+        'venda_ate' => 'lead',
         'responsavel_id' => 0,         // colaborador responsável no CRM (php server/bin/ixc.php listar colaboradores)
         'regiao_cobertura_id' => 4,    // tipo de região de cobertura do lead (4 = Região de Cobertura)
         'canal_padrao' => 12,

@@ -265,7 +265,16 @@ function ixc_descricao(array $r, array $venda, array $vendedor): string
         $add('CANAL DE VENDA', up($r['canal'] ?? ''));
         if (up($r['zona'] ?? '') === 'R') $L[] = 'ZONA RURAL';
         $add('LOCAL (GPS)', $r['local'] ?? '');
-        if ($tipo === 'venda') $add('APELIDO', up($r['apelido'] ?? ''));
+        if ($tipo === 'venda') {
+            $add('APELIDO', up($r['apelido'] ?? ''));
+            $add('DATA DE NASCIMENTO', $r['nasc'] ?? '');
+            $add('RG', up($r['rg'] ?? ''));
+            $add('ÓRGÃO EMISSOR', up($r['rgOrgao'] ?? ''));
+            $add('SEXO', ['F' => 'FEMININO', 'M' => 'MASCULINO', 'NB' => 'NÃO BINÁRIO', 'O' => 'OUTRO', 'PNI' => 'PREFERE NÃO INFORMAR'][up($r['sexo'] ?? '')] ?? '');
+            $add('ESTADO CIVIL', up($r['estadoCivil'] ?? ''));
+            $add('PROFISSÃO', up($r['profissao'] ?? ''));
+            $add('MORADIA', ['P' => 'PRÓPRIA', 'A' => 'ALUGADA'][up($r['moradia'] ?? '')] ?? '');
+        }
     }
     if ((int)so_digitos($r['valInst'] ?? '') > 0) $L[] = 'INSTALAÇÃO: R$ ' . valor_brl($r['valInst']);
     if ((int)so_digitos($r['valRot'] ?? '') > 0) $L[] = 'ROTEADOR VENDIDO: R$ ' . valor_brl($r['valRot']);
@@ -414,8 +423,10 @@ function ixc_plano_negociacao(array $plano): ?array
 /**
  * Venda nova, como no processo da Sidnet no IXC:
  *   1) Lead (CRM › Leads)  2) Prospecção (cliente em negociação)  3) Negociação com o plano.
- * Padrão (ixc.venda_ate = 'prospect'): faz 1 e 2; a negociação e o "Vencemos" o escritório faz no IXC.
- * 'lead' = só o passo 1; 'negociacao' = os três.
+ * Padrão (decisão do ALEX, 16/11/2026): só o passo 1, o lead. O escritório leva o lead adiante no IXC
+ * (negociação, prospecção e Vencemos). Criar o cadastro junto com o lead fazia o IXC recusar depois
+ * ("CNPJ/CPF já cadastrado") ao salvar o lead.
+ * ixc.venda_ate = 'negociacao' volta a fazer os três passos pela API. O antigo 'prospect' agora vale como 'lead'.
  */
 function ixc_venda(array $r, array $venda, array $vendedor): string
 {
@@ -426,9 +437,9 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
         $p['lead'] = so_digitos(ixc_lead($r, $venda, $vendedor));
         ixc_salvar_passos($venda, $p);
     }
-    $ate = (string)($cfg['venda_ate'] ?? 'prospect');
-    if ($ate === 'lead') {
-        return 'Lead #' . $p['lead'] . ' registrado. Falta no IXC: converter em prospect, negociação e Vencemos';
+    $ate = (string)($cfg['venda_ate'] ?? 'lead');
+    if ($ate !== 'negociacao') {
+        return 'Lead #' . $p['lead'] . ' registrado. Falta no IXC: negociação, prospecção e Vencemos';
     }
     $plano = ixc_plano((string)($r['plano'] ?? ''));
     $canal = ixc_id_por_nome(($cfg['canais'] ?? []) + IXC_CANAIS, (string)($r['canal'] ?? ''), (string)($cfg['canal_padrao'] ?? '12'));
@@ -492,10 +503,6 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
         $d += IXC_CLIENTE_PADRAO; // o que a tela do IXC já marca sozinha; pela API vai vazio e ele recusa
         $p['prospect'] = $api->inserir('cliente', limpar_campos($d));
         ixc_salvar_passos($venda, $p);
-    }
-
-    if ($ate !== 'negociacao') {
-        return 'Lead #' . $p['lead'] . ' e prospect #' . $p['prospect'] . ' registrados. Falta no IXC: negociação e Vencemos';
     }
 
     // 3) negociação com o plano, em "Negociando"
