@@ -105,7 +105,7 @@ plano_para, valor_de, valor_para, observacao.
 
 ## Comissões planilha (temporário)
 
-Aba do painel com as comissões que vieram da planilha do Excel (3 parcelas), até pagar todas.
+Aba do painel com as comissões que vieram da planilha do Excel (paga uma vez só, marcando o mês do pagamento), até pagar todas.
 Os dados dos clientes não ficam no GitHub: o admin importa o CSV em **Comissões planilha → Importar a planilha**.
 Para tirar depois: apagar `server/lib/comissoes_planilha.php` e os trechos marcados `PLANILHA-TEMP` em
 `server/public/painel/index.php`. A tabela `comissoes_planilha` pode ficar no banco sem atrapalhar.
