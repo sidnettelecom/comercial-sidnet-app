@@ -462,7 +462,7 @@ th{background:transparent}tr:hover td{background:color-mix(in srgb,var(--brand) 
 .mes-t{font-weight:700;border-top:2px solid var(--line);border-bottom:0}
 @media (max-width:900px){.mes-h{display:none}.mes-l{grid-template-columns:1fr 1fr;row-gap:4px}.mes-l>.quem,.mes-t>span:first-child{grid-column:1/-1}.mes-l>span[data-r]{text-align:left;font-size:13px}.mes-l>span[data-r]::before{content:attr(data-r) ": ";color:var(--muted)}}
 .com tr.paga td{background:color-mix(in srgb,var(--ok-bg) 70%,transparent)}
-/* PLANILHA-TEMP */ .pl table{min-width:1300px}.pl td.parc .rs input{width:90px}.pl td.parc select{margin-top:4px;width:146px}.pl td.parc.ok select{border-color:var(--ok);font-weight:700}.pl input.obs{width:180px}
+/* PLANILHA-TEMP */ .pl table{min-width:1150px}.pl select{min-width:140px}.pl input.obs{width:180px}
 .com tr.apagar td{background:#fef9c3}
 @media (prefers-color-scheme:dark){.com tr.apagar td{background:#3a3210}}
 .com .salvar{position:sticky;bottom:0;display:flex;gap:12px;justify-content:flex-end;align-items:center;padding:12px 0 2px;background:var(--surface)}
@@ -877,21 +877,18 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     $plGrupos = [];
     foreach ($plLinhas as $l) $plGrupos[$l['vendedor']][] = $l;
     $plTot = planilha_totais($plVend !== '' ? ($plPorVend[$plVend] ?? []) : $plTodas);
-    $plMesesP = [];
-    foreach ($plTodas as $l) foreach ([1, 2, 3] as $n) if ($l["p{$n}_mes"] !== '') $plMesesP[$n] = $l["p{$n}_mes"];
-    $plIni = min(array_merge(['9999-99'], array_values($plMesesP)));
-    if ($plIni === '9999-99') $plIni = date('Y-m');
+    $plIni = min(array_merge([date('Y-m')], array_filter(array_column($plTodas, 'pago_em'))));
     $plOp = [];
     for ($m = mes_soma($plIni, -1); $m <= mes_soma(date('Y-m'), 1); $m = mes_soma($m, 1)) $plOp[] = $m;
     $plPagas = planilha_pagas_por_mes();
     $plQs = fn(array $mais) => '?' . http_build_query(array_filter(array_merge(['p' => 'planilha', 'vend' => $plVend, 'abertas' => $plAbertas ? 1 : null], $mais), fn($v) => $v !== null && $v !== ''));
     $plSelPaga = function (string $nome, string $atual) use ($plOp): string {
-        $o = '<select name="' . $nome . '" aria-label="Parcela paga em"><option value="">Não paga</option>';
+        $o = '<select name="' . $nome . '" aria-label="Comissão paga em"><option value="">Não paga</option>';
         foreach ($plOp as $om) $o .= '<option value="' . $om . '"' . ($atual === $om ? ' selected' : '') . '>' . h(mes_nome($om)) . '</option>';
         return $o . '</select>';
     }; ?>
   <div class="card"><h2>Comissões planilha <span class="pill q">temporário</span></h2>
-    <p class="small">Comissões que estavam na planilha do Excel, até pagar todas. Aqui a comissão é paga em <b>3 parcelas</b>, como na planilha. Quando pagar uma parcela ao vendedor, escolha o mês em "paga em" e salve. Parcela 2 e 3 vêm com o mesmo valor da 1ª (regra da planilha); linha sem valor é porque a planilha não tinha: digite quando souber.</p>
+    <p class="small">Comissões que estavam na planilha do Excel, até pagar todas. Cada comissão é paga uma vez só: quando pagar o vendedor, escolha o mês em "Comissão paga em" e salve. O que já estava pago na planilha entrou com o mês da planilha. Linha sem valor é porque a planilha não tinha: digite quando souber.</p>
     <?php if ($plTodas): ?>
     <form method="get" class="row filtros"><input type="hidden" name="p" value="planilha">
       <select name="vend" aria-label="Vendedor"><?php foreach (array_keys($plPorVend) as $vn): ?><option value="<?= h($vn) ?>" <?= $vn === $plVend ? 'selected' : '' ?>><?= h($vn) ?></option><?php endforeach ?></select>
@@ -914,25 +911,25 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
         <td class="n"><b>R$ <?= brl(number_format($t['total'], 2, '.', '')) ?></b></td>
         <td class="n">R$ <?= brl(number_format($t['pago'], 2, '.', '')) ?></td>
         <td class="n">R$ <?= brl(number_format($t['falta'], 2, '.', '')) ?></td>
-        <td class="small"><?= $t['abertas'] ? $t['abertas'] . ' parcela' . ($t['abertas'] === 1 ? '' : 's') . ' em aberto' : 'tudo pago' ?><?= $t['semvalor'] ? ' · ' . $t['semvalor'] . ' sem valor' : '' ?></td></tr>
+        <td class="small"><?= $t['abertas'] ? $t['abertas'] . ' em aberto' : 'tudo pago' ?><?= $t['semvalor'] ? ' · ' . $t['semvalor'] . ' sem valor' : '' ?></td></tr>
       <?php endforeach ?>
     </table></div>
   <div class="kpis">
     <div><b><?= $plTot['n'] ?></b><span>linhas<?= $plVend !== '' ? ' · ' . h($plVend) : '' ?></span></div>
     <div class="ok"><b>R$ <?= brl(number_format($plTot['pago'], 2, '.', '')) ?></b><span>já pago</span></div>
-    <div class="q"><b>R$ <?= brl(number_format($plTot['falta'], 2, '.', '')) ?></b><span>falta pagar · <?= $plTot['abertas'] ?> parcelas</span></div>
+    <div class="q"><b>R$ <?= brl(number_format($plTot['falta'], 2, '.', '')) ?></b><span>falta pagar · <?= $plTot['abertas'] ?> em aberto</span></div>
     <div><b><?= $plTot['semvalor'] ?></b><span>sem valor na planilha</span></div>
   </div>
   <form method="post" class="card tw com pl"><?= csrf_campo() ?><input type="hidden" name="acao" value="planilha_salvar">
     <table>
       <tr><th>Tipo</th><th>ID IXC</th><th>Cliente</th><th>Valor</th><th>1ª mensalidade</th><th>Mensalidade paga?</th>
-        <?php foreach ([1, 2, 3] as $n): ?><th>Parcela <?= $n ?><?= isset($plMesesP[$n]) ? '<br><span class="small">' . h(mes_nome($plMesesP[$n])) . '</span>' : '' ?></th><?php endforeach ?><th>Falta</th><th>Observação</th></tr>
+        <th>Comissão</th><th>Comissão paga em</th><th>Observação</th></tr>
       <?php foreach ($plGrupos as $vn => $ls): $gt = planilha_totais($ls); ?>
-      <tr class="vend-h"><td colspan="11"><b><?= h($vn) ?></b>
+      <tr class="vend-h"><td colspan="10"><b><?= h($vn) ?></b>
         <span><?= count($ls) ?> linha<?= count($ls) === 1 ? '' : 's' ?> · comissão R$ <?= brl(number_format($gt['total'], 2, '.', '')) ?> · paga R$ <?= brl(number_format($gt['pago'], 2, '.', '')) ?> · falta R$ <?= brl(number_format($gt['falta'], 2, '.', '')) ?></span>
         </td></tr>
-      <?php foreach ($ls as $l): $k = 'pl[' . (int)$l['id'] . ']'; $lt = planilha_totais([$l]); ?>
-      <tr class="<?= $lt['abertas'] === 0 && $lt['semvalor'] === 0 ? 'paga' : '' ?>">
+      <?php foreach ($ls as $l): $k = 'pl[' . (int)$l['id'] . ']'; ?>
+      <tr class="<?= $l['pago_em'] !== '' ? 'paga' : '' ?>">
         <td><span class="tp tp-<?= h($l['tipo']) ?>"><?= $l['tipo'] === 'upgrade' ? 'Upgrade' : 'Venda' ?></span></td>
         <td class="n"><?= h($l['ixc_cliente']) ?></td>
         <td><b><?= h($l['nome']) ?></b><?= $l['condicao'] !== '' ? '<br><span class="small">' . h($l['condicao']) . '</span>' : '' ?></td>
@@ -940,15 +937,13 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
           <?= ($l['instalacao'] !== '' || $l['roteador'] !== '') ? '<br><span class="small">taxas R$ ' . h(brl(number_format((float)$l['instalacao'] + (float)$l['roteador'], 2, '.', ''))) . '</span>' : '' ?></td>
         <td class="n"><?= $l['vencimento'] !== '' ? h(date('d/m/Y', strtotime($l['vencimento']))) : '—' ?></td>
         <td><?php if ($l['tipo'] === 'venda'): ?><select name="<?= $k ?>[mensalidade]" aria-label="Mensalidade paga"><option value="">—</option><?php foreach (PLANILHA_MENSALIDADE as $o): ?><option <?= $l['mensalidade'] === $o ? 'selected' : '' ?>><?= $o ?></option><?php endforeach ?></select><?php else: ?><span class="small">—</span><?php endif ?></td>
-        <?php foreach ([1, 2, 3] as $n): ?>
-        <td class="parc<?= $l["p{$n}_paga"] !== '' ? ' ok' : '' ?>"><span class="rs"><input name="<?= $k ?>[p<?= $n ?>]" value="<?= h(brl($l["p$n"])) ?>" inputmode="decimal" placeholder="0,00" aria-label="Valor da parcela <?= $n ?>" class="forte"></span><br><?= $plSelPaga($k . "[p{$n}_paga]", $l["p{$n}_paga"]) ?></td>
-        <?php endforeach ?>
-        <td class="n"><b><?= $lt['falta'] > 0 ? 'R$ ' . brl(number_format($lt['falta'], 2, '.', '')) : ($lt['semvalor'] ? '?' : '—') ?></b></td>
+        <td><span class="rs"><input name="<?= $k ?>[valor]" value="<?= h(brl($l['valor'])) ?>" inputmode="decimal" placeholder="0,00" aria-label="Valor da comissão" class="forte"></span></td>
+        <td><?= $plSelPaga($k . '[pago_em]', $l['pago_em']) ?></td>
         <td><input name="<?= $k ?>[obs]" value="<?= h($l['obs']) ?>" class="obs" aria-label="Observação" title="<?= h($l['obs']) ?>"></td>
       </tr>
       <?php endforeach ?>
       <?php endforeach ?>
-      <?php if (!$plLinhas): ?><tr><td colspan="11" class="small">Nada com esse filtro.</td></tr><?php endif ?>
+      <?php if (!$plLinhas): ?><tr><td colspan="10" class="small">Nada com esse filtro.</td></tr><?php endif ?>
     </table>
     <?php if ($plLinhas): ?><div class="salvar"><span class="small">Mudou alguma coisa? Salve antes de trocar de vendedor.</span><input type="hidden" name="pl_fim" value="1"><button class="pri">Salvar</button></div><?php endif ?>
   </form>
@@ -957,7 +952,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
       <?php foreach ($plPagas as $pm => $porV): foreach ($porV as $vn => $v): ?>
       <tr><td><?= h(mes_nome((string)$pm)) ?></td><td><?= h($vn) ?></td><td class="n">R$ <?= brl(number_format($v, 2, '.', '')) ?></td></tr>
       <?php endforeach; ?><tr class="soma"><td><?= h(mes_nome((string)$pm)) ?></td><td>Total do mês</td><td class="n">R$ <?= brl(number_format(array_sum($porV), 2, '.', '')) ?></td></tr><?php endforeach ?>
-      <?php if (!$plPagas): ?><tr><td colspan="3" class="small">Nenhuma parcela marcada como paga.</td></tr><?php endif ?>
+      <?php if (!$plPagas): ?><tr><td colspan="3" class="small">Nenhuma comissão marcada como paga.</td></tr><?php endif ?>
     </table></div>
   <?php endif ?>
 <?php /* ---- fim PLANILHA-TEMP ---- */ ?>
