@@ -187,6 +187,26 @@ const IXC_NEGOCIACAO_PADRAO = [
     'melhor_horario_reserva' => 'Q',
 ];
 
+/** Colunas de uma tabela do IXC (lidas de um registro qualquer). Vazio se não deu para ler. */
+function ixc_colunas(string $tabela): array
+{
+    static $cache = [];
+    if (!isset($cache[$tabela])) {
+        try {
+            $reg = ixc()->listar($tabela, 'id', '0', '>', 1)[0] ?? [];
+        } catch (ErroCrm) {
+            $reg = [];
+        }
+        $cache[$tabela] = array_fill_keys(array_keys($reg), true);
+    }
+    return $cache[$tabela];
+}
+
+/** Gênero, com as opções da tela do IXC (código do app => texto). */
+const IXC_GENEROS = ['F' => 'FEMININO', 'M' => 'MASCULINO', 'NB' => 'NÃO BINÁRIO', 'O' => 'OUTRO', 'PNI' => 'PREFIRO NÃO DIZER'];
+/** Código que vai no campo de gênero do IXC (troque em ixc.generos no config.php se o IXC usar outros). */
+const IXC_GENERO_CODIGOS = ['F' => 'F', 'M' => 'M', 'NB' => 'NB', 'O' => 'O', 'PNI' => 'P'];
+
 /** Plano de venda (vd_contratos) pelo nome que o app usa. */
 function ixc_plano(string $nome): ?array
 {
@@ -270,7 +290,7 @@ function ixc_descricao(array $r, array $venda, array $vendedor): string
             $add('DATA DE NASCIMENTO', $r['nasc'] ?? '');
             $add('RG', up($r['rg'] ?? ''));
             $add('ÓRGÃO EMISSOR', up($r['rgOrgao'] ?? ''));
-            $add('SEXO', ['F' => 'FEMININO', 'M' => 'MASCULINO', 'NB' => 'NÃO BINÁRIO', 'O' => 'OUTRO', 'PNI' => 'PREFERE NÃO INFORMAR'][up($r['sexo'] ?? '')] ?? '');
+            $add('GÊNERO', IXC_GENEROS[up($r['sexo'] ?? '')] ?? '');
             $add('ESTADO CIVIL', up($r['estadoCivil'] ?? ''));
             $add('PROFISSÃO', up($r['profissao'] ?? ''));
             $add('MORADIA', ['P' => 'PRÓPRIA', 'A' => 'ALUGADA'][up($r['moradia'] ?? '')] ?? '');
@@ -474,7 +494,7 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
             'tipo_pessoa' => 'F',
             'razao' => up($r['nome'] ?? ''),
             'cnpj_cpf' => cpf_mascara($cpf),
-            'ie_identidade' => up($r['rg'] ?? ''),
+            'ie_identidade' => up($r['rg'] ?? '') ?: $cpf,
             'data_nascimento' => preg_match('#^\d{2}/\d{2}/\d{4}$#', (string)($r['nasc'] ?? '')) ? $r['nasc'] : '',
             'filial_id' => $filial,
             'id_candato_tipo' => $canal,
@@ -575,6 +595,7 @@ function ixc_lead(array $r, array $venda, array $vendedor): string
         'lead' => 'S',
         'nome' => up($r['nome'] ?? ''),
         'tipo_pessoa' => 'F',
+        'ie_identidade' => up($r['rg'] ?? '') ?: $cpf,
         'cnpj_cpf' => $cpf !== '' ? cpf_mascara($cpf) : '',
         'data_nascimento' => preg_match('#^\d{2}/\d{2}/\d{4}$#', (string)($r['nasc'] ?? '')) ? $r['nasc'] : '',
         'id_filial' => (string)($cfg['filial_id'] ?? '1'),
@@ -584,6 +605,7 @@ function ixc_lead(array $r, array $venda, array $vendedor): string
         'fone_celular' => (string)($r['tel1'] ?? ''),
         'fone_whatsapp' => (string)($r['tel1'] ?? ''),
         'fone_residencial' => (string)($r['tel2'] ?? ''),
+        'fone_comercial' => (string)($r['tel2'] ?? ''),
         'email' => strtolower(trim((string)($r['email'] ?? ''))),
         'cep' => strlen($cep) === 8 ? substr($cep, 0, 5) . '-' . substr($cep, 5) : '',
         'endereco' => up(($r['rua'] ?? '') !== '' ? $r['rua'] : ($r['endereco'] ?? '')),
@@ -607,6 +629,29 @@ function ixc_lead(array $r, array $venda, array $vendedor): string
     if ($resp !== '') $d['id_responsavel'] = $resp;
     if (!empty($cfg['regiao_cobertura_id'])) $d['id_tipo_elemento'] = (string)$cfg['regiao_cobertura_id'];
     $d['tipo_localidade'] = up($r['zona'] ?? '') === 'R' ? 'R' : 'U';
+    // gênero: as mesmas opções da tela do IXC. O nome do campo e os códigos podem ser trocados
+    // no config.php (ixc.genero_campo / ixc.generos). Se o IXC recusar, grava o lead sem o gênero
+    // (ele continua na observação) para a venda não travar.
+    // campos que nem todo IXC tem no lead: só manda os que existem na tabela, senão ele recusa o lead todo
+    $cols = ixc_colunas('contato');
+    foreach (['ie_identidade', 'fone_comercial'] as $k) {
+        if (!isset($cols[$k])) unset($d[$k]);
+    }
+    $gen = up($r['sexo'] ?? '');
+    $codigos = ($cfg['generos'] ?? []) + IXC_GENERO_CODIGOS;
+    $campoGen = (string)($cfg['genero_campo'] ?? '');
+    foreach ($campoGen !== '' ? [] : ['genero', 'sexo', 'Sexo'] as $k) {
+        if (isset($cols[$k])) { $campoGen = $k; break; }
+    }
+    if ($gen !== '' && isset($codigos[$gen]) && $campoGen !== '') {
+        try {
+            $id = $api->inserir('contato', limpar_campos($d + [$campoGen => $codigos[$gen]]));
+            return 'Lead IXC #' . $id . ($plano ? '' : ' (plano não achado no IXC: confira)');
+        } catch (ErroCrm $e) {
+            if ($e->temporario) throw $e;
+            error_log('IXC recusou o gênero no lead (' . $campoGen . '): ' . $e->getMessage());
+        }
+    }
     $id = $api->inserir('contato', limpar_campos($d));
     return 'Lead IXC #' . $id . ($plano ? '' : ' (plano não achado no IXC: confira)');
 }
