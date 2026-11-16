@@ -135,6 +135,10 @@ function criar_tabelas(PDO $pdo): void
         $pdo->exec("ALTER TABLE vendas ADD COLUMN ixc_passos TEXT NOT NULL DEFAULT ''");
     }
     $colsC = array_column($pdo->query('PRAGMA table_info(comissoes)')->fetchAll(), 'name');
+    if (!in_array('venc_previsto', $colsC, true)) {
+        // vencimento previsto (AAAA-MM-DD) enquanto o IXC ainda não tem o boleto
+        $pdo->exec("ALTER TABLE comissoes ADD COLUMN venc_previsto TEXT NOT NULL DEFAULT ''");
+    }
     if (!in_array('valor_plano', $colsC, true)) {
         // valor mensal do plano vendido (vem do cadastro de planos; o admin pode corrigir)
         $pdo->exec("ALTER TABLE comissoes ADD COLUMN valor_plano TEXT NOT NULL DEFAULT ''");
