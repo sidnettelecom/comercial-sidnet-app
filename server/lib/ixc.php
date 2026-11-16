@@ -187,6 +187,26 @@ const IXC_NEGOCIACAO_PADRAO = [
     'melhor_horario_reserva' => 'Q',
 ];
 
+/** Colunas de uma tabela do IXC (lidas de um registro qualquer). Vazio se não deu para ler. */
+function ixc_colunas(string $tabela): array
+{
+    static $cache = [];
+    if (!isset($cache[$tabela])) {
+        try {
+            $reg = ixc()->listar($tabela, 'id', '0', '>', 1)[0] ?? [];
+        } catch (ErroCrm) {
+            $reg = [];
+        }
+        $cache[$tabela] = array_fill_keys(array_keys($reg), true);
+    }
+    return $cache[$tabela];
+}
+
+/** Gênero, com as opções da tela do IXC (código do app => texto). */
+const IXC_GENEROS = ['F' => 'FEMININO', 'M' => 'MASCULINO', 'NB' => 'NÃO BINÁRIO', 'O' => 'OUTRO', 'PNI' => 'PREFIRO NÃO DIZER'];
+/** Código que vai no campo de gênero do IXC (troque em ixc.generos no config.php se o IXC usar outros). */
+const IXC_GENERO_CODIGOS = ['F' => 'F', 'M' => 'M', 'NB' => 'NB', 'O' => 'O', 'PNI' => 'P'];
+
 /** Plano de venda (vd_contratos) pelo nome que o app usa. */
 function ixc_plano(string $nome): ?array
 {
@@ -265,7 +285,16 @@ function ixc_descricao(array $r, array $venda, array $vendedor): string
         $add('CANAL DE VENDA', up($r['canal'] ?? ''));
         if (up($r['zona'] ?? '') === 'R') $L[] = 'ZONA RURAL';
         $add('LOCAL (GPS)', $r['local'] ?? '');
-        if ($tipo === 'venda') $add('APELIDO', up($r['apelido'] ?? ''));
+        if ($tipo === 'venda') {
+            $add('APELIDO', up($r['apelido'] ?? ''));
+            $add('DATA DE NASCIMENTO', $r['nasc'] ?? '');
+            $add('RG', up($r['rg'] ?? ''));
+            $add('ÓRGÃO EMISSOR', up($r['rgOrgao'] ?? ''));
+            $add('GÊNERO', IXC_GENEROS[up($r['sexo'] ?? '')] ?? '');
+            $add('ESTADO CIVIL', up($r['estadoCivil'] ?? ''));
+            $add('PROFISSÃO', up($r['profissao'] ?? ''));
+            $add('MORADIA', ['P' => 'PRÓPRIA', 'A' => 'ALUGADA'][up($r['moradia'] ?? '')] ?? '');
+        }
     }
     if ((int)so_digitos($r['valInst'] ?? '') > 0) $L[] = 'INSTALAÇÃO: R$ ' . valor_brl($r['valInst']);
     if ((int)so_digitos($r['valRot'] ?? '') > 0) $L[] = 'ROTEADOR VENDIDO: R$ ' . valor_brl($r['valRot']);
@@ -414,8 +443,10 @@ function ixc_plano_negociacao(array $plano): ?array
 /**
  * Venda nova, como no processo da Sidnet no IXC:
  *   1) Lead (CRM › Leads)  2) Prospecção (cliente em negociação)  3) Negociação com o plano.
- * Padrão (ixc.venda_ate = 'prospect'): faz 1 e 2; a negociação e o "Vencemos" o escritório faz no IXC.
- * 'lead' = só o passo 1; 'negociacao' = os três.
+ * Padrão (decisão do ALEX, 16/11/2026): só o passo 1, o lead. O escritório leva o lead adiante no IXC
+ * (negociação, prospecção e Vencemos). Criar o cadastro junto com o lead fazia o IXC recusar depois
+ * ("CNPJ/CPF já cadastrado") ao salvar o lead.
+ * ixc.venda_ate = 'negociacao' volta a fazer os três passos pela API. O antigo 'prospect' agora vale como 'lead'.
  */
 function ixc_venda(array $r, array $venda, array $vendedor): string
 {
@@ -426,9 +457,9 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
         $p['lead'] = so_digitos(ixc_lead($r, $venda, $vendedor));
         ixc_salvar_passos($venda, $p);
     }
-    $ate = (string)($cfg['venda_ate'] ?? 'prospect');
-    if ($ate === 'lead') {
-        return 'Lead #' . $p['lead'] . ' registrado. Falta no IXC: converter em prospect, negociação e Vencemos';
+    $ate = (string)($cfg['venda_ate'] ?? 'lead');
+    if ($ate !== 'negociacao') {
+        return 'Lead #' . $p['lead'] . ' registrado. Falta no IXC: negociação, prospecção e Vencemos';
     }
     $plano = ixc_plano((string)($r['plano'] ?? ''));
     $canal = ixc_id_por_nome(($cfg['canais'] ?? []) + IXC_CANAIS, (string)($r['canal'] ?? ''), (string)($cfg['canal_padrao'] ?? '12'));
@@ -463,7 +494,7 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
             'tipo_pessoa' => 'F',
             'razao' => up($r['nome'] ?? ''),
             'cnpj_cpf' => cpf_mascara($cpf),
-            'ie_identidade' => up($r['rg'] ?? ''),
+            'ie_identidade' => up($r['rg'] ?? '') ?: $cpf,
             'data_nascimento' => preg_match('#^\d{2}/\d{2}/\d{4}$#', (string)($r['nasc'] ?? '')) ? $r['nasc'] : '',
             'filial_id' => $filial,
             'id_candato_tipo' => $canal,
@@ -492,10 +523,6 @@ function ixc_venda(array $r, array $venda, array $vendedor): string
         $d += IXC_CLIENTE_PADRAO; // o que a tela do IXC já marca sozinha; pela API vai vazio e ele recusa
         $p['prospect'] = $api->inserir('cliente', limpar_campos($d));
         ixc_salvar_passos($venda, $p);
-    }
-
-    if ($ate !== 'negociacao') {
-        return 'Lead #' . $p['lead'] . ' e prospect #' . $p['prospect'] . ' registrados. Falta no IXC: negociação e Vencemos';
     }
 
     // 3) negociação com o plano, em "Negociando"
@@ -568,6 +595,7 @@ function ixc_lead(array $r, array $venda, array $vendedor): string
         'lead' => 'S',
         'nome' => up($r['nome'] ?? ''),
         'tipo_pessoa' => 'F',
+        'ie_identidade' => up($r['rg'] ?? '') ?: $cpf,
         'cnpj_cpf' => $cpf !== '' ? cpf_mascara($cpf) : '',
         'data_nascimento' => preg_match('#^\d{2}/\d{2}/\d{4}$#', (string)($r['nasc'] ?? '')) ? $r['nasc'] : '',
         'id_filial' => (string)($cfg['filial_id'] ?? '1'),
@@ -577,6 +605,7 @@ function ixc_lead(array $r, array $venda, array $vendedor): string
         'fone_celular' => (string)($r['tel1'] ?? ''),
         'fone_whatsapp' => (string)($r['tel1'] ?? ''),
         'fone_residencial' => (string)($r['tel2'] ?? ''),
+        'fone_comercial' => (string)($r['tel2'] ?? ''),
         'email' => strtolower(trim((string)($r['email'] ?? ''))),
         'cep' => strlen($cep) === 8 ? substr($cep, 0, 5) . '-' . substr($cep, 5) : '',
         'endereco' => up(($r['rua'] ?? '') !== '' ? $r['rua'] : ($r['endereco'] ?? '')),
@@ -600,6 +629,29 @@ function ixc_lead(array $r, array $venda, array $vendedor): string
     if ($resp !== '') $d['id_responsavel'] = $resp;
     if (!empty($cfg['regiao_cobertura_id'])) $d['id_tipo_elemento'] = (string)$cfg['regiao_cobertura_id'];
     $d['tipo_localidade'] = up($r['zona'] ?? '') === 'R' ? 'R' : 'U';
+    // gênero: as mesmas opções da tela do IXC. O nome do campo e os códigos podem ser trocados
+    // no config.php (ixc.genero_campo / ixc.generos). Se o IXC recusar, grava o lead sem o gênero
+    // (ele continua na observação) para a venda não travar.
+    // campos que nem todo IXC tem no lead: só manda os que existem na tabela, senão ele recusa o lead todo
+    $cols = ixc_colunas('contato');
+    foreach (['ie_identidade', 'fone_comercial'] as $k) {
+        if (!isset($cols[$k])) unset($d[$k]);
+    }
+    $gen = up($r['sexo'] ?? '');
+    $codigos = ($cfg['generos'] ?? []) + IXC_GENERO_CODIGOS;
+    $campoGen = (string)($cfg['genero_campo'] ?? '');
+    foreach ($campoGen !== '' ? [] : ['genero', 'sexo', 'Sexo'] as $k) {
+        if (isset($cols[$k])) { $campoGen = $k; break; }
+    }
+    if ($gen !== '' && isset($codigos[$gen]) && $campoGen !== '') {
+        try {
+            $id = $api->inserir('contato', limpar_campos($d + [$campoGen => $codigos[$gen]]));
+            return 'Lead IXC #' . $id . ($plano ? '' : ' (plano não achado no IXC: confira)');
+        } catch (ErroCrm $e) {
+            if ($e->temporario) throw $e;
+            error_log('IXC recusou o gênero no lead (' . $campoGen . '): ' . $e->getMessage());
+        }
+    }
     $id = $api->inserir('contato', limpar_campos($d));
     return 'Lead IXC #' . $id . ($plano ? '' : ' (plano não achado no IXC: confira)');
 }

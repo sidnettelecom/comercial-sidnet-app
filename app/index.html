@@ -456,16 +456,8 @@ html.web .gate .olho{color:#475569}
     <fieldset class="only-venda not-segundo">
       <legend>Dados pessoais</legend>
       <div class="two">
-        <div class="f" data-k="rg"><label for="rg">RG</label><input id="rg" class="mono" autocapitalize="characters"></div>
-        <div class="f" data-k="rgOrgao"><label for="rgOrgao">Órgão emissor</label><input id="rgOrgao" placeholder="SSP/MG" autocapitalize="characters"></div>
-      </div>
-      <div class="two">
-        <div class="f" data-k="sexo"><label for="sexo">Sexo</label><select id="sexo"><option value="">—</option><option value="F">Feminino</option><option value="M">Masculino</option><option value="NB">Não binário</option><option value="O">Outro</option><option value="PNI">Prefiro não informar</option></select></div>
-        <div class="f" data-k="estadoCivil"><label for="estadoCivil">Estado civil</label><select id="estadoCivil"><option value="">—</option><option>Solteiro</option><option>Casado</option><option>Divorciado</option><option>Viúvo</option></select></div>
-      </div>
-      <div class="two">
-        <div class="f" data-k="profissao"><label for="profissao">Profissão</label><input id="profissao" autocapitalize="characters"></div>
-        <div class="f" data-k="moradia"><label for="moradia">Moradia</label><select id="moradia"><option value="">—</option><option value="P">Própria</option><option value="A">Alugada</option></select></div>
+        <div class="f" data-k="rg"><label for="rg">RG</label><input id="rg" class="mono" autocapitalize="characters" placeholder="Mesmo número do CPF"></div>
+        <div class="f" data-k="sexo"><label for="sexo">Gênero</label><select id="sexo"><option value="">—</option><option value="F">Feminino</option><option value="M">Masculino</option><option value="NB">Não binário</option><option value="O">Outro</option><option value="PNI">Prefiro não dizer</option></select></div>
       </div>
       <div class="two">
         <div class="f" data-k="zona"><label for="zona">Localidade</label><select id="zona"><option value="U">Zona urbana</option><option value="R">Zona rural</option></select></div>
@@ -1000,7 +992,8 @@ function compartilhar(r,txt,outro){
 }
 
 /* ---------- formulário ---------- */
-var F=["ixcCliente","ixcContrato","planoAtual","nome","apelido","cpf","nasc","cidade","referencia","local","tel1","tel2","email","plano","provedor","obs","valAtual","valNovo","velNova","valInst","valRot","valTv","exRoteadorObs","exCaboObs","exTrocaObs","servico","valOrc","validade","cep","uf","rua","numero","bairro","complemento","bloco","apartamento","rg","rgOrgao","sexo","estadoCivil","profissao","moradia","zona","canal"];
+var GENERO={F:"FEMININO",M:"MASCULINO",NB:"NÃO BINÁRIO",O:"OUTRO",PNI:"PREFIRO NÃO DIZER"};
+var F=["ixcCliente","ixcContrato","planoAtual","nome","apelido","cpf","nasc","cidade","referencia","local","tel1","tel2","email","plano","provedor","obs","valAtual","valNovo","velNova","valInst","valRot","valTv","exRoteadorObs","exCaboObs","exTrocaObs","servico","valOrc","validade","cep","uf","rua","numero","bairro","complemento","bloco","apartamento","rg","sexo","zona","canal"];
 var CK=["exRoteador","exCabo","exTroca"];
 function mostraObsServ(){CK.forEach(function(k){var t=$(k+"Obs");var was=t.hidden;t.hidden=!$(k).checked;if(was&&!t.hidden&&document.activeElement===$(k))t.focus()})}
 CK.forEach(function(k){$(k).addEventListener("change",mostraObsServ)});
@@ -1055,7 +1048,7 @@ function setForm(o){if(o&&o.endereco&&!o.rua){o=Object.assign({},o,{rua:o.endere
   document.querySelectorAll(".f").forEach(function(f){f.classList.remove("bad","good")});$("formAlert").hidden=true}
 function rascunho(){save(K.draft,{f:getForm(),id:editingId})}
 $("form").addEventListener("input",rascunho);$("form").addEventListener("change",rascunho);
-$("cpf").addEventListener("input",function(){this.value=fmtCPF(this.value);var f=this.closest(".f");var ok=dig(this.value).length===11&&cpfOk(this.value);f.classList.toggle("good",ok);if(dig(this.value).length===11)f.classList.toggle("bad",!ok);else f.classList.remove("bad")});
+$("cpf").addEventListener("input",function(){var rg=$("rg");this.value=fmtCPF(this.value);if(!rg.value||rg.dataset.auto===rg.value){rg.value=dig(this.value);rg.dataset.auto=rg.value}var f=this.closest(".f");var ok=dig(this.value).length===11&&cpfOk(this.value);f.classList.toggle("good",ok);if(dig(this.value).length===11)f.classList.toggle("bad",!ok);else f.classList.remove("bad")});
 $("nasc").addEventListener("input",function(){this.value=fmtData(this.value)});
 $("cep").addEventListener("input",function(){var d=dig(this.value).slice(0,8);this.value=d.length>5?d.slice(0,5)+"-"+d.slice(5):d;if(d.length===8)buscaCep(d)});
 function buscaCep(d){var h=$("cepHint");if(!navigator.onLine){h.textContent="Sem internet: preencha a rua e o bairro.";return}h.textContent="Buscando CEP…";
@@ -1170,7 +1163,7 @@ function mensagem(r){
   if(seg&&r.planoAtual){L.push("- PLANO QUE JÁ TEM: "+up(r.planoAtual));L.push("")}
   if(!seg){L.push("* DATA DE NASCIMENTO:");L.push(r.nasc);L.push("")}
   L.push("* ENDEREÇO COMPLETO:");L.push(up(r.endereco)+(r.cep?" - CEP "+r.cep:"")+(up(r.bloco)?" - BLOCO "+up(r.bloco):"")+(up(r.apartamento)?" APTO "+up(r.apartamento):""));L.push("");
-  if(!seg){var dp=[];if(up(r.rg))dp.push("RG "+up(r.rg)+(up(r.rgOrgao)?" "+up(r.rgOrgao):""));if(r.sexo)dp.push("SEXO "+r.sexo);if(r.estadoCivil)dp.push(up(r.estadoCivil));if(up(r.profissao))dp.push(up(r.profissao));if(r.moradia)dp.push("MORADIA "+(r.moradia==="P"?"PRÓPRIA":"ALUGADA"));if(dp.length){L.push("- DADOS PESSOAIS: "+dp.join(" | "));L.push("")}}
+  if(!seg){var dp=[];if(up(r.rg))dp.push("RG "+up(r.rg));if(r.sexo)dp.push("GÊNERO "+(GENERO[r.sexo]||r.sexo));if(dp.length){L.push("- DADOS PESSOAIS: "+dp.join(" | "));L.push("")}}
   L.push("- CIDADE:");L.push(up(r.cidade));L.push("");
   if(up(r.referencia)){L.push("- PONTO DE REFERÊNCIA:");L.push(up(r.referencia));L.push("")}
   L.push("- LOCALIZAÇÃO DO LOCAL A INSTALAR:");L.push(r.local?r.local.trim():"NÃO INFORMADA");L.push("");
@@ -1403,7 +1396,7 @@ $("btnExemplo").addEventListener("click",function(){
   if(tipoAtual()==="upgrade"){setForm({tipo:"upgrade",nome:"JOSE DE TESTE SOUZA",tel1:"(33) 98888-0003",tel2:"(33) 98888-0004",email:"jose.teste@gmail.com",valAtual:"79,90",valNovo:"109,90",velNova:"500 MEGAS",exRoteador:true,exCabo:true,exCaboObs:"DA SALA ATÉ O QUARTO DOS FUNDOS",valInst:"",valRot:"150,00",obs:"CADASTRO DE TREINO, NÃO EXECUTAR"});rascunho();toast("Exemplo preenchido. Ele é fictício.");return}
   if(tipoAtual()==="orcamento"){setForm({tipo:"orcamento",nome:"CARLOS DE TESTE LIMA",rua:"RUA DAS ACÁCIAS",numero:"80",bairro:"CENTRO",cidade:"CIDADE EXEMPLO",referencia:"PORTÃO VERDE",tel1:"(33) 98888-0007",servico:"PASSAGEM DE CABO DA SALA ATÉ O ESCRITÓRIO (15 M) E INSTALAÇÃO DE SEGUNDO ROTEADOR",valOrc:"180,00",validade:"15",obs:"ORÇAMENTO DE TREINO"});rascunho();toast("Exemplo preenchido. Ele é fictício.");return}
   if(tipoAtual()==="segundo"){setForm({tipo:"segundo",nome:"ANA DE TESTE PEREIRA",cpf:cpfFake(),cep:"",rua:"RUA DO COMÉRCIO",numero:"45",complemento:"LOJA 2",bairro:"CENTRO",cidade:"CIDADE EXEMPLO",referencia:"LOJA AO LADO DO MERCADO",tel1:"(33) 98888-0005",tel2:"(33) 98888-0006",email:"ana.teste@gmail.com",venc:"20",plano:cfg.planos[0],provedor:"SIDNET (1º PONTO)",valInst:"50,00",obs:"SEGUNDO PONTO NA LOJA DA CLIENTE. TREINO"});rascunho();toast("Exemplo preenchido. Ele é fictício.");return}
-  setForm({tipo:"venda",nome:"MARIA DE TESTE SILVA",apelido:"",cpf:cpfFake(),nasc:"14/03/1990",rua:"RUA DAS FLORES",numero:"120",bairro:"CENTRO",cidade:"CIDADE EXEMPLO",uf:"MG",rg:"MG-12.345.678",rgOrgao:"SSP/MG",sexo:"F",estadoCivil:"Solteiro",profissao:"PROFESSORA",moradia:"P",zona:"U",canal:"PRESENCIAL",referencia:"CASA AZUL AO LADO DA PADARIA",local:"",tel1:"(33) 98888-0001",tel2:"(33) 98888-0002",email:"maria.teste@gmail.com",venc:"10",plano:cfg.planos[0],provedor:"NENHUM",valInst:"100,00",valRot:"",obs:"CADASTRO DE TREINO, NÃO INSTALAR"});
+  setForm({tipo:"venda",nome:"MARIA DE TESTE SILVA",apelido:"",cpf:cpfFake(),nasc:"14/03/1990",rua:"RUA DAS FLORES",numero:"120",bairro:"CENTRO",cidade:"CIDADE EXEMPLO",uf:"MG",rg:"",sexo:"F",zona:"U",canal:"PRESENCIAL",referencia:"CASA AZUL AO LADO DA PADARIA",local:"",tel1:"(33) 98888-0001",tel2:"(33) 98888-0002",email:"maria.teste@gmail.com",venc:"10",plano:cfg.planos[0],provedor:"NENHUM",valInst:"100,00",valRot:"",obs:"CADASTRO DE TREINO, NÃO INSTALAR"});
   rascunho();toast("Exemplo preenchido. Ele é fictício.");
 });
 
@@ -1446,7 +1439,7 @@ function payload(r){
     ["cpf","CPF",r.cpf],["whatsapp","WhatsApp",fmtTel(r.tel1)],["telefone_residencial","Telefone 2",fmtTel(r.tel2)],["email","E-mail",String(r.email||"").trim().toLowerCase()]];
   if(t!=="segundo")c.push(["data_nascimento","Nascimento",iso(r.nasc)]);
   c=c.concat([["cep","CEP",r.cep||""],["logradouro","Rua",up(r.rua||r.endereco)],["numero","Número",up(r.numero)],["bairro","Bairro",up(r.bairro)],["complemento","Complemento",up(r.complemento)],["cidade","Cidade",up(r.cidade)],["uf","UF",up(r.uf)||ufDDD[dig(r.tel1).slice(0,2)]||""],["bloco","Bloco",up(r.bloco)],["apartamento","Apto",up(r.apartamento)],
-    ["rg","RG",up(r.rg)],["rg_orgao_emissor","Órgão emissor",up(r.rgOrgao)],["sexo","Sexo",r.sexo||""],["estado_civil","Estado civil",r.estadoCivil||""],["profissao","Profissão",up(r.profissao)],["moradia","Moradia",r.moradia==="P"?"Própria":r.moradia==="A"?"Alugada":""],["referencia","Referência",up(r.referencia)],
+    ["rg","RG",up(r.rg)],["sexo","Gênero",GENERO[r.sexo]||""],["referencia","Referência",up(r.referencia)],
     ["vendedor_id","Vendedor",quemFez(r)],["origem","Origem","Outros (venda de campo pelo app)"],
     ["plano_interesse","Plano",r.plano],["valor","Valor",preco?"R$ "+brl(preco):"do catálogo"],["status","Status","Venda Fechada"],["dia_vencimento","Vencimento","Dia "+r.venc],
     ["perfil_cliente","Perfil",t==="segundo"?"Cliente atual":"Novo cliente"],["tipo_servico","Tipo de serviço","Instalação"],["observacao","Observação",obs.join(" · ")]]);

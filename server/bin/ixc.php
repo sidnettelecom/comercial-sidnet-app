@@ -6,6 +6,7 @@
  *   php server/bin/ixc.php teste        confere se o servidor fala com o IXC usando o token
  *   php server/bin/ixc.php listar X     mostra id e nome, para preencher o config.php. X pode ser:
  *        assuntos | setores | filiais | planos | vendedores | colaboradores | canais | concorrentes | planos-negociacao | tipos-contrato | estagios
+ *   php server/bin/ixc.php campos contato   mostra os campos de um lead do IXC (para conferir gênero, fones, RG)
  */
 declare(strict_types=1);
 
@@ -47,6 +48,13 @@ try {
                 echo "  $k: ainda não preenchido no config.php\n";
             }
         }
+        exit(0);
+    }
+    if ($cmd === 'campos') {
+        $t = $argv[2] ?? 'contato';
+        $reg = ixc()->listar($t, 'id', '0', '>', 1)[0] ?? null;
+        if (!$reg) { echo "Nenhum registro em $t.\n"; exit(0); }
+        foreach ($reg as $k => $v) printf("  %-32s %s\n", $k, mb_substr(is_scalar($v) ? (string)$v : json_encode($v), 0, 60));
         exit(0);
     }
     if ($cmd === 'listar') {
