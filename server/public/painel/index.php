@@ -8,6 +8,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../lib/repasse.php';
 require_once __DIR__ . '/../../lib/vendedores.php';
 require_once __DIR__ . '/../../lib/comissoes.php';
+require_once __DIR__ . '/../../lib/comissoes_planilha.php'; // PLANILHA-TEMP
 
 const PAINEL_INATIVO_MAX = 8 * 3600; // sai sozinho depois de 8 horas sem uso
 
@@ -265,6 +266,20 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $n = comissoes_atualizar_ixc(300);
             registrar($quem, 'atualizou comissões do IXC', (string)$n);
             $msg = $n ? "$n venda(s) atualizadas com dados do IXC." : 'Nada novo no IXC: o que dava para achar já está preenchido.';
+        } elseif ($a === 'planilha_importar') { // PLANILHA-TEMP
+            if (!$admin) throw new RuntimeException('Só o gestor admin mexe nas comissões.');
+            $arq = $_FILES['csv'] ?? null;
+            if (!$arq || ($arq['error'] ?? 1) !== UPLOAD_ERR_OK || !is_uploaded_file((string)$arq['tmp_name'])) throw new RuntimeException('Escolha o arquivo CSV da planilha.');
+            if (planilha_qtd() > 0 && empty($_POST['substituir'])) throw new RuntimeException('Já tem uma planilha importada. Marque "trocar tudo" para importar de novo (o que você marcou aqui se perde).');
+            $n = planilha_importar((string)$arq['tmp_name'], $quem);
+            registrar($quem, 'importou comissões da planilha', $n . ' linha(s)');
+            $msg = "Planilha importada: $n linhas.";
+        } elseif ($a === 'planilha_salvar') { // PLANILHA-TEMP
+            if (!$admin) throw new RuntimeException('Só o gestor admin mexe nas comissões.');
+            $n = planilha_salvar((array)($_POST['pl'] ?? []), $quem);
+            registrar($quem, 'salvou comissões da planilha', $n . ' linha(s)');
+            $msg = $n ? "Comissões da planilha salvas ($n linha" . ($n === 1 ? '' : 's') . ' alterada' . ($n === 1 ? '' : 's') . ').' : 'Nada mudou.';
+            if (empty($_POST['pl_fim'])) $msg .= ' Atenção: a tela era grande demais e parte não chegou ao servidor. Filtre por vendedor e salve de novo o que faltou.';
         } elseif ($a === 'gest_admin' && $id !== $gestor['id']) {
             if (!$admin) throw new RuntimeException('Só um gestor admin pode dar ou tirar admin.');
             db()->prepare('UPDATE gestores SET admin = 1 - admin WHERE id = ?')->execute([$id]);
@@ -329,6 +344,7 @@ $ICONES = [
     'vendas' => '<path d="M4 6h16M4 12h16M4 18h10"/>',
     'vendedores' => '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.4 3.6 5.2"/>',
     'planos' => '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10h6M7 14h10"/>',
+    'planilha' => '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M10 3v18"/>', // PLANILHA-TEMP
     'comissoes' => '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.8 0-3 .9-3 2.1 0 2.9 6 1.6 6 4.6 0 1.3-1.3 2.3-3 2.3-1.5 0-2.7-.6-3.2-1.7M12 6.5V8m0 9v1.5"/>',
     'mes' => '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2.5v3M16 2.5v3M7.5 13.5h3M7.5 17h6"/>',
     'gestores' => '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
@@ -446,6 +462,7 @@ th{background:transparent}tr:hover td{background:color-mix(in srgb,var(--brand) 
 .mes-t{font-weight:700;border-top:2px solid var(--line);border-bottom:0}
 @media (max-width:900px){.mes-h{display:none}.mes-l{grid-template-columns:1fr 1fr;row-gap:4px}.mes-l>.quem,.mes-t>span:first-child{grid-column:1/-1}.mes-l>span[data-r]{text-align:left;font-size:13px}.mes-l>span[data-r]::before{content:attr(data-r) ": ";color:var(--muted)}}
 .com tr.paga td{background:color-mix(in srgb,var(--ok-bg) 70%,transparent)}
+/* PLANILHA-TEMP */ .pl table{min-width:1300px}.pl td.parc .rs input{width:90px}.pl td.parc select{margin-top:4px;width:146px}.pl td.parc.ok select{border-color:var(--ok);font-weight:700}.pl input.obs{width:180px}
 .com tr.apagar td{background:#fef9c3}
 @media (prefers-color-scheme:dark){.com tr.apagar td{background:#3a3210}}
 .com .salvar{position:sticky;bottom:0;display:flex;gap:12px;justify-content:flex-end;align-items:center;padding:12px 0 2px;background:var(--surface)}
@@ -495,7 +512,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     $ultimo = db()->query("SELECT MAX(enviado_crm_em) FROM vendas")->fetchColumn(); ?>
 <aside class="lado">
   <div class="marca"><img src="/app/logo-96.png" alt="" width="48" height="48"><div><b>Comercial + SIDNET</b><span>Painel do gestor</span></div></div>
-  <nav aria-label="Seções"><?= $aba('vendas', 'Vendas') . $aba('mes', 'Vendas do mês') . $aba('vendedores', 'Vendedores') . $aba('planos', 'Planos') . ($admin ? $aba('comissoes', 'Comissões') : '') . $aba('gestores', 'Gestores') ?></nav>
+  <nav aria-label="Seções"><?= $aba('vendas', 'Vendas') . $aba('mes', 'Vendas do mês') . $aba('vendedores', 'Vendedores') . $aba('planos', 'Planos') . ($admin ? $aba('comissoes', 'Comissões') . $aba('planilha', 'Comissões planilha') : '') /* PLANILHA-TEMP */ . $aba('gestores', 'Gestores') ?></nav>
   <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
 <?php endif ?>
@@ -843,6 +860,107 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
       <?php if ($pagas): ?><tr class="soma"><td>Total</td><?php foreach (['venda', 'upgrade', 'segundo'] as $t): ?><td class="n">R$ <?= brl(number_format($g[$t], 2, '.', '')) ?></td><?php endforeach ?><td class="n"><b>R$ <?= brl(number_format($g['total'], 2, '.', '')) ?></b></td><td></td></tr>
       <?php else: ?><tr><td colspan="6" class="small">Nenhuma comissão marcada como paga em <?= h(mes_nome($pagoMes)) ?>.</td></tr><?php endif ?>
     </table></div>
+
+<?php /* ---- PLANILHA-TEMP: comissões da planilha do Excel (apagar este bloco inteiro quando quitar tudo) ---- */ ?>
+<?php elseif ($p === 'planilha' && !$admin): ?>
+  <div class="msg">Só o gestor admin vê as comissões.</div>
+
+<?php elseif ($p === 'planilha'):
+    $plVend = (string)($_GET['vend'] ?? '');
+    $plAbertas = !empty($_GET['abertas']);
+    $plTodas = planilha_linhas();
+    $plPorVend = [];
+    foreach ($plTodas as $l) $plPorVend[$l['vendedor']][] = $l;
+    // um vendedor por vez: com todos juntos o formulário passa do limite do PHP (max_input_vars)
+    if (!isset($plPorVend[$plVend])) $plVend = (string)(array_key_first($plPorVend) ?? '');
+    $plLinhas = planilha_linhas($plVend, $plAbertas);
+    $plGrupos = [];
+    foreach ($plLinhas as $l) $plGrupos[$l['vendedor']][] = $l;
+    $plTot = planilha_totais($plVend !== '' ? ($plPorVend[$plVend] ?? []) : $plTodas);
+    $plMesesP = [];
+    foreach ($plTodas as $l) foreach ([1, 2, 3] as $n) if ($l["p{$n}_mes"] !== '') $plMesesP[$n] = $l["p{$n}_mes"];
+    $plIni = min(array_merge(['9999-99'], array_values($plMesesP)));
+    if ($plIni === '9999-99') $plIni = date('Y-m');
+    $plOp = [];
+    for ($m = mes_soma($plIni, -1); $m <= mes_soma(date('Y-m'), 1); $m = mes_soma($m, 1)) $plOp[] = $m;
+    $plPagas = planilha_pagas_por_mes();
+    $plQs = fn(array $mais) => '?' . http_build_query(array_filter(array_merge(['p' => 'planilha', 'vend' => $plVend, 'abertas' => $plAbertas ? 1 : null], $mais), fn($v) => $v !== null && $v !== ''));
+    $plSelPaga = function (string $nome, string $atual) use ($plOp): string {
+        $o = '<select name="' . $nome . '" aria-label="Parcela paga em"><option value="">Não paga</option>';
+        foreach ($plOp as $om) $o .= '<option value="' . $om . '"' . ($atual === $om ? ' selected' : '') . '>' . h(mes_nome($om)) . '</option>';
+        return $o . '</select>';
+    }; ?>
+  <div class="card"><h2>Comissões planilha <span class="pill q">temporário</span></h2>
+    <p class="small">Comissões que estavam na planilha do Excel, até pagar todas. Aqui a comissão é paga em <b>3 parcelas</b>, como na planilha. Quando pagar uma parcela ao vendedor, escolha o mês em "paga em" e salve. Parcela 2 e 3 vêm com o mesmo valor da 1ª (regra da planilha); linha sem valor é porque a planilha não tinha: digite quando souber.</p>
+    <?php if ($plTodas): ?>
+    <form method="get" class="row filtros"><input type="hidden" name="p" value="planilha">
+      <select name="vend" aria-label="Vendedor"><?php foreach (array_keys($plPorVend) as $vn): ?><option value="<?= h($vn) ?>" <?= $vn === $plVend ? 'selected' : '' ?>><?= h($vn) ?></option><?php endforeach ?></select>
+      <label><input type="checkbox" name="abertas" value="1" <?= $plAbertas ? 'checked' : '' ?>> só o que falta pagar</label>
+      <button class="pri">Filtrar</button></form>
+    <?php endif ?>
+    <details <?= $plTodas ? '' : 'open' ?> style="margin-top:10px"><summary><b><?= $plTodas ? 'Importar de novo' : 'Importar a planilha' ?></b></summary>
+      <form method="post" enctype="multipart/form-data" class="row" style="margin-top:8px"><?= csrf_campo() ?><input type="hidden" name="acao" value="planilha_importar">
+        <input type="file" name="csv" accept=".csv,text/csv" required aria-label="Arquivo CSV">
+        <?php if ($plTodas): ?><label><input type="checkbox" name="substituir" value="1" required> trocar tudo (perde o que foi marcado aqui)</label><?php endif ?>
+        <button class="pri">Importar</button><span class="small">Arquivo comissoes-planilha.csv, feito a partir do CONTROLE_COMERCIAL.xlsm.</span></form></details>
+  </div>
+  <?php if ($plTodas): ?>
+  <div class="card tw vds"><h2>Por vendedor</h2>
+    <table>
+      <tr><th>Vendedor</th><th class="n">Vendas</th><th class="n">Upgrades</th><th class="n">Comissão total</th><th class="n">Já paga</th><th class="n">Falta pagar</th><th>Situação</th></tr>
+      <?php foreach ($plPorVend as $vn => $ls): $t = planilha_totais($ls); $nv = count(array_filter($ls, fn($l) => $l['tipo'] === 'venda')); ?>
+      <tr class="<?= $vn === $plVend ? 'sel' : '' ?>"><td><a href="<?= h($plQs(['vend' => $vn])) ?>"><b><?= h($vn) ?></b></a></td>
+        <td class="n"><?= $nv ?></td><td class="n"><?= count($ls) - $nv ?></td>
+        <td class="n"><b>R$ <?= brl(number_format($t['total'], 2, '.', '')) ?></b></td>
+        <td class="n">R$ <?= brl(number_format($t['pago'], 2, '.', '')) ?></td>
+        <td class="n">R$ <?= brl(number_format($t['falta'], 2, '.', '')) ?></td>
+        <td class="small"><?= $t['abertas'] ? $t['abertas'] . ' parcela' . ($t['abertas'] === 1 ? '' : 's') . ' em aberto' : 'tudo pago' ?><?= $t['semvalor'] ? ' · ' . $t['semvalor'] . ' sem valor' : '' ?></td></tr>
+      <?php endforeach ?>
+    </table></div>
+  <div class="kpis">
+    <div><b><?= $plTot['n'] ?></b><span>linhas<?= $plVend !== '' ? ' · ' . h($plVend) : '' ?></span></div>
+    <div class="ok"><b>R$ <?= brl(number_format($plTot['pago'], 2, '.', '')) ?></b><span>já pago</span></div>
+    <div class="q"><b>R$ <?= brl(number_format($plTot['falta'], 2, '.', '')) ?></b><span>falta pagar · <?= $plTot['abertas'] ?> parcelas</span></div>
+    <div><b><?= $plTot['semvalor'] ?></b><span>sem valor na planilha</span></div>
+  </div>
+  <form method="post" class="card tw com pl"><?= csrf_campo() ?><input type="hidden" name="acao" value="planilha_salvar">
+    <table>
+      <tr><th>Tipo</th><th>ID IXC</th><th>Cliente</th><th>Valor</th><th>1ª mensalidade</th><th>Mensalidade paga?</th>
+        <?php foreach ([1, 2, 3] as $n): ?><th>Parcela <?= $n ?><?= isset($plMesesP[$n]) ? '<br><span class="small">' . h(mes_nome($plMesesP[$n])) . '</span>' : '' ?></th><?php endforeach ?><th>Falta</th><th>Observação</th></tr>
+      <?php foreach ($plGrupos as $vn => $ls): $gt = planilha_totais($ls); ?>
+      <tr class="vend-h"><td colspan="11"><b><?= h($vn) ?></b>
+        <span><?= count($ls) ?> linha<?= count($ls) === 1 ? '' : 's' ?> · comissão R$ <?= brl(number_format($gt['total'], 2, '.', '')) ?> · paga R$ <?= brl(number_format($gt['pago'], 2, '.', '')) ?> · falta R$ <?= brl(number_format($gt['falta'], 2, '.', '')) ?></span>
+        </td></tr>
+      <?php foreach ($ls as $l): $k = 'pl[' . (int)$l['id'] . ']'; $lt = planilha_totais([$l]); ?>
+      <tr class="<?= $lt['abertas'] === 0 && $lt['semvalor'] === 0 ? 'paga' : '' ?>">
+        <td><span class="tp tp-<?= h($l['tipo']) ?>"><?= $l['tipo'] === 'upgrade' ? 'Upgrade' : 'Venda' ?></span></td>
+        <td class="n"><?= h($l['ixc_cliente']) ?></td>
+        <td><b><?= h($l['nome']) ?></b><?= $l['condicao'] !== '' ? '<br><span class="small">' . h($l['condicao']) . '</span>' : '' ?></td>
+        <td class="n"><?= $l['tipo'] === 'upgrade' ? 'R$ ' . h(brl($l['valor_antigo'])) . ' → ' . h(brl($l['valor_plano'])) : ($l['valor_plano'] !== '' ? 'R$ ' . h(brl($l['valor_plano'])) : '—') ?>
+          <?= ($l['instalacao'] !== '' || $l['roteador'] !== '') ? '<br><span class="small">taxas R$ ' . h(brl(number_format((float)$l['instalacao'] + (float)$l['roteador'], 2, '.', ''))) . '</span>' : '' ?></td>
+        <td class="n"><?= $l['vencimento'] !== '' ? h(date('d/m/Y', strtotime($l['vencimento']))) : '—' ?></td>
+        <td><?php if ($l['tipo'] === 'venda'): ?><select name="<?= $k ?>[mensalidade]" aria-label="Mensalidade paga"><option value="">—</option><?php foreach (PLANILHA_MENSALIDADE as $o): ?><option <?= $l['mensalidade'] === $o ? 'selected' : '' ?>><?= $o ?></option><?php endforeach ?></select><?php else: ?><span class="small">—</span><?php endif ?></td>
+        <?php foreach ([1, 2, 3] as $n): ?>
+        <td class="parc<?= $l["p{$n}_paga"] !== '' ? ' ok' : '' ?>"><span class="rs"><input name="<?= $k ?>[p<?= $n ?>]" value="<?= h(brl($l["p$n"])) ?>" inputmode="decimal" placeholder="0,00" aria-label="Valor da parcela <?= $n ?>" class="forte"></span><br><?= $plSelPaga($k . "[p{$n}_paga]", $l["p{$n}_paga"]) ?></td>
+        <?php endforeach ?>
+        <td class="n"><b><?= $lt['falta'] > 0 ? 'R$ ' . brl(number_format($lt['falta'], 2, '.', '')) : ($lt['semvalor'] ? '?' : '—') ?></b></td>
+        <td><input name="<?= $k ?>[obs]" value="<?= h($l['obs']) ?>" class="obs" aria-label="Observação" title="<?= h($l['obs']) ?>"></td>
+      </tr>
+      <?php endforeach ?>
+      <?php endforeach ?>
+      <?php if (!$plLinhas): ?><tr><td colspan="11" class="small">Nada com esse filtro.</td></tr><?php endif ?>
+    </table>
+    <?php if ($plLinhas): ?><div class="salvar"><span class="small">Mudou alguma coisa? Salve antes de trocar de vendedor.</span><input type="hidden" name="pl_fim" value="1"><button class="pri">Salvar</button></div><?php endif ?>
+  </form>
+  <div class="card tw"><h2>Pago por mês (planilha)</h2>
+    <table><tr><th>Mês do pagamento</th><th>Vendedor</th><th class="n">Total</th></tr>
+      <?php foreach ($plPagas as $pm => $porV): foreach ($porV as $vn => $v): ?>
+      <tr><td><?= h(mes_nome((string)$pm)) ?></td><td><?= h($vn) ?></td><td class="n">R$ <?= brl(number_format($v, 2, '.', '')) ?></td></tr>
+      <?php endforeach; ?><tr class="soma"><td><?= h(mes_nome((string)$pm)) ?></td><td>Total do mês</td><td class="n">R$ <?= brl(number_format(array_sum($porV), 2, '.', '')) ?></td></tr><?php endforeach ?>
+      <?php if (!$plPagas): ?><tr><td colspan="3" class="small">Nenhuma parcela marcada como paga.</td></tr><?php endif ?>
+    </table></div>
+  <?php endif ?>
+<?php /* ---- fim PLANILHA-TEMP ---- */ ?>
 
 <?php elseif ($p === 'gestores'): ?>
   <div class="card tw"><table>
