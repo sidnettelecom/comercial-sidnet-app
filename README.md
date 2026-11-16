@@ -102,3 +102,10 @@ plano_para, valor_de, valor_para, observacao.
   O repasse foi testado contra uma cópia das telas do CRM, não contra o CRM real.
 - Fotos e vídeo continuam indo pelo WhatsApp (o servidor ainda não recebe anexos).
 - Gerar o APK novo (versão 2.0) com esta tela e publicar no Navita.
+
+## Comissões planilha (temporário)
+
+Aba do painel com as comissões que vieram da planilha do Excel (3 parcelas), até pagar todas.
+Os dados dos clientes não ficam no GitHub: o admin importa o CSV em **Comissões planilha → Importar a planilha**.
+Para tirar depois: apagar `server/lib/comissoes_planilha.php` e os trechos marcados `PLANILHA-TEMP` em
+`server/public/painel/index.php`. A tabela `comissoes_planilha` pode ficar no banco sem atrapalhar.
