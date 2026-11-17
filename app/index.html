@@ -906,26 +906,26 @@ function consultarBoletos(){
 function ddmm(iso){return iso?iso.slice(8,10)+"/"+iso.slice(5,7):""}
 function somaMes(iso,k){if(!iso)return"";var y=+iso.slice(0,4),m=+iso.slice(5,7)-1+k,dd=+iso.slice(8,10);y+=Math.floor(m/12);m=((m%12)+12)%12;var fim=new Date(y,m+1,0).getDate();return y+"-"+String(m+1).padStart(2,"0")+"-"+String(Math.min(dd,fim)).padStart(2,"0")}
 function pillBoleto(r){
-  var b=r.bol;if(!b||(!b.p&&!b.v&&(b.n||1)===1))return"";var n=b.n||1,d=ddmm(b.v),nm=n+"º boleto";
+  var b=r.bol;if(!b||(!b.p&&!b.v&&(b.n||1)===1))return"";var n=b.n||1,d=ddmm(b.v),nm=n>1?"Boleto da comissão":"1º boleto";
   if(b.p==="S")return'<span class="boleto ok">'+nm+' pago</span>';
   if(b.p==="N")return'<span class="boleto er">'+nm+' em aberto'+(d?" · venceu "+d:"")+' · cobrar o cliente</span>';
   return'<span class="boleto av">'+nm+(d?' vence '+d+(b.pr?' (previsto)':''):' ainda sem data')+'</span>';
 }
-/* o vendedor escolhe qual boleto conta para a comissão: o 1º, ou o 2º quando o 1º vem proporcional */
+/* o vendedor escolhe a data do boleto que conta para a comissão (o 1º, o seguinte ou o outro, quando o valor cheio vem depois) */
 function selBoletoCom(r){
   var b=r.bol;if(!b||b.pg||!r.crm||r.crm.st!=="ok"||ehOrc(r))return"";var n=b.n||1,d1=b.v?somaMes(b.v,1-n):"";
-  return'<label class="bolcom">Data para a comissão <select data-bol aria-label="Boleto que conta para a comissão">'+[1,2].map(function(k){var d=d1?ddmm(somaMes(d1,k-1)):"";return'<option value="'+k+'"'+(k===n?' selected':'')+'>'+k+'º boleto'+(d?' · '+d:'')+(k===2?' (1º proporcional)':'')+'</option>'}).join("")+'</select></label>';
+  return'<label class="bolcom">Data para a comissão <select data-bol aria-label="Boleto que conta para a comissão">'+[1,2,3].map(function(k){var d=d1?ddmm(somaMes(d1,k-1)):"";return'<option value="'+k+'"'+(k===n?' selected':'')+'>'+(d||k+'º boleto')+'</option>'}).join("")+'</select></label>';
 }
 function trocarBoletoCom(r,sel){
   var n=+sel.value,ant=(r.bol&&r.bol.n)||1;if(n===ant)return;
-  if(DEMO){r.bol=Object.assign({},r.bol,{n:n,p:"",v:r.bol&&r.bol.v?somaMes(r.bol.v,n-ant):"",pr:true});save(K.recs,recs);renderLista();toast("Comissão pelo "+n+"º boleto");return}
+  if(DEMO){r.bol=Object.assign({},r.bol,{n:n,p:"",v:r.bol&&r.bol.v?somaMes(r.bol.v,n-ant):"",pr:true});save(K.recs,recs);renderLista();toast("Comissão pelo boleto nº "+n);return}
   if(!online()||!cfg.chave){sel.value=ant;toast("Precisa de internet para mudar a data da comissão");return}
   sel.disabled=true;
   fetch(cfg.crmUrl+"/api/app-vendas.php?acao=boleto_comissao",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+cfg.chave},body:JSON.stringify({id_app:r.id,n:n})})
     .then(function(res){return res.json()}).then(function(j){
       if(!j.ok){sel.disabled=false;sel.value=ant;toast(j.erro||"Não deu para mudar agora");return}
       r.bol=Object.assign({},r.bol,{n:j.n,p:j.pagou||"",v:j.venc||"",pr:!!j.prev});save(K.recs,recs);renderLista();
-      toast("Comissão pelo "+j.n+"º boleto"+(j.venc?" ("+ddmm(j.venc)+")":""));
+      toast("Comissão pelo boleto "+(j.venc?"de "+ddmm(j.venc):"nº "+j.n));
     }).catch(function(){sel.disabled=false;sel.value=ant;toast("Não deu para falar com o servidor. Tente de novo.")});
 }
 setInterval(consultarBoletos,300000);

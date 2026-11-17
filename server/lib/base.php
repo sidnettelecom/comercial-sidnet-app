@@ -140,7 +140,7 @@ function criar_tabelas(PDO $pdo): void
         $pdo->exec("ALTER TABLE comissoes ADD COLUMN venc_previsto TEXT NOT NULL DEFAULT ''");
     }
     if (!in_array('boleto_n', $colsC, true)) {
-        // qual boleto conta para a comissão (1 = primeiro; 2 quando o primeiro vem proporcional). O vendedor escolhe no app.
+        // qual boleto conta para a comissão (1 = primeiro, 2 ou 3 = os seguintes). O vendedor escolhe no app.
         $pdo->exec("ALTER TABLE comissoes ADD COLUMN boleto_n INTEGER NOT NULL DEFAULT 1");
     }
     if (!in_array('valor_plano', $colsC, true)) {
