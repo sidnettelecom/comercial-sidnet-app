@@ -30,7 +30,7 @@ Com `'destino' => 'ixc'` no `config.php`, o servidor manda tudo para o IXC Prove
 | No app | No IXC |
 |---|---|
 | Venda nova | Lead no CRM do IXC (Leads). Avisa se o CPF já é lead ou cliente. |
-| Upgrade | Atendimento no cliente (achado pelo CPF), com o assunto de upgrade. O processo do assunto abre a O.S. |
+| Upgrade | Só com `ixc.enviar_upgrade = true`. Não muda o plano. Atualiza telefone principal, telefone 2 e e-mail no cadastro do cliente (só o que mudou) e abre o atendimento de upgrade no contrato e login escolhidos no app, com o texto no modelo do comercial (cliente, login, upgrade ou downgrade, plano atual, novo plano). Se o IXC recusar a mudança do contato, o atendimento sai assim mesmo, pedindo para atualizar à mão. |
 | 2º ponto | Contrato novo (pré-contrato, sem cobrança até ativar), login novo ligado a ele e atendimento com o assunto de 2º ponto. Se der erro no meio, "Tentar de novo" continua de onde parou, sem duplicar. |
 
 Para ligar:
@@ -42,6 +42,10 @@ Para ligar:
 5. No painel, em Vendedores, "Carregar vendedores do IXC" e ligue cada vendedor.
 
 Os nomes dos planos no app precisam ser iguais aos planos de venda do IXC.
+
+Upgrade no IXC (desligado até o ALEX liberar): no `config.php`, `'enviar_upgrade' => true`, `'assunto_upgrade' => 63`
+(ALTERAÇÃO DE PLANO DE VENDA) e `'setor_id'` do Comercial. O usuário do app no IXC precisa poder **alterar cliente** e incluir atendimento.
+Para abrir só o atendimento, sem mexer no cadastro: `'atualizar_contato' => false`.
 
 ## Consultar CPF (já foi cliente?)
 
