@@ -223,7 +223,7 @@ function comissoes_atualizar_ixc(int $limite = 40, int $id = 0): int
 {
     if (destino() !== 'ixc') return 0;
     require_once __DIR__ . '/ixc.php';
-    $sql = "SELECT v.id, v.tipo, v.dados, v.ixc_passos, v.recebido_em, c.venda_id AS tem, c.ixc_cliente, c.vencimento, c.cliente_pagou, c.valor_plano, c.venc_previsto
+    $sql = "SELECT v.id, v.tipo, v.dados, v.ixc_passos, v.recebido_em, c.venda_id AS tem, c.ixc_cliente, c.vencimento, c.cliente_pagou, c.valor_plano, c.venc_previsto, c.boleto_n
             FROM vendas v LEFT JOIN comissoes c ON c.venda_id = v.id
             WHERE v.status = 'crm' AND v.tipo IN ('venda','upgrade','segundo')"
         . ($id ? ' AND v.id = ' . $id : " AND v.recebido_em >= datetime('now','-150 days')
@@ -261,10 +261,12 @@ function comissoes_atualizar_ixc(int $limite = 40, int $id = 0): int
         if ($cli === '') $cli = (string)($passos['prospect'] ?? '');
         if ($cli === '') $cli = (string)(ixc_cliente_por_cpf((string)($dados['cpf'] ?? ''))['id'] ?? '');
         if ($cli === '') continue;
-        // primeiro boleto que vence a partir do dia da venda (no 2º ponto, o do contrato novo)
+        // boletos que vencem a partir do dia da venda (no 2º ponto, os do contrato novo). Conta o 1º,
+        // ou o 2º quando o vendedor marcou no app (o 1º veio proporcional e a comissão é sobre o valor cheio).
+        $n = max(1, min(3, (int)($v['boleto_n'] ?? 1)));
         $dia = date('Y-m-d', strtotime((string)$v['recebido_em']));
         $contrato = (string)($passos['contrato'] ?? '');
-        $bol = null;
+        $lista = [];
         $ultimoAntes = '';
         // os mais novos primeiro: cliente antigo (upgrade, 2º ponto) pode ter mais de 100 boletos
         foreach ($api->listar('fn_areceber', 'id_cliente', $cli, '=', 100, 'desc') as $b) {
@@ -272,12 +274,20 @@ function comissoes_atualizar_ixc(int $limite = 40, int $id = 0): int
             if (($b['status'] ?? '') === 'C') continue;
             if ($venc < $dia) { if ($venc > $ultimoAntes) $ultimoAntes = $venc; continue; }
             if ($contrato !== '' && (string)($b['id_contrato'] ?? '') !== '' && (string)$b['id_contrato'] !== $contrato) continue;
-            if (!$bol || $venc < substr((string)$bol['data_vencimento'], 0, 10)) $bol = $b;
+            $lista[] = $b;
         }
+        usort($lista, fn($a, $b) => strcmp(substr((string)$a['data_vencimento'], 0, 10), substr((string)$b['data_vencimento'], 0, 10)));
+        $bol = $lista[$n - 1] ?? null;
         $venc = $bol ? substr((string)$bol['data_vencimento'], 0, 10) : (string)($v['vencimento'] ?? '');
         // sem boleto ainda: data prevista pelo dia de vencimento do cliente (último boleto no IXC ou o dia escolhido no app)
         $diaMes = $ultimoAntes !== '' ? (int)substr($ultimoAntes, 8, 2) : (int)($dados['venc'] ?? 0);
-        $prev = $bol ? '' : venc_previsto($dia, $diaMes);
+        $prev = '';
+        if (!$bol) {
+            // o enésimo boleto previsto: o último que já existe (ou o dia da venda) mais os meses que faltam
+            $prev = $lista ? substr((string)end($lista)['data_vencimento'], 0, 10) : $dia;
+            $d = $diaMes ?: ($lista ? (int)substr($prev, 8, 2) : 0);
+            for ($i = count($lista); $i < $n && $prev !== ''; $i++) $prev = venc_previsto($prev, $d);
+        }
         if ($prev !== (string)($v['venc_previsto'] ?? '')) { $upPrev->execute([$prev, (int)$v['id']]); }
         $pagou = (string)($v['cliente_pagou'] ?? '');
         if ($bol) {

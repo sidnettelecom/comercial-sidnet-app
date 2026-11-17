@@ -251,6 +251,9 @@ main{padding-block:16px 150px}
 .gate input{width:100%}
 body.travado>*:not(.gate):not(.toast){visibility:hidden}
 body.trocando>*:not(#troca):not(.toast){visibility:hidden}
+.bolrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}.bolcom{display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;font-weight:700;color:var(--muted)}.bolcom select{width:auto;padding:4px 8px;font-size:12.5px;min-height:0;height:auto;border-radius:10px}
+.whobox{display:flex;flex-direction:column;align-items:flex-end;gap:6px;min-width:0;flex:0 1 42%;max-width:42%}.whobox .who{max-width:none;width:100%;overflow-wrap:normal}
+.sairtop{appearance:none;display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:inherit;font:700 12px/1 var(--f-body);padding:6px 10px;border-radius:10px;cursor:pointer}.sairtop svg{width:14px;height:14px}.sairtop:hover{background:rgba(255,255,255,.22)}
 .boleto{display:inline-block;margin-top:6px;font-size:12px;font-weight:800;border-radius:10px;padding:3px 9px}.boleto.ok{background:#dcfce7;color:#166534}.boleto.er{background:#fee2e2;color:#991b1b}.boleto.av{background:#e0e7ff;color:#3730a3}
 .gate{background:linear-gradient(165deg,#0b1e5b 0%,#1d4ed8 48%,#0891b2 100%);color:#fff}
 .gate form{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.28);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border-radius:26px;color:#fff;box-shadow:0 20px 50px rgba(0,0,0,.25)}
@@ -403,7 +406,7 @@ html.web .gate .olho{color:#475569}
       <span class="net" id="net"><i></i><span id="netTxt">Sem internet</span></span><span class="syncline" id="syncTxt"></span>
       </div>
     </div>
-    <div class="who" id="who">Configure seu nome em Ajustes</div>
+    <div class="whobox"><div class="who" id="who">Configure seu nome em Ajustes</div><button type="button" class="sairtop" id="btnSairTop" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l4-4-4-4M14 12H4"/></svg>Sair</button></div>
   </div>
   <div class="stats" id="stats" aria-live="polite"></div>
 </header>
@@ -699,7 +702,7 @@ html.web .gate .olho{color:#475569}
   <h2 class="sec">Cadastros salvos neste celular</h2>
   <div class="filters">
     <select id="fMes" aria-label="Mês"></select>
-    <select id="fTipo" aria-label="Tipo"><option value="">Todos os tipos</option><option value="boleto">1º boleto em aberto</option><option value="venda">Só vendas</option><option value="upgrade">Só upgrades</option><option value="segundo">Só 2º plano</option><option value="orcamento">Só orçamentos</option></select>
+    <select id="fTipo" aria-label="Tipo"><option value="">Todos os tipos</option><option value="boleto">Boleto em aberto</option><option value="venda">Só vendas</option><option value="upgrade">Só upgrades</option><option value="segundo">Só 2º plano</option><option value="orcamento">Só orçamentos</option></select>
     <input id="busca" placeholder="Buscar por nome, CPF, telefone ou cidade">
   </div>
   <div class="resumo" id="resumo"></div>
@@ -862,10 +865,10 @@ $("btnNet").addEventListener("click",function(){demoOff=!demoOff;this.textConten
 
 /* ---------- ajustes ---------- */
 function renderCfg(){
-  $("who").textContent=cfg.vend?(cfg.vend+(cfg.sup?" · Sup. "+cfg.sup:"")):"Configure seu nome em Ajustes";
+  $("btnSairTop").hidden=!cfg.usuario;$("who").textContent=cfg.vend?(cfg.vend+(cfg.sup?" · Sup. "+cfg.sup:"")):"Configure seu nome em Ajustes";
   $("cfgVend").value=cfg.vend||"";$("contaTxt").innerHTML=cfg.usuario?"Entrou como <b>"+esc(cfg.vend)+"</b> (usuário "+esc(cfg.usuario)+")":"";$("cfgSup").value=cfg.sup||"";$("cfgWa").value=cfg.wa?fmtTel(cfg.wa):"";$("cfgPlanos").value=cfg.planos.join("\n");
   $("cfgPlanos").readOnly=!!cfg.planosSrv;$("cfgPlanosHint").textContent=cfg.planosSrv?"Definidos pelo gestor no painel. Para mudar, fale com ele.":"Aparecem na lista \"Plano selecionado\".";
-  var sel=$("plano"),cur=sel.value;sel.innerHTML='<option value="">Escolha o plano…</option>'+cfg.planos.map(function(p){return'<option>'+esc(p)+'</option>'}).join("");
+  var sel=$("plano"),cur=sel.value;sel.innerHTML='<option value="">Escolha o plano…</option>'+cfg.planos.map(function(p){var v=(cfg.precos||{})[p]||PRECOS[p];v=v?parseFloat(String(v).replace(",",".")):0;return'<option value="'+esc(p)+'">'+esc(p)+(v>0?' · R$ '+brl(v):'')+'</option>'}).join("");
   if(cur&&cfg.planos.indexOf(cur)<0){var o=document.createElement("option");o.textContent=cur;sel.appendChild(o)}sel.value=cur;
 }
 
@@ -897,14 +900,33 @@ function consultarBoletos(){
   var L=recs.filter(function(r){return r.crm&&r.crm.st==="ok"&&!ehOrc(r)&&!(r.bol&&r.bol.p==="S")&&(!r.ts||r.ts>lim)}).slice(0,300);if(!L.length)return;
   fetch(cfg.crmUrl+"/api/app-vendas.php?acao=boletos&ids="+L.map(function(r){return r.id}).join(","),{headers:{"Authorization":"Bearer "+cfg.chave}})
     .then(function(res){return res.json()}).then(function(j){if(!j.ok||!j.boletos)return;var mud=false;
-      L.forEach(function(r){var b=j.boletos[r.id];if(!b)return;var nb={p:b.pagou||"",v:b.venc||""};if(!r.bol||r.bol.p!==nb.p||r.bol.v!==nb.v){r.bol=nb;mud=true}});
+      L.forEach(function(r){var b=j.boletos[r.id];if(!b)return;var nb={p:b.pagou||"",v:b.venc||"",n:b.n||1,pr:!!b.prev,pg:!!b.paga};if(!r.bol||r.bol.p!==nb.p||r.bol.v!==nb.v||r.bol.n!==nb.n||r.bol.pr!==nb.pr||r.bol.pg!==nb.pg){r.bol=nb;mud=true}});
       if(mud){save(K.recs,recs);if(!$("v-hist").hidden)renderLista()}}).catch(function(){});
 }
+function ddmm(iso){return iso?iso.slice(8,10)+"/"+iso.slice(5,7):""}
+function somaMes(iso,k){if(!iso)return"";var y=+iso.slice(0,4),m=+iso.slice(5,7)-1+k,dd=+iso.slice(8,10);y+=Math.floor(m/12);m=((m%12)+12)%12;var fim=new Date(y,m+1,0).getDate();return y+"-"+String(m+1).padStart(2,"0")+"-"+String(Math.min(dd,fim)).padStart(2,"0")}
 function pillBoleto(r){
-  var b=r.bol;if(!b||(!b.p&&!b.v))return"";var d=b.v?b.v.slice(8,10)+"/"+b.v.slice(5,7):"";
-  if(b.p==="S")return'<span class="boleto ok">1º boleto pago</span>';
-  if(b.p==="N")return'<span class="boleto er">1º boleto em aberto'+(d?" · venceu "+d:"")+' · cobrar o cliente</span>';
-  return'<span class="boleto av">1º boleto vence '+d+'</span>';
+  var b=r.bol;if(!b||(!b.p&&!b.v&&(b.n||1)===1))return"";var n=b.n||1,d=ddmm(b.v),nm=n+"º boleto";
+  if(b.p==="S")return'<span class="boleto ok">'+nm+' pago</span>';
+  if(b.p==="N")return'<span class="boleto er">'+nm+' em aberto'+(d?" · venceu "+d:"")+' · cobrar o cliente</span>';
+  return'<span class="boleto av">'+nm+(d?' vence '+d+(b.pr?' (previsto)':''):' ainda sem data')+'</span>';
+}
+/* o vendedor escolhe qual boleto conta para a comissão: o 1º, ou o 2º quando o 1º vem proporcional */
+function selBoletoCom(r){
+  var b=r.bol;if(!b||b.pg||!r.crm||r.crm.st!=="ok"||ehOrc(r))return"";var n=b.n||1,d1=b.v?somaMes(b.v,1-n):"";
+  return'<label class="bolcom">Data para a comissão <select data-bol aria-label="Boleto que conta para a comissão">'+[1,2].map(function(k){var d=d1?ddmm(somaMes(d1,k-1)):"";return'<option value="'+k+'"'+(k===n?' selected':'')+'>'+k+'º boleto'+(d?' · '+d:'')+(k===2?' (1º proporcional)':'')+'</option>'}).join("")+'</select></label>';
+}
+function trocarBoletoCom(r,sel){
+  var n=+sel.value,ant=(r.bol&&r.bol.n)||1;if(n===ant)return;
+  if(DEMO){r.bol=Object.assign({},r.bol,{n:n,p:"",v:r.bol&&r.bol.v?somaMes(r.bol.v,n-ant):"",pr:true});save(K.recs,recs);renderLista();toast("Comissão pelo "+n+"º boleto");return}
+  if(!online()||!cfg.chave){sel.value=ant;toast("Precisa de internet para mudar a data da comissão");return}
+  sel.disabled=true;
+  fetch(cfg.crmUrl+"/api/app-vendas.php?acao=boleto_comissao",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+cfg.chave},body:JSON.stringify({id_app:r.id,n:n})})
+    .then(function(res){return res.json()}).then(function(j){
+      if(!j.ok){sel.disabled=false;sel.value=ant;toast(j.erro||"Não deu para mudar agora");return}
+      r.bol=Object.assign({},r.bol,{n:j.n,p:j.pagou||"",v:j.venc||"",pr:!!j.prev});save(K.recs,recs);renderLista();
+      toast("Comissão pelo "+j.n+"º boleto"+(j.venc?" ("+ddmm(j.venc)+")":""));
+    }).catch(function(){sel.disabled=false;sel.value=ant;toast("Não deu para falar com o servidor. Tente de novo.")});
 }
 setInterval(consultarBoletos,300000);
 /* planos definidos pelo gestor no painel: valem para todos os vendedores */
@@ -1365,9 +1387,12 @@ function renderLista(){
     '<div class="pills"><span class="pill tp">'+nomeTipo(r.tipo)+'</span>'+pillCrm(r)+'</div></div>'+
     (ehOrc(r)?'<div class="meta">'+esc(r.criado)+' · '+esc(up(r.cidade))+' · '+esc(fmtTel(r.tel1))+'<br>R$ '+esc(fmtMoney(r.valOrc))+' · '+esc(up(r.servico).slice(0,80))+'</div>':r.tipo==="upgrade"?'<div class="meta">'+esc(r.criado)+' · '+esc(fmtTel(r.tel1))+'<br>R$ '+esc(fmtMoney(r.valAtual))+' → R$ '+esc(fmtMoney(r.valNovo))+' · '+esc(up(r.velNova))+'</div>'
     :'<div class="meta">'+esc(r.criado)+' · '+esc(up(r.cidade))+' · CPF '+esc(r.cpf)+'<br>'+esc(r.plano)+' · venc. dia '+esc(r.venc)+'</div>')+
-    (pillBoleto(r)?'<div>'+pillBoleto(r)+'</div>':'')+((r.midias||[]).length?'<div class="meta">'+r.midias.length+((r.midias.length===1)?' anexo':' anexos')+'</div>':'')+(r.crm&&r.crm.st==="er"?'<div class="meta" style="color:var(--err)">'+esc(r.crm.msg||"")+'</div>':"")+'<div class="acts"><button class="btn sm primary" data-a="enviar">Detalhes</button><button class="btn sm" data-a="editar">Editar</button><button class="btn sm" data-a="copiar">Copiar</button><button class="btn sm danger" data-a="excluir">Excluir</button></div></div>'}).join("");
+    (pillBoleto(r)||selBoletoCom(r)?'<div class="bolrow">'+pillBoleto(r)+selBoletoCom(r)+'</div>':'')+((r.midias||[]).length?'<div class="meta">'+r.midias.length+((r.midias.length===1)?' anexo':' anexos')+'</div>':'')+(r.crm&&r.crm.st==="er"?'<div class="meta" style="color:var(--err)">'+esc(r.crm.msg||"")+'</div>':"")+'<div class="acts"><button class="btn sm primary" data-a="enviar">Detalhes</button><button class="btn sm" data-a="editar">Editar</button><button class="btn sm" data-a="copiar">Copiar</button><button class="btn sm danger" data-a="excluir">Excluir</button></div></div>'}).join("");
 }
 $("busca").addEventListener("input",renderLista);$("fMes").addEventListener("change",renderLista);$("fTipo").addEventListener("change",renderLista);
+$("lista").addEventListener("change",function(e){
+  var s=e.target.closest("select[data-bol]");if(!s)return;var id=s.closest(".rec").dataset.id;var r=recs.find(function(x){return x.id===id});if(r)trocarBoletoCom(r,s);
+});
 $("lista").addEventListener("click",function(e){
   var b=e.target.closest("button[data-a]");if(!b)return;var id=b.closest(".rec").dataset.id;var r=recs.find(function(x){return x.id===id});if(!r)return;
   var a=b.dataset.a;
@@ -1648,6 +1673,7 @@ $("loginForm").addEventListener("submit",function(e){e.preventDefault();
       });
     }).catch(function(){fim();$("lgErro").textContent="Não deu para falar com o servidor "+srv+". Confira a internet e tente de novo."});
 });
+$("btnSairTop").addEventListener("click",function(){$("btnSair").click()});
 $("btnSair").addEventListener("click",function(){
   var pend=recs.filter(function(r){return r.crm&&r.crm.st!=="ok"&&r.crm.st!=="wa"&&!r.crm.excluida}).length;
   if(pend&&!confirm(pend+" cadastro(s) ainda não foram para o IXC. Eles ficam guardados e vão quando você entrar de novo. Sair mesmo assim?"))return;
