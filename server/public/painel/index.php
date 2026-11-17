@@ -431,6 +431,8 @@ input,select{border-radius:10px}
 th{background:transparent}tr:hover td{background:color-mix(in srgb,var(--brand) 4%,transparent)}
 .tp{display:inline-block;padding:4px 10px;border-radius:10px;font-size:12px;font-weight:800;white-space:nowrap}
 .tp-venda{background:#dbeafe;color:#1e40af}.tp-upgrade{background:#ede9fe;color:#5b21b6}.tp-segundo{background:#d1fae5;color:#065f46}
+.filtros{align-items:center}.filtros a{border-radius:12px;padding:2px;border:2px solid transparent;text-decoration:none}.filtros a.on{border-color:var(--brand)}.filtros .sep{width:1px;height:24px;background:var(--line);margin:0 4px}.filtros select{min-width:200px}
+.plv{min-width:130px}.plv b{font-size:14px}
 .entrada{max-width:420px;margin:0 auto;border-radius:26px;padding:26px 22px;text-align:left}
 .entrada .logo-entrada{display:block;margin:0 auto;border-radius:32px}
 .entrada h2{text-align:center;font-size:22px;margin:4px 0 6px}.entrada h2 span{display:block;font-size:13px;color:var(--muted);font-weight:600}
@@ -988,10 +990,25 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
   </table></div>
 
 <?php else:
-    $filtro = $_GET['st'] ?? '';
-    $where = match ($filtro) { 'erro' => "WHERE v.status='erro'", 'fila' => "WHERE v.status IN ('fila','forcar','tentar')", 'crm' => "WHERE v.status='crm'", default => '' };
+    // Filtros combináveis: situação (st), tipo da venda (tp) e vendedor (vd).
+    $filtro = in_array($_GET['st'] ?? '', ['erro', 'fila', 'crm'], true) ? $_GET['st'] : '';
+    $fTipo = isset($NOMES[$_GET['tp'] ?? '']) ? $_GET['tp'] : '';
+    $fVend = (int)($_GET['vd'] ?? 0);
+    $cond = []; $par = [];
+    if ($filtro !== '') $cond[] = match ($filtro) { 'erro' => "v.status='erro'", 'fila' => "v.status IN ('fila','forcar','tentar')", 'crm' => "v.status='crm'" };
+    if ($fTipo !== '') { $cond[] = 'v.tipo = ?'; $par[] = $fTipo; }
+    if ($fVend > 0) { $cond[] = 'v.vendedor_id = ?'; $par[] = $fVend; }
+    $where = $cond ? 'WHERE ' . implode(' AND ', $cond) : '';
     $cont = db()->query("SELECT status, COUNT(*) n FROM vendas GROUP BY status")->fetchAll(PDO::FETCH_KEY_PAIR);
+    $contTipo = db()->query("SELECT tipo, COUNT(*) n FROM vendas WHERE status <> 'descartada' GROUP BY tipo")->fetchAll(PDO::FETCH_KEY_PAIR);
     $nFila = ($cont['fila'] ?? 0) + ($cont['forcar'] ?? 0) + ($cont['tentar'] ?? 0);
+    $vendLista = db()->query("SELECT d.id, d.nome FROM vendedores d WHERE d.ativo = 1 OR EXISTS (SELECT 1 FROM vendas v WHERE v.vendedor_id = d.id) ORDER BY d.nome")->fetchAll(PDO::FETCH_KEY_PAIR);
+    $precosV = comissoes_precos_planos();
+    // Monta o link de um filtro mantendo os outros dois.
+    $lnk = function (array $muda) use ($filtro, $fTipo, $fVend): string {
+        $q = array_merge(['p' => 'vendas', 'st' => $filtro, 'tp' => $fTipo, 'vd' => $fVend ?: ''], $muda);
+        return '?' . h(http_build_query(array_filter($q, fn($x) => $x !== '' && $x !== null)));
+    };
 ?>
   <div class="topo"><div><h1>Vendas</h1><p class="small">Tudo o que chegou dos celulares e a situação no <?= $DEST ?>.</p></div>
     <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="enviar_agora"><button class="cta">Enviar fila ao <?= $DEST ?> agora</button></form></div>
@@ -1008,19 +1025,31 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     <div class="kpi"><span>Com erro</span><b class="er"><?= (int)($cont['erro'] ?? 0) ?></b><small>precisam de você</small></div>
     <div class="kpi"><span>No <?= $DEST ?> no mês</span><b class="ok"><?= $mes ?></b><small><?= $ativos ?> <?= $ativos === 1 ? 'vendedor ativo' : 'vendedores ativos' ?></small></div>
   </div>
-  <div class="row">
-    <a href="?p=vendas"><span class="pill mu">Todas</span></a>
-    <a href="?p=vendas&amp;st=fila"><span class="pill q">Na fila <?= $nFila ?></span></a>
-    <a href="?p=vendas&amp;st=erro"><span class="pill er">Com erro <?= (int)($cont['erro'] ?? 0) ?></span></a>
-    <a href="?p=vendas&amp;st=crm"><span class="pill ok">No <?= $DEST ?> <?= (int)($cont['crm'] ?? 0) ?></span></a>
+  <div class="row filtros">
+    <a href="<?= $lnk(['st' => '', 'tp' => '', 'vd' => '']) ?>" class="<?= $filtro === '' && $fTipo === '' && !$fVend ? 'on' : '' ?>"><span class="pill mu">Todas</span></a>
+    <a href="<?= $lnk(['st' => 'fila']) ?>" class="<?= $filtro === 'fila' ? 'on' : '' ?>"><span class="pill q">Na fila <?= $nFila ?></span></a>
+    <a href="<?= $lnk(['st' => 'erro']) ?>" class="<?= $filtro === 'erro' ? 'on' : '' ?>"><span class="pill er">Com erro <?= (int)($cont['erro'] ?? 0) ?></span></a>
+    <a href="<?= $lnk(['st' => 'crm']) ?>" class="<?= $filtro === 'crm' ? 'on' : '' ?>"><span class="pill ok">No <?= $DEST ?> <?= (int)($cont['crm'] ?? 0) ?></span></a>
+    <span class="sep" aria-hidden="true"></span>
+    <?php foreach ($NOMES as $tk => $tn): ?><a href="<?= $lnk(['tp' => $fTipo === $tk ? '' : $tk]) ?>" class="<?= $fTipo === $tk ? 'on' : '' ?>"><span class="tp tp-<?= h($tk) ?>"><?= h($tn) ?> <?= (int)($contTipo[$tk] ?? 0) ?></span></a><?php endforeach ?>
+    <span class="sep" aria-hidden="true"></span>
+    <form method="get" class="in"><input type="hidden" name="p" value="vendas"><?php if ($filtro !== ''): ?><input type="hidden" name="st" value="<?= h($filtro) ?>"><?php endif ?><?php if ($fTipo !== ''): ?><input type="hidden" name="tp" value="<?= h($fTipo) ?>"><?php endif ?>
+      <select name="vd" aria-label="Vendedor" onchange="this.form.submit()"><option value="">Todos os vendedores</option><?php foreach ($vendLista as $vid => $vn): ?><option value="<?= (int)$vid ?>" <?= $fVend === (int)$vid ? 'selected' : '' ?>><?= h($vn) ?></option><?php endforeach ?></select>
+      <noscript><button>Filtrar</button></noscript></form>
   </div>
   <div class="card tw"><table>
-    <tr><th>#</th><th>Recebido</th><th>Tipo</th><th>Cliente</th><th>Vendedor</th><th><?= $DEST ?></th><th></th></tr>
-    <?php foreach (db()->query("SELECT v.*, d.nome AS vendedor FROM vendas v JOIN vendedores d ON d.id=v.vendedor_id $where ORDER BY v.id DESC LIMIT 300") as $v):
-        [$rot, $cls] = $v['status'] === 'crm' && registro_so_comercial($v['crm_id']) ? ['Registrado', 'ok'] : ($SITUACAO[$v['status']] ?? [$v['status'], 'mu']); $r = json_decode($v['dados'], true) ?: []; ?>
+    <tr><th>#</th><th>Recebido</th><th>Tipo</th><th>Cliente</th><th>Plano</th><th>Vendedor</th><th><?= $DEST ?></th><th></th></tr>
+    <?php $qV = db()->prepare("SELECT v.*, d.nome AS vendedor, c.valor_plano FROM vendas v JOIN vendedores d ON d.id=v.vendedor_id LEFT JOIN comissoes c ON c.venda_id = v.id $where ORDER BY v.id DESC LIMIT 300"); $qV->execute($par); $nLinhas = 0;
+    foreach ($qV as $v): $nLinhas++;
+        [$rot, $cls] = $v['status'] === 'crm' && registro_so_comercial($v['crm_id']) ? ['Registrado', 'ok'] : ($SITUACAO[$v['status']] ?? [$v['status'], 'mu']); $r = json_decode($v['dados'], true) ?: [];
+        // Plano e valor da mensalidade (mesma regra da aba "Vendas do mês").
+        $planoV = $v['tipo'] === 'upgrade' ? up((string)($r['velNova'] ?? '')) : up((string)($r['plano'] ?? ''));
+        $valorV = (string)($v['valor_plano'] ?? '');
+        if ($valorV === '') $valorV = $v['tipo'] === 'upgrade' ? dinheiro((string)($r['valNovo'] ?? '')) : (string)($precosV[up(sem_acento((string)($r['plano'] ?? '')))] ?? ''); ?>
     <tr><td class="n"><?= (int)$v['id'] ?></td><td class="n"><?= h($v['recebido_em']) ?></td><td><span class="tp tp-<?= h($v['tipo']) ?>"><?= h($NOMES[$v['tipo']] ?? $v['tipo']) ?></span></td>
       <td><?= h($v['nome']) ?><br><span class="small"><?= h(($r['cpf'] ?? '') . ' · ' . ($r['tel1'] ?? '') . ' · ' . ($r['cidade'] ?? '')) ?></span>
         <details><summary>ver cadastro</summary><pre><?= h(json_encode($r, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)) ?></pre></details></td>
+      <td class="plv"><?= $planoV !== '' ? h($planoV) : '<span class="small">—</span>' ?><?php if ($v['tipo'] === 'upgrade' && ($r['planoAtual'] ?? '') !== ''): ?><br><span class="small">antes: <?= h(up((string)$r['planoAtual'])) ?></span><?php endif ?><?php if ($valorV !== '' && (float)$valorV > 0): ?><br><b>R$ <?= brl($valorV) ?></b><span class="small">/mês</span><?php endif ?></td>
       <td><?= h($v['vendedor']) ?></td>
       <td><span class="pill <?= $cls ?>"><?= h($rot) ?></span> <?= h($v['crm_id']) ?><?php if ($v['erro']): ?><div class="err"><?= h($v['erro']) ?></div><?php endif ?></td>
       <td class="row"><?php if (in_array($v['status'], ['erro', 'tentar'], true)): ?>
@@ -1030,6 +1059,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
       <?php endif ?>
         <a class="bt del" href="?p=excluir&amp;id=<?= (int)$v['id'] ?>">Excluir</a></td></tr>
     <?php endforeach ?>
+    <?php if (!$nLinhas): ?><tr><td colspan="8" class="small">Nenhuma venda com esses filtros.</td></tr><?php endif ?>
   </table></div>
 <?php endif ?>
 </main>
