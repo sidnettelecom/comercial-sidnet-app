@@ -43,6 +43,13 @@ Para ligar:
 
 Os nomes dos planos no app precisam ser iguais aos planos de venda do IXC.
 
+## Consultar CPF (já foi cliente?)
+
+Aba **Consultar** no app (celular e navegador): o vendedor digita o CPF e o servidor consulta o IXC só para leitura
+(`acao=consulta_cpf`). Mostra se a pessoa nunca foi cliente, é cliente ativo ou ex-cliente (contratos, quando entrou e saiu)
+e os boletos **vencidos em aberto** com o total. Com débito, o botão **Enviar no WhatsApp para negociar** abre o WhatsApp
+com a mensagem pronta, e o vendedor escolhe para quem mandar. Cada consulta fica no registro (CPF mascarado), no máximo 60 por hora por vendedor.
+
 ## Segurança
 
 - Vendedores e gestores entram com usuário e senha (senhas guardadas com `password_hash`).

@@ -11,6 +11,7 @@
  *   GET  /api/app-vendas.php?acao=eu                  -> confere o login, devolve o nome do vendedor
  *   POST /api/app-vendas.php?acao=senha               {atual, nova} troca a senha provisória pela do vendedor
  *   GET  /api/app-vendas.php?acao=boletos&ids=a,b     -> 1º boleto de cada venda: pagou S/N/'' e vencimento
+ *   GET  /api/app-vendas.php?acao=consulta_cpf&cpf=…   -> já foi cliente da Sidnet? contratos e débitos vencidos em aberto (só leitura)
  *   GET  /api/app-vendas.php?acao=planos              -> planos definidos no painel (vazio = o celular usa a lista dele)
  *   GET  /api/app-vendas.php?acao=historico           -> cadastros deste vendedor que estão no servidor (para o histórico
  *                                                        aparecer igual no celular, em outro celular e na versão web)
@@ -176,6 +177,25 @@ try {
         }
         if (!$cli) responder(404, ['ok' => false, 'erro' => strlen($q) === 11 ? 'Nenhum cliente com esse CPF no IXC.' : 'Nenhum cliente com esse ID no IXC.']);
         responder(200, ['ok' => true, 'cliente' => $cli]);
+    }
+
+    if ($acao === 'consulta_cpf') {
+        // aba Consultar: a pessoa já foi cliente? tem débito vencido para negociar? Só leitura no IXC.
+        if (destino() !== 'ixc') responder(400, ['ok' => false, 'erro' => 'A consulta por CPF só funciona com o IXC.']);
+        $cpf = so_digitos((string)($_GET['cpf'] ?? ''));
+        if (strlen($cpf) !== 11) responder(422, ['ok' => false, 'erro' => 'Digite o CPF com 11 números.']);
+        $quem = 'vendedor #' . $vend['id'];
+        $c = db()->prepare("SELECT COUNT(*) FROM registro WHERE quem = ? AND acao = 'consulta CPF IXC' AND em > datetime('now','localtime','-1 hour')");
+        $c->execute([$quem]);
+        if ((int)$c->fetchColumn() >= 60) responder(429, ['ok' => false, 'erro' => 'Muitas consultas em pouco tempo. Espere alguns minutos.']);
+        registrar($quem, 'consulta CPF IXC', 'CPF ***' . substr($cpf, -4));
+        try {
+            $r = ixc_consulta_cpf($cpf);
+        } catch (Throwable $e) {
+            error_log('app-vendas: consulta CPF IXC: ' . $e->getMessage());
+            responder(502, ['ok' => false, 'erro' => 'Não deu para consultar o IXC agora. Tente de novo em instantes.']);
+        }
+        responder(200, ['ok' => true, 'cpf' => cpf_mascara($cpf)] + $r);
     }
 
     if ($acao === 'valores' && $_SERVER['REQUEST_METHOD'] === 'POST') {
