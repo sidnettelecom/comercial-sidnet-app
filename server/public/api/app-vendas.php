@@ -11,6 +11,7 @@
  *   GET  /api/app-vendas.php?acao=eu                  -> confere o login, devolve o nome do vendedor
  *   POST /api/app-vendas.php?acao=senha               {atual, nova} troca a senha provisória pela do vendedor
  *   GET  /api/app-vendas.php?acao=boletos&ids=a,b     -> 1º boleto de cada venda: pagou S/N/'' e vencimento
+ *   POST /api/app-vendas.php?acao=boleto_comissao {id_app, n: 1|2} -> qual boleto conta para a comissão (2 = o 1º veio proporcional)
  *   GET  /api/app-vendas.php?acao=consulta_cpf&cpf=…   -> já foi cliente da Sidnet? contratos e débitos vencidos em aberto (só leitura)
  *   GET  /api/app-vendas.php?acao=planos              -> planos definidos no painel (vazio = o celular usa a lista dele)
  *   GET  /api/app-vendas.php?acao=historico           -> cadastros deste vendedor que estão no servidor (para o histórico
@@ -145,15 +146,19 @@ try {
         $res = [];
         if ($ids) {
             $marcas = implode(',', array_fill(0, count($ids), '?'));
-            $q = db()->prepare("SELECT v.id_app, c.cliente_pagou, c.vencimento FROM vendas v JOIN comissoes c ON c.venda_id = v.id
+            $q = db()->prepare("SELECT v.id_app, c.cliente_pagou, c.vencimento, c.venc_previsto, c.boleto_n, c.pago_em FROM vendas v JOIN comissoes c ON c.venda_id = v.id
                                 WHERE v.vendedor_id = ? AND v.id_app IN ($marcas)");
             $q->execute(array_merge([$vend['id']], $ids));
             foreach ($q as $r) {
-                if ($r['vencimento'] === '' && $r['cliente_pagou'] === '') continue;
+                $n = max(1, (int)$r['boleto_n']);
+                // o 2º boleto ainda não existe no IXC: mostra a data prevista
+                $prev = $r['vencimento'] === '' && $r['venc_previsto'] !== '';
+                $venc = $prev ? $r['venc_previsto'] : $r['vencimento'];
+                if ($venc === '' && $r['cliente_pagou'] === '' && $n === 1) continue;
                 $pagou = $r['cliente_pagou'];
                 // "não pagou" só vale para o vendedor depois do vencimento; antes disso o boleto está a vencer
                 if ($pagou === 'N' && $r['vencimento'] !== '' && $r['vencimento'] >= date('Y-m-d')) $pagou = '';
-                $res[$r['id_app']] = ['pagou' => $pagou, 'venc' => $r['vencimento']];
+                $res[$r['id_app']] = ['pagou' => $pagou, 'venc' => $venc, 'prev' => $prev, 'n' => $n, 'paga' => $r['pago_em'] !== ''];
             }
         }
         responder(200, ['ok' => true, 'boletos' => $res]);
@@ -196,6 +201,46 @@ try {
             responder(502, ['ok' => false, 'erro' => 'Não deu para consultar o IXC agora. Tente de novo em instantes.']);
         }
         responder(200, ['ok' => true, 'cpf' => cpf_mascara($cpf)] + $r);
+    }
+
+    if ($acao === 'boleto_comissao' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+        // o vendedor escolhe qual boleto conta para a comissão: o 1º, ou o 2º quando o 1º veio proporcional
+        $in = json_decode(file_get_contents('php://input') ?: '', true) ?: [];
+        $idApp = preg_replace('/[^A-Za-z0-9]/', '', (string)($in['id_app'] ?? ''));
+        $n = (int)($in['n'] ?? 0);
+        if ($n < 1 || $n > 2) responder(422, ['ok' => false, 'erro' => 'Escolha o 1º ou o 2º boleto.']);
+        $q = db()->prepare("SELECT id, vendedor_id, tipo, dados FROM vendas WHERE id_app = ? AND tipo IN ('venda','upgrade','segundo')");
+        $q->execute([$idApp]);
+        $v = $idApp !== '' ? $q->fetch() : false;
+        if (!$v || (int)$v['vendedor_id'] !== (int)$vend['id']) {
+            responder(404, ['ok' => false, 'erro' => 'Venda não encontrada no servidor.']);
+        }
+        require_once __DIR__ . '/../../lib/comissoes.php';
+        $d = json_decode((string)$v['dados'], true) ?: [];
+        db()->prepare('INSERT OR IGNORE INTO comissoes (venda_id, instalacao, roteador) VALUES (?, ?, ?)')
+            ->execute([$v['id'], dinheiro((string)($d['valInst'] ?? '')), dinheiro((string)($d['valRot'] ?? ''))]);
+        $c = db()->prepare('SELECT boleto_n, pago_em FROM comissoes WHERE venda_id = ?');
+        $c->execute([$v['id']]);
+        $c = $c->fetch();
+        if ((string)$c['pago_em'] !== '') responder(409, ['ok' => false, 'erro' => 'A comissão desta venda já foi paga. Para mudar, fale com o gestor.']);
+        if ((int)$c['boleto_n'] !== $n) {
+            // troca o boleto: a data e o "cliente pagou" voltam a ser lidos do IXC para o boleto escolhido
+            db()->prepare("UPDATE comissoes SET boleto_n = ?, vencimento = '', venc_previsto = '', cliente_pagou = '', atualizado_em = datetime('now','localtime'), por = 'vendedor' WHERE venda_id = ?")
+                ->execute([$n, $v['id']]);
+            registrar('vendedor #' . $vend['id'], 'boleto da comissão', 'venda #' . $v['id'] . ': ' . $n . 'º boleto');
+            try {
+                comissoes_atualizar_ixc(1, (int)$v['id']);
+            } catch (Throwable $e) {
+                error_log('app-vendas: boleto da comissão: ' . $e->getMessage()); // o servidor tenta de novo na próxima rodada
+            }
+        }
+        $c = db()->prepare('SELECT cliente_pagou, vencimento, venc_previsto FROM comissoes WHERE venda_id = ?');
+        $c->execute([$v['id']]);
+        $c = $c->fetch();
+        $prev = $c['vencimento'] === '' && $c['venc_previsto'] !== '';
+        $pagou = $c['cliente_pagou'];
+        if ($pagou === 'N' && $c['vencimento'] !== '' && $c['vencimento'] >= date('Y-m-d')) $pagou = '';
+        responder(200, ['ok' => true, 'pagou' => $pagou, 'venc' => $prev ? $c['venc_previsto'] : $c['vencimento'], 'prev' => $prev, 'n' => $n]);
     }
 
     if ($acao === 'valores' && $_SERVER['REQUEST_METHOD'] === 'POST') {
