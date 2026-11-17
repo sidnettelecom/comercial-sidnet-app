@@ -401,6 +401,88 @@ function ixc_consulta_cliente(string $q): ?array
     ];
 }
 
+/** Clientes do IXC com esse CPF (pode haver mais de um cadastro para o mesmo CPF). */
+function ixc_clientes_por_cpf(string $cpf): array
+{
+    $d = so_digitos($cpf);
+    if (strlen($d) !== 11) return [];
+    $api = ixc();
+    $l = $api->listar('cliente', 'cnpj_cpf', cpf_mascara($d), '=', 10);
+    if (!$l) $l = $api->listar('cliente', 'cnpj_cpf', $d, '=', 10);
+    return $l;
+}
+
+/**
+ * Consulta só de leitura: a pessoa já foi (ou é) cliente da Sidnet? Se foi, quais boletos estão em aberto
+ * e vencidos (para negociar). Não grava nada no IXC.
+ */
+function ixc_consulta_cpf(string $cpf): array
+{
+    // data do IXC (aaaa-mm-dd) para dd/mm/aaaa; vazia ou zerada fica vazia
+    $dt = fn($v) => preg_match('/^(\d{4})-(\d{2})-(\d{2})/', (string)$v, $m) && $m[1] !== '0000' ? "$m[3]/$m[2]/$m[1]" : '';
+    $api = ixc();
+    $hoje = date('Y-m-d');
+    $nomesCt = ['A' => 'Ativo', 'P' => 'Pré-contrato', 'N' => 'Negativado', 'I' => 'Inativo', 'D' => 'Desistiu', 'C' => 'Cancelado'];
+    $clientes = [];
+    $debitos = [];
+    $total = 0.0;
+    $ativo = false;
+    foreach (ixc_clientes_por_cpf($cpf) as $cli) {
+        $id = (string)$cli['id'];
+        $cts = [];
+        foreach (ixc_contratos($id) as $ct) {
+            $st = (string)($ct['status'] ?? '');
+            if ($st === 'A') $ativo = true;
+            $cts[] = [
+                'id' => (string)$ct['id'],
+                'plano' => up((string)($ct['contrato'] ?? '')),
+                'status' => $nomesCt[$st] ?? $st,
+                'ativacao' => $dt((string)($ct['data_ativacao'] ?? '')),
+                'cancelamento' => $dt((string)($ct['data_cancelamento'] ?? '')) ?: $dt((string)($ct['data_desistencia'] ?? '')),
+            ];
+            if (count($cts) >= 10) break;
+        }
+        foreach ($api->listar('fn_areceber', 'id_cliente', $id, '=', 1000, 'desc') as $b) {
+            // A = em aberto (P = pago parcialmente, sobra valor em aberto); R recebido e C cancelado não contam
+            if (!in_array((string)($b['status'] ?? ''), ['A', 'P'], true)) continue;
+            $venc = substr((string)($b['data_vencimento'] ?? ''), 0, 10);
+            if ($venc === '' || $venc >= $hoje) continue; // só o que já venceu
+            $valor = (float)(($b['valor_aberto'] ?? '') !== '' ? $b['valor_aberto'] : ($b['valor'] ?? 0));
+            if ($valor <= 0) continue;
+            $total += $valor;
+            $debitos[] = [
+                'id' => (string)$b['id'],
+                'cliente' => $id,
+                'contrato' => (string)($b['id_contrato'] ?? ''),
+                'vencimento' => $dt($venc),
+                'venc_iso' => $venc,
+                'dias' => (int)((strtotime($hoje) - strtotime($venc)) / 86400),
+                'valor' => number_format($valor, 2, ',', '.'),
+            ];
+        }
+        $clientes[] = [
+            'id' => $id,
+            'nome' => up((string)($cli['razao'] ?? '')),
+            'ativo' => (string)($cli['ativo'] ?? '') === 'S',
+            'tel' => (string)(($cli['telefone_celular'] ?? '') ?: (($cli['whatsapp'] ?? '') ?: ($cli['fone'] ?? ''))),
+            'bairro' => up((string)($cli['bairro'] ?? '')),
+            'cadastro' => $dt((string)($cli['data_cadastro'] ?? '')),
+            'contratos' => $cts,
+        ];
+    }
+    usort($debitos, fn($a, $b) => strcmp($a['venc_iso'], $b['venc_iso']));
+    foreach ($debitos as &$d) unset($d['venc_iso']);
+    unset($d);
+    return [
+        'achou' => (bool)$clientes,
+        'cliente_ativo' => $ativo,
+        'clientes' => $clientes,
+        'debitos' => array_slice($debitos, 0, 60),
+        'qtd_debitos' => count($debitos),
+        'total' => number_format($total, 2, ',', '.'),
+    ];
+}
+
 /** Ids do IXC da Sidnet (vídeo do cadastro, 11/11/2026). O config.php pode trocar: ixc.canais / ixc.concorrentes. */
 const IXC_CANAIS = [
     'WHATSAPP COMERCIAL' => '11', 'TELEFONE' => '13', 'SONDAGEM' => '6', 'SOLICITADO PELO CLIENTE' => '1',
