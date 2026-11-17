@@ -14,7 +14,9 @@ return [
         'url' => 'https://isp.sidnet.com.br',
         'filial_id' => 1,              // filial dos leads novos
         'enviar_upgrade_segundo' => false, // false: upgrade e 2º ponto só ficam registrados no comercial (nada no IXC); true: abre atendimento / pré-contrato como antes
-        'assunto_upgrade' => 0,        // (só com enviar_upgrade_segundo) assunto do atendimento de upgrade (o processo dele abre a O.S.)
+        'enviar_upgrade' => false,     // true: só o UPGRADE vai ao IXC (2º ponto continua só no comercial): atualiza telefones e e-mail no cadastro do cliente e abre o atendimento de upgrade. Não muda o plano.
+        'atualizar_contato' => true,   // (com enviar_upgrade) false: não mexe no cadastro, só escreve no atendimento o que mudar à mão
+        'assunto_upgrade' => 0,        // (com enviar_upgrade) assunto do atendimento de upgrade (hoje 63 = ALTERAÇÃO DE PLANO DE VENDA); o processo dele abre a O.S.
         'assunto_segundo' => 0,        // (só com enviar_upgrade_segundo) assunto do atendimento de 2º ponto
         'setor_id' => 0,               // setor (departamento) dos atendimentos
         'tipo_contrato_id' => 0,       // tipo do contrato do 2º ponto; 0 = o mesmo do contrato atual do cliente

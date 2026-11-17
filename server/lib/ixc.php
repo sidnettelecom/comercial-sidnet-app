@@ -29,20 +29,20 @@ final class Ixc
         $this->base = (preg_match('#^(https?://[^/?\#\s]+)#i', $url, $m) ? $m[1] : rtrim($url, '/')) . '/webservice/v1';
     }
 
-    /** Chamada à API. $listar = true usa o cabeçalho "ixcsoft: listar" (consulta). */
-    private function chamar(string $tabela, array $corpo, bool $listar): array
+    /** Chamada à API. $listar = true usa o cabeçalho "ixcsoft: listar" (consulta). $id = alterar (PUT) esse registro. */
+    private function chamar(string $tabela, array $corpo, bool $listar, string $id = ''): array
     {
-        if (!preg_match('/^[a-z0-9_]+$/', $tabela)) {
+        if (!preg_match('/^[a-z0-9_]+$/', $tabela) || ($id !== '' && !ctype_digit($id))) {
             throw new ErroCrm('Tabela do IXC inválida.');
         }
         $cab = ['Content-Type: application/json', 'Authorization: Basic ' . base64_encode($this->token)];
         if ($listar) {
             $cab[] = 'ixcsoft: listar';
         }
-        $ch = curl_init($this->base . '/' . $tabela);
+        $ch = curl_init($this->base . '/' . $tabela . ($id !== '' ? '/' . $id : ''));
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_POST => true,
+            CURLOPT_CUSTOMREQUEST => $id !== '' ? 'PUT' : 'POST',
             CURLOPT_POSTFIELDS => json_encode($corpo, JSON_UNESCAPED_UNICODE),
             CURLOPT_HTTPHEADER => $cab,
             CURLOPT_CONNECTTIMEOUT => 15,
@@ -96,6 +96,18 @@ final class Ixc
             throw new ErroCrm('O IXC não aceitou (' . $tabela . '): ' . self::texto($j['message'] ?? 'sem mensagem'));
         }
         return (string)$j['id'];
+    }
+
+    /**
+     * Altera um registro. A API do IXC troca o registro inteiro: vai o registro como foi lido do IXC
+     * ($atual, sem mexer) com os campos de $mudar por cima (esses passam pelo texto_crm).
+     */
+    public function alterar(string $tabela, string $id, array $atual, array $mudar): void
+    {
+        $j = $this->chamar($tabela, array_merge($atual, self::limpar($mudar)), false, $id);
+        if (($j['type'] ?? '') !== 'success') {
+            throw new ErroCrm('O IXC não aceitou a alteração (' . $tabela . ' #' . $id . '): ' . self::texto($j['message'] ?? 'sem mensagem'));
+        }
     }
 
     /**
@@ -324,7 +336,8 @@ function repassar_ixc(array $venda, array $vendedor): string
     // Decisão do ALEX (13/11/2026): upgrade e 2º ponto só ficam registrados no sistema comercial
     // (para o gestor conferir no fechamento e pagar a comissão). Nada é criado no IXC.
     // ixc.enviar_upgrade_segundo = true volta ao envio antigo (atendimento / pré-contrato).
-    if (in_array($venda['tipo'], ['upgrade', 'segundo'], true) && empty(ixc_config()['enviar_upgrade_segundo'])) {
+    // ixc.enviar_upgrade = true liga só o upgrade: atualiza o contato do cliente e abre o atendimento (pedido de 17/11/2026).
+    if (ixc_so_comercial($venda['tipo'])) {
         return REGISTRO_SO_COMERCIAL . (($r['ixcCliente'] ?? '') !== '' ? ' · cliente IXC #' . so_digitos((string)$r['ixcCliente']) : '');
     }
     return match ($venda['tipo']) {
@@ -335,6 +348,15 @@ function repassar_ixc(array $venda, array $vendedor): string
 }
 
 const REGISTRO_SO_COMERCIAL = 'Registrado no comercial';
+
+/** Upgrade e 2º ponto ficam só no comercial, a não ser que o config.php mande para o IXC. */
+function ixc_so_comercial(string $tipo): bool
+{
+    $cfg = ixc_config();
+    if ($tipo === 'upgrade') return empty($cfg['enviar_upgrade']) && empty($cfg['enviar_upgrade_segundo']);
+    if ($tipo === 'segundo') return empty($cfg['enviar_upgrade_segundo']);
+    return false;
+}
 
 function registro_so_comercial(?string $crmId): bool
 {
@@ -778,25 +800,158 @@ function ixc_contratos(string $idCliente): array
     return $l;
 }
 
+/** Primeiro login (radusuarios) ligado ao contrato, ou null. */
+function ixc_login_do_contrato(?array $ct): ?array
+{
+    if (!$ct) return null;
+    try {
+        return ixc()->listar('radusuarios', 'id_contrato', (string)$ct['id'], '=', 5, 'asc')[0] ?? null;
+    } catch (ErroCrm) {
+        return null;
+    }
+}
+
+/** Mesmo número? (compara só os dígitos, sem o 55 do país) */
+function mesmo_fone(string $a, string $b): bool
+{
+    $a = preg_replace('/^55(?=\d{10,11}$)/', '', so_digitos($a));
+    $b = preg_replace('/^55(?=\d{10,11}$)/', '', so_digitos($b));
+    return $a === $b;
+}
+
+/**
+ * Campos de contato do cadastro do cliente no IXC que o upgrade muda: telefone principal (celular e,
+ * se o WhatsApp era o mesmo número ou estava vazio, o WhatsApp), telefone 2 (fone) e e-mail.
+ * Só entra o que o vendedor preencheu e está diferente do IXC. Devolve [campos, linhas "ANTES PARA DEPOIS"].
+ */
+function ixc_contato_mudado(array $cli, array $r): array
+{
+    $m = [];
+    $L = [];
+    $tel1 = trim((string)($r['tel1'] ?? ''));
+    $tel2 = trim((string)($r['tel2'] ?? ''));
+    $email = strtolower(trim((string)($r['email'] ?? '')));
+    $cel = (string)($cli['telefone_celular'] ?? '');
+    $wpp = (string)($cli['whatsapp'] ?? '');
+    if (strlen(so_digitos($tel1)) >= 10 && !mesmo_fone($tel1, $cel)) {
+        $m['telefone_celular'] = $tel1;
+        $L[] = 'TELEFONE PRINCIPAL: ' . ($cel !== '' ? $cel : '(VAZIO)') . ' PARA ' . $tel1;
+        if (so_digitos($wpp) === '' || mesmo_fone($wpp, $cel)) $m['whatsapp'] = $tel1;
+    }
+    $fone = (string)($cli['fone'] ?? '');
+    if (strlen(so_digitos($tel2)) >= 10 && !mesmo_fone($tel2, $fone) && !mesmo_fone($tel2, $tel1)) {
+        $m['fone'] = $tel2;
+        $L[] = 'TELEFONE 2: ' . ($fone !== '' ? $fone : '(VAZIO)') . ' PARA ' . $tel2;
+    }
+    $velho = strtolower(trim((string)($cli['email'] ?? '')));
+    if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) && $email !== $velho) {
+        $m['email'] = $email;
+        $L[] = 'E-MAIL: ' . ($velho !== '' ? $velho : '(VAZIO)') . ' PARA ' . $email;
+    }
+    return [$m, $L];
+}
+
+/** Texto do atendimento de upgrade, no modelo que o comercial usa no IXC (resposta padrão de upgrade). */
+function ixc_descricao_upgrade(array $r, array $venda, array $vendedor, array $cli, ?array $ct, ?array $login, array $contato, string $avisoContato): string
+{
+    $valAtual = (int)so_digitos($r['valAtual'] ?? '');
+    $valNovo = (int)so_digitos($r['valNovo'] ?? '');
+    $sentido = $valAtual > 0 && $valNovo > 0 && $valNovo < $valAtual ? 'DOWNGRADE' : 'UPGRADE';
+    $planoAtual = up((string)(($r['planoAtual'] ?? '') !== '' ? preg_replace('/\s*·\s*R\$.*$/u', '', (string)$r['planoAtual']) : ($r['velAtual'] ?? '')));
+    if ($planoAtual === '' && $ct) $planoAtual = up((string)($ct['contrato'] ?? ''));
+    $L = [];
+    $L[] = 'CLIENTE: #' . $cli['id'] . ' ' . up((string)($cli['razao'] ?? ($r['nome'] ?? '')));
+    $L[] = 'LOGIN: ' . ($login ? (string)$login['login'] : '(NÃO ACHADO, CONFIRA)');
+    $L[] = 'IMPORTANTE - UPGRADE OU DOWNGRADE?: ' . $sentido;
+    $L[] = 'PLANO ATUAL (VALOR/MEGAS): ' . ($valAtual > 0 ? 'R$ ' . valor_brl($r['valAtual']) : '') . ($planoAtual !== '' ? ' / ' . $planoAtual : '');
+    $L[] = 'NOVO PLANO (VALOR/MEGAS): ' . ($valNovo > 0 ? 'R$ ' . valor_brl($r['valNovo']) : '') . (up($r['velNova'] ?? '') !== '' ? ' / ' . up($r['velNova']) : '');
+    if ($ct) $L[] = 'CONTRATO: #' . $ct['id'];
+    foreach (extras_upgrade($r) as $e) $L[] = $e;
+    if ((int)so_digitos($r['valInst'] ?? '') > 0) $L[] = 'INSTALAÇÃO: R$ ' . valor_brl($r['valInst']);
+    if ((int)so_digitos($r['valRot'] ?? '') > 0) $L[] = 'ROTEADOR VENDIDO: R$ ' . valor_brl($r['valRot']);
+    if ((int)so_digitos($r['valTv'] ?? '') > 0) $L[] = 'SMART TV BOX VENDIDA: R$ ' . valor_brl($r['valTv']);
+    $L[] = 'TELEFONE: ' . trim((string)($r['tel1'] ?? '')) . (trim((string)($r['tel2'] ?? '')) !== '' ? ' / ' . trim((string)$r['tel2']) : '');
+    if (trim((string)($r['email'] ?? '')) !== '') $L[] = 'E-MAIL: ' . strtolower(trim((string)$r['email']));
+    if ($contato) {
+        $L[] = 'CONTATO ATUALIZADO NO CADASTRO PELO APP:';
+        foreach ($contato as $c) $L[] = '  ' . $c;
+    }
+    if ($avisoContato !== '') $L[] = $avisoContato;
+    if (up($r['obs'] ?? '') !== '') $L[] = 'OBSERVAÇÕES: ' . up($r['obs']);
+    $L[] = 'VENDEDOR: ' . $vendedor['nome'];
+    $L[] = 'UPGRADE PELO APP COMERCIAL + SIDNET · ' . $venda['id_app'];
+    return texto_crm(implode("\n", $L), 6000);
+}
+
+/**
+ * Upgrade no IXC (só com ixc.enviar_upgrade): não mexe no plano. Atualiza telefones e e-mail no cadastro
+ * do cliente e abre o atendimento com o assunto de upgrade; o atendente finaliza no IXC.
+ * Se der erro no meio, "Tentar de novo" continua de onde parou (não abre dois atendimentos).
+ */
 function ixc_upgrade(array $r, array $venda, array $vendedor): string
 {
     $cfg = ixc_config();
+    $api = ixc();
     if (empty($cfg['assunto_upgrade'])) {
         throw new ErroCrm('Falta ixc.assunto_upgrade no config.php (id do assunto de upgrade no IXC).');
     }
-    $cli = ixc_cliente_por_cpf((string)($r['cpf'] ?? ''));
+    $p = ixc_passos($venda);
+    if (!empty($p['atendimento'])) {
+        return 'Atendimento IXC #' . $p['atendimento'] . (($p['contato'] ?? '') !== '' ? ' · ' . $p['contato'] : '');
+    }
+    $idCli = so_digitos((string)($r['ixcCliente'] ?? ''));
+    $cli = $idCli !== '' ? $api->um('cliente', 'id', $idCli) : null;
+    $cli = $cli ?: ixc_cliente_por_cpf((string)($r['cpf'] ?? ''));
     if (!$cli) {
-        throw new ErroCrm('Cliente com CPF ' . ($r['cpf'] ?? '(vazio)') . ' não encontrado no IXC.');
+        throw new ErroCrm('Cliente ' . ($idCli !== '' ? '#' . $idCli : 'com CPF ' . ($r['cpf'] ?? '(vazio)')) . ' não encontrado no IXC.');
     }
     $contratos = ixc_contratos((string)$cli['id']);
-    $ct = $contratos[0] ?? null;
-    $msg = ixc_descricao($r, $venda, $vendedor);
-    if (count($contratos) > 1) {
-        $msg .= "\nATENÇÃO: O CLIENTE TEM " . count($contratos) . ' CONTRATOS. ATENDIMENTO ABERTO NO CONTRATO #' . $ct['id'] . '. CONFIRA SE É ESTE.';
+    $ct = null;
+    $idCt = so_digitos((string)($r['ixcContrato'] ?? ''));
+    foreach ($contratos as $c) {
+        if ($idCt !== '' && (string)$c['id'] === $idCt) $ct = $c;
     }
-    $titulo = 'UPGRADE PELO APP: ' . up($r['velAtual'] ?? '') . ' PARA ' . up($r['velNova'] ?? '');
-    $id = ixc_atendimento($cli, (string)$cfg['assunto_upgrade'], mb_substr($titulo, 0, 200), $msg, $ct, '');
-    return 'Atendimento IXC #' . $id;
+    $avisoCt = '';
+    if (!$ct) {
+        $ct = $contratos[0] ?? null;
+        if (count($contratos) > 1) {
+            $avisoCt = 'ATENÇÃO: O CLIENTE TEM ' . count($contratos) . ' CONTRATOS. ATENDIMENTO ABERTO NO CONTRATO #' . $ct['id'] . '. CONFIRA SE É ESTE.';
+        }
+    }
+    $login = ixc_login_do_contrato($ct);
+
+    // 1) contato no cadastro do cliente (se falhar, o atendimento sai assim mesmo, avisando para atualizar à mão)
+    $linhasContato = [];
+    $aviso = '';
+    if (!isset($p['contato'])) {
+        [$mudar, $linhasContato] = ixc_contato_mudado($cli, $r);
+        if (!$mudar || array_key_exists('atualizar_contato', $cfg) && !$cfg['atualizar_contato']) {
+            $p['contato'] = $mudar ? 'contato não atualizado (desligado no config)' : 'contato já estava igual';
+            if ($mudar) {
+                $aviso = 'ATUALIZAR O CONTATO NO CADASTRO: ' . implode(' | ', $linhasContato);
+                $linhasContato = [];
+            }
+        } else {
+            try {
+                $api->alterar('cliente', (string)$cli['id'], $cli, $mudar);
+                $p['contato'] = 'contato atualizado';
+            } catch (ErroCrm $e) {
+                $p['contato'] = 'contato NÃO atualizado: ' . mb_substr($e->getMessage(), 0, 120);
+                $aviso = 'O APP NÃO CONSEGUIU ATUALIZAR O CONTATO NO CADASTRO. ATUALIZAR À MÃO: ' . implode(' | ', $linhasContato);
+                $linhasContato = [];
+            }
+        }
+        $p['contato_linhas'] = $linhasContato;
+        $p['contato_aviso'] = $aviso;
+        ixc_salvar_passos($venda, $p);
+    }
+
+    // 2) atendimento de upgrade
+    $msg = ixc_descricao_upgrade($r, $venda, $vendedor, $cli, $ct, $login, $p['contato_linhas'] ?? [], trim(($p['contato_aviso'] ?? '') . ($avisoCt !== '' ? "\n" . $avisoCt : '')));
+    $titulo = 'UPGRADE PELO APP: ' . up((string)($r['velNova'] ?? ''));
+    $p['atendimento'] = ixc_atendimento($cli, (string)$cfg['assunto_upgrade'], mb_substr($titulo, 0, 200), $msg, $ct, $login ? (string)$login['id'] : '');
+    ixc_salvar_passos($venda, $p);
+    return 'Atendimento IXC #' . $p['atendimento'] . ' · ' . $p['contato'];
 }
 
 function ixc_segundo(array $r, array $venda, array $vendedor): string

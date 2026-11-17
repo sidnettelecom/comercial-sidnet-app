@@ -40,6 +40,8 @@ try {
         $l = ixc()->listar('cliente', 'id', '0', '>', 1);
         echo "OK: o IXC respondeu com o token" . ($l ? " (último cliente #{$l[0]['id']})" : '') . ".\n";
         $cfg = config()['ixc'] ?? [];
+        echo '  upgrade vai ao IXC: ' . (!empty($cfg['enviar_upgrade']) || !empty($cfg['enviar_upgrade_segundo']) ? 'SIM' . (array_key_exists('atualizar_contato', $cfg) && !$cfg['atualizar_contato'] ? ' (só o atendimento)' : ' (contato + atendimento)') : 'não (só no comercial)') . "\n";
+        echo '  2º ponto vai ao IXC: ' . (!empty($cfg['enviar_upgrade_segundo']) ? 'SIM' : 'não (só no comercial)') . "\n";
         foreach (['assunto_upgrade' => 'su_oss_assunto', 'assunto_segundo' => 'su_oss_assunto'] as $k => $t) {
             if (!empty($cfg[$k])) {
                 $a = ixc()->um($t, 'id', (string)$cfg[$k]);
