@@ -132,7 +132,7 @@ details.wa summary{cursor:pointer;font-weight:600;font-size:13.5px;padding:4px 0
 details.wa[open] summary{margin-bottom:8px}
 #resumo{grid-template-columns:repeat(4,1fr)}@media (max-width:520px){#resumo{grid-template-columns:repeat(2,1fr)}}
 
-.money{position:relative}.money span{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-weight:600}.money input{padding-left:38px}
+.money{position:relative}.money span{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-weight:600}.money input{padding-left:38px}.money input[readonly]{background:var(--bg);cursor:default}
 .checks{display:grid;gap:8px}
 .mbtns{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .mbtns .btn{flex-direction:column;gap:5px;padding:12px 6px;font-size:13px;line-height:1.15;text-align:center}
@@ -425,7 +425,7 @@ html.web .gate .olho{color:#475569}
     </div>
     <fieldset class="only-reg">
       <legend>Cliente no IXC</legend>
-      <p class="small" style="margin:0">Upgrade e 2º plano ficam registrados no sistema comercial para o gestor conferir e vão no WhatsApp. Nada é alterado no IXC.</p>
+      <p class="small" style="margin:0">2º plano fica registrado só no sistema comercial. No upgrade, o telefone e o e-mail do cliente são atualizados no IXC e um atendimento é aberto; o plano é trocado pela equipe.</p>
       <div class="f" data-k="ixcBusca">
         <label for="ixcBusca">CPF ou ID do cliente no IXC</label>
         <div class="busca-ixc"><input id="ixcBusca" class="mono" inputmode="numeric" placeholder="CPF ou ID" maxlength="14" enterkeyhint="search"><button type="button" class="btn" id="btnBuscaIxc">Buscar no IXC</button></div>
@@ -487,11 +487,11 @@ html.web .gate .olho{color:#475569}
           <span class="msg" id="valNovoMsg">Informe o novo valor mensal.</span>
         </div>
       </div>
+      <p class="small" id="valNovoHint" style="margin:0" hidden>O "Vai pagar" é o valor do plano escolhido, cadastrado pelo gestor no painel.</p>
       <div class="f" data-k="velNova">
         <label for="velNova" class="req">Plano vai para</label>
-        <input id="velNova" list="dl-vel" placeholder="Ex.: 500 MEGAS" autocapitalize="characters">
-        <datalist id="dl-vel"><option value="300 MEGAS"><option value="500 MEGAS"><option value="600 MEGAS"><option value="800 MEGAS"><option value="1 GIGA"></datalist>
-        <span class="msg">Informe a nova velocidade.</span>
+        <select id="velNova"></select>
+        <span class="msg">Escolha o novo plano.</span>
       </div>
       <div class="f">
         <span class="lbl">Serviços no upgrade</span>
@@ -870,7 +870,13 @@ function renderCfg(){
   $("cfgPlanos").readOnly=!!cfg.planosSrv;$("cfgPlanosHint").textContent=cfg.planosSrv?"Definidos pelo gestor no painel. Para mudar, fale com ele.":"Aparecem na lista \"Plano selecionado\".";
   var sel=$("plano"),cur=sel.value;sel.innerHTML='<option value="">Escolha o plano…</option>'+cfg.planos.map(function(p){var v=(cfg.precos||{})[p]||PRECOS[p];v=v?parseFloat(String(v).replace(",",".")):0;return'<option value="'+esc(p)+'">'+esc(p)+(v>0?' · R$ '+brl(v):'')+'</option>'}).join("");
   if(cur&&cfg.planos.indexOf(cur)<0){var o=document.createElement("option");o.textContent=cur;sel.appendChild(o)}sel.value=cur;
+  var sv=$("velNova"),cv=sv.value;sv.innerHTML='<option value="">Escolha o novo plano…</option>'+cfg.planos.map(function(p){var v=precoPlano(p);return'<option value="'+esc(p)+'">'+esc(p)+(v>0?' · R$ '+brl(v):'')+'</option>'}).join("");
+  if(cv&&cfg.planos.indexOf(cv)<0){var o2=document.createElement("option");o2.textContent=cv;sv.appendChild(o2)}sv.value=cv;travaValNovo();
 }
+/* preço mensal de um plano cadastrado (0 quando o gestor não pôs valor) */
+function precoPlano(p){var v=(cfg.precos||{})[p]||PRECOS[p];return v?parseFloat(String(v).replace(",","."))||0:0}
+/* upgrade: o "Vai pagar" vem do plano escolhido; só fica livre se o plano não tiver valor no painel */
+function travaValNovo(){var v=precoPlano($("velNova").value),i=$("valNovo");i.readOnly=v>0;$("valNovoHint").hidden=!(v>0);return v}
 
 /* ---------- senha provisória: o vendedor cria a dele ---------- */
 var senhaLogin="";
@@ -1129,8 +1135,11 @@ function atualizaTotal(){$("valTotal").textContent="R$ "+brl(totalExtras({valIns
 function getForm(){var o={};F.forEach(function(k){o[k]=$(k).value});var v=document.querySelector('input[name="venc"]:checked');o.venc=v?v.value:"";o.tipo=tipoAtual();o.endereco=montarEnd(o);o.midias=midias.slice();CK.forEach(function(k){o[k]=$(k).checked});return o}
 function setForm(o){if(o&&o.endereco&&!o.rua){o=Object.assign({},o,{rua:o.endereco})}F.forEach(function(k){$(k).value=o&&o[k]||""});if(!$("zona").value)$("zona").value="U";CK.forEach(function(k){$(k).checked=!!(o&&o[k])});setTipo(o&&o.tipo||tipoAtual());atualizaTotal();mostraObsServ();midias=(o&&o.midias||[]).slice();renderMidias();
   if(o&&o.plano&&cfg.planos.indexOf(o.plano)<0){var op=document.createElement("option");op.textContent=o.plano;$("plano").appendChild(op);$("plano").value=o.plano}
+  if(o&&o.velNova&&$("velNova").value!==o.velNova){var ov=document.createElement("option");ov.textContent=o.velNova;$("velNova").appendChild(ov);$("velNova").value=o.velNova}
+  travaValNovo();
   document.querySelectorAll('input[name="venc"]').forEach(function(r){r.checked=!!o&&r.value===o.venc});
   document.querySelectorAll(".f").forEach(function(f){f.classList.remove("bad","good")});$("formAlert").hidden=true}
+$("velNova").addEventListener("change",function(){var v=travaValNovo();if(v>0)$("valNovo").value=brl(v)});
 function rascunho(){save(K.draft,{f:getForm(),id:editingId})}
 $("form").addEventListener("input",rascunho);$("form").addEventListener("change",rascunho);
 $("cpf").addEventListener("input",function(){var rg=$("rg");this.value=fmtCPF(this.value);if(!rg.value||rg.dataset.auto===rg.value){rg.value=dig(this.value);rg.dataset.auto=rg.value}var f=this.closest(".f");var ok=dig(this.value).length===11&&cpfOk(this.value);f.classList.toggle("good",ok);if(dig(this.value).length===11)f.classList.toggle("bad",!ok);else f.classList.remove("bad")});
