@@ -23,3 +23,9 @@
   f.addEventListener('submit',function(){mudou=false});
   window.addEventListener('beforeunload',function(e){if(mudou){e.preventDefault();e.returnValue=''}});
 })();
+
+/* Listas que filtram ao escolher (vendedor na aba Vendas, mês em Vendas do mês).
+   O painel bloqueia JavaScript escrito dentro do HTML (onchange=...), por isso o envio fica aqui. */
+document.querySelectorAll('select[data-auto]').forEach(function(s){
+  s.addEventListener('change',function(){if(s.form)s.form.submit()});
+});

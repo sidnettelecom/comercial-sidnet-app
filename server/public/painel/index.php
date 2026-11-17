@@ -507,7 +507,7 @@ body.fora main{max-width:none;margin:0;padding:0;min-height:100vh;display:grid;g
 td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2px 0 2px 4px;vertical-align:middle}
 </style>
 <style>.senha-box{position:relative;display:block}.senha-box input{width:100%;box-sizing:border-box;padding-right:48px}.olho{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:40px;height:40px;border:0!important;background:transparent!important;box-shadow:none!important;color:#475569;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;padding:0}.olho:hover{background:#eef2ff}.olho .risco{display:none}.olho[aria-pressed="true"] .risco{display:inline}</style>
-<script src="/painel/olho.js" defer></script>
+<script src="/painel/olho.js?v=2" defer></script>
 </head>
 <body class="<?= $logado ? 'dentro' : 'fora' ?>">
 <?php if ($logado):
@@ -631,7 +631,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
 ?>
   <div class="card"><form method="get" class="row"><input type="hidden" name="p" value="mes">
       <h2 style="margin:0">Vendas do mês por vendedor</h2>
-      <select name="mes" aria-label="Mês" onchange="this.form.submit()"><?php for ($i = 0; $i <= 12; $i++): $om = mes_soma($mesAtualM, -$i); ?><option value="<?= $om ?>" <?= $om === $mesM ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endfor ?></select>
+      <select name="mes" aria-label="Mês" data-auto><?php for ($i = 0; $i <= 12; $i++): $om = mes_soma($mesAtualM, -$i); ?><option value="<?= $om ?>" <?= $om === $mesM ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endfor ?></select>
       <button>Ver</button></form>
     <p class="small" style="margin:8px 0 0">Tudo o que os vendedores cadastraram no mês (vendas novas, upgrades e 2º ponto), mais vendidos primeiro. Clique no vendedor para ver os clientes.</p>
   </div>
@@ -1034,7 +1034,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     <?php foreach ($NOMES as $tk => $tn): ?><a href="<?= $lnk(['tp' => $fTipo === $tk ? '' : $tk]) ?>" class="<?= $fTipo === $tk ? 'on' : '' ?>"><span class="tp tp-<?= h($tk) ?>"><?= h($tn) ?> <?= (int)($contTipo[$tk] ?? 0) ?></span></a><?php endforeach ?>
     <span class="sep" aria-hidden="true"></span>
     <form method="get" class="in"><input type="hidden" name="p" value="vendas"><?php if ($filtro !== ''): ?><input type="hidden" name="st" value="<?= h($filtro) ?>"><?php endif ?><?php if ($fTipo !== ''): ?><input type="hidden" name="tp" value="<?= h($fTipo) ?>"><?php endif ?>
-      <select name="vd" aria-label="Vendedor" onchange="this.form.submit()"><option value="">Todos os vendedores</option><?php foreach ($vendLista as $vid => $vn): ?><option value="<?= (int)$vid ?>" <?= $fVend === (int)$vid ? 'selected' : '' ?>><?= h($vn) ?></option><?php endforeach ?></select>
+      <select name="vd" aria-label="Vendedor" data-auto><option value="">Todos os vendedores</option><?php foreach ($vendLista as $vid => $vn): ?><option value="<?= (int)$vid ?>" <?= $fVend === (int)$vid ? 'selected' : '' ?>><?= h($vn) ?></option><?php endforeach ?></select>
       <noscript><button>Filtrar</button></noscript></form>
   </div>
   <div class="card tw"><table>
