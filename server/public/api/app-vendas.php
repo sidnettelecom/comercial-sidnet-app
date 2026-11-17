@@ -11,7 +11,7 @@
  *   GET  /api/app-vendas.php?acao=eu                  -> confere o login, devolve o nome do vendedor
  *   POST /api/app-vendas.php?acao=senha               {atual, nova} troca a senha provisória pela do vendedor
  *   GET  /api/app-vendas.php?acao=boletos&ids=a,b     -> 1º boleto de cada venda: pagou S/N/'' e vencimento
- *   POST /api/app-vendas.php?acao=boleto_comissao {id_app, n: 1|2} -> qual boleto conta para a comissão (2 = o 1º veio proporcional)
+ *   POST /api/app-vendas.php?acao=boleto_comissao {id_app, n: 1|2|3} -> qual boleto (1º, 2º ou 3º depois da venda) conta para a comissão
  *   GET  /api/app-vendas.php?acao=consulta_cpf&cpf=…   -> já foi cliente da Sidnet? contratos e débitos vencidos em aberto (só leitura)
  *   GET  /api/app-vendas.php?acao=planos              -> planos definidos no painel (vazio = o celular usa a lista dele)
  *   GET  /api/app-vendas.php?acao=historico           -> cadastros deste vendedor que estão no servidor (para o histórico
@@ -204,11 +204,11 @@ try {
     }
 
     if ($acao === 'boleto_comissao' && $_SERVER['REQUEST_METHOD'] === 'POST') {
-        // o vendedor escolhe qual boleto conta para a comissão: o 1º, ou o 2º quando o 1º veio proporcional
+        // o vendedor escolhe a data do boleto que conta para a comissão (1º, 2º ou 3º depois da venda)
         $in = json_decode(file_get_contents('php://input') ?: '', true) ?: [];
         $idApp = preg_replace('/[^A-Za-z0-9]/', '', (string)($in['id_app'] ?? ''));
         $n = (int)($in['n'] ?? 0);
-        if ($n < 1 || $n > 2) responder(422, ['ok' => false, 'erro' => 'Escolha o 1º ou o 2º boleto.']);
+        if ($n < 1 || $n > 3) responder(422, ['ok' => false, 'erro' => 'Escolha a data do boleto.']);
         $q = db()->prepare("SELECT id, vendedor_id, tipo, dados FROM vendas WHERE id_app = ? AND tipo IN ('venda','upgrade','segundo')");
         $q->execute([$idApp]);
         $v = $idApp !== '' ? $q->fetch() : false;

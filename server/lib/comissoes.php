@@ -261,8 +261,8 @@ function comissoes_atualizar_ixc(int $limite = 40, int $id = 0): int
         if ($cli === '') $cli = (string)($passos['prospect'] ?? '');
         if ($cli === '') $cli = (string)(ixc_cliente_por_cpf((string)($dados['cpf'] ?? ''))['id'] ?? '');
         if ($cli === '') continue;
-        // boletos que vencem a partir do dia da venda (no 2º ponto, os do contrato novo). Conta o 1º,
-        // ou o 2º quando o vendedor marcou no app (o 1º veio proporcional e a comissão é sobre o valor cheio).
+        // boletos que vencem a partir do dia da venda (no 2º ponto, os do contrato novo). Conta o 1º, ou o 2º/3º
+        // quando o vendedor escolheu outra data no app (a comissão é sobre o boleto de valor cheio).
         $n = max(1, min(3, (int)($v['boleto_n'] ?? 1)));
         $dia = date('Y-m-d', strtotime((string)$v['recebido_em']));
         $contrato = (string)($passos['contrato'] ?? '');
