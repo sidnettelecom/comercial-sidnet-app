@@ -1,7 +1,7 @@
 <?php
 /**
  * Portal Sidnet (antes "Comercial + Sidnet"): vendas recebidas dos celulares, situação no CRM, usuários (vendedores),
- * gestores, recolhimento de equipamentos e instalações concluídas.
+ * gestores, recolhimento de equipamentos, instalações concluídas e RH (horas informais, sobreaviso, recibos).
  * Entrada com usuário e senha do gestor; 5 senhas erradas travam o usuário por 15 minutos.
  */
 declare(strict_types=1);
@@ -14,10 +14,12 @@ require_once __DIR__ . '/../../lib/dashboard.php';
 require_once __DIR__ . '/../../lib/permissoes.php';
 require_once __DIR__ . '/../../lib/recolhimento.php';
 require_once __DIR__ . '/../../lib/instalacao.php';
+require_once __DIR__ . '/../../lib/rh.php';
 dash_tabela();
 perm_tabela();
 rec_tabela();
 inst_tabela();
+rh_tabela();
 
 const PAINEL_INATIVO_MAX = 8 * 3600; // sai sozinho depois de 8 horas sem uso
 
@@ -111,9 +113,11 @@ const PERM_ACOES = [
     'comissoes_salvar' => 'comissoes', 'comissoes_ixc' => 'comissoes', 'planilha_importar' => 'comissoes', 'planilha_salvar' => 'comissoes',
     'rec_salvar' => 'recolhimentos', 'rec_excluir' => 'recolhimentos', 'rec_buscar' => 'recolhimentos', 'rec_mais' => 'recolhimentos',
     'inst_salvar' => 'instalacoes', 'inst_excluir' => 'instalacoes', 'inst_buscar' => 'instalacoes', 'inst_mais' => 'instalacoes', 'inst_mais_tec' => 'instalacoes',
+    'rh_lanc_salvar' => 'rh', 'rh_lanc_excluir' => 'rh', 'rh_func_salvar' => 'rh', 'rh_func_ativo' => 'rh', 'rh_pagar' => 'rh',
 ];
 $recForm = null; // formulário de O.S de recolhimento para mostrar de novo (erro ou "Buscar nome")
 $instForm = null; // o mesmo para a O.S de instalação
+$rhForm = null; // lançamento do RH que deu erro, para mostrar de novo
 $quem = $gestor['usuario'] ?? '';
 
 // ---- ações ----
@@ -508,6 +512,49 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 registrar($quem, 'pagou comissão da instalação', mes_nome($mesI) . " ($n O.S, pago em " . mes_nome($pg) . ')');
                 $msg = $n ? "$n O.S conferidas marcadas como pagas em " . mes_nome($pg) . '.' : 'Nenhuma O.S conferida (✔) e ainda não paga neste mês.';
             }
+        } elseif ($a === 'rh_lanc_salvar') {
+            $rhForm = (array)($_POST['l'] ?? []);
+            $lid = rh_lanc_salvar($rhForm, $quem);
+            $ll = rh_lanc_um($lid);
+            registrar($quem, 'lançou no RH', "#$lid {$ll['nome']} " . RH_TIPOS[$ll['tipo']] . ' ' . mes_nome($ll['mes']) . ' R$ ' . brl($ll['valor']));
+            $msg = 'Lançado: ' . mb_strtolower(RH_TIPOS[$ll['tipo']]) . " de {$ll['nome']}, R$ " . brl($ll['valor']) . ' (' . mes_nome($ll['mes']) . ').';
+            $rhForm = ['funcionario_id' => $ll['funcionario_id'], 'tipo' => $ll['tipo'], 'mes' => $ll['mes'], 'data' => $ll['data']]; // próximo lançamento já vem com o mesmo funcionário
+        } elseif ($a === 'rh_lanc_excluir') {
+            if ($ll = rh_lanc_excluir($id)) {
+                registrar($quem, 'excluiu lançamento do RH', "#$id {$ll['nome']} " . RH_TIPOS[$ll['tipo']] . ' ' . mes_nome($ll['mes']) . ' R$ ' . brl($ll['valor']));
+                $msg = 'Lançamento excluído.';
+            }
+        } elseif ($a === 'rh_func_salvar') {
+            $fid = rh_func_salvar((array)($_POST['f'] ?? []), $id);
+            $ff = rh_funcionario($fid);
+            registrar($quem, $id ? 'corrigiu funcionário do RH' : 'cadastrou funcionário do RH', "#$fid {$ff['nome']}");
+            $msg = $id ? "Cadastro de {$ff['nome']} salvo." : "{$ff['nome']} cadastrado.";
+        } elseif ($a === 'rh_func_ativo') {
+            db()->prepare('UPDATE rh_funcionarios SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
+            $ff = rh_funcionario($id);
+            if ($ff) registrar($quem, $ff['ativo'] ? 'reativou funcionário do RH' : 'desativou funcionário do RH', "#$id {$ff['nome']}");
+            $msg = $ff ? ($ff['ativo'] ? "{$ff['nome']} voltou para a lista de lançamentos." : "{$ff['nome']} saiu da lista de lançamentos (o histórico continua).") : '';
+        } elseif ($a === 'rh_pagar') {
+            $mesP = (string)($_POST['mes'] ?? '');
+            rh_pagar($id, $mesP, (string)($_POST['pago_em'] ?? ''), $quem);
+            $ff = rh_funcionario($id);
+            registrar($quem, 'marcou pago no RH', "{$ff['nome']} " . mes_nome($mesP) . ' em ' . rh_dt((string)$_POST['pago_em']));
+            $msg = "{$ff['nome']}: " . mes_nome($mesP) . ' marcado como pago.';
+        } elseif ($a === 'rh_desfazer') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin desfaz um pagamento do RH.');
+            $mesP = (string)($_POST['mes'] ?? '');
+            rh_desfazer($id, $mesP);
+            $ff = rh_funcionario($id);
+            registrar($quem, 'desfez pagamento do RH', ($ff['nome'] ?? "#$id") . ' ' . mes_nome($mesP));
+            $msg = 'Pagamento desfeito: os lançamentos de ' . mes_nome($mesP) . ' podem ser mudados de novo.';
+        } elseif ($a === 'rh_empresa_salvar') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin muda os dados do recibo.');
+            $cn = so_digitos((string)($_POST['cnpj'] ?? ''));
+            if ($cn !== '' && strlen($cn) !== 14) throw new RuntimeException('O CNPJ precisa ter 14 números.');
+            db()->prepare('UPDATE rh_empresa SET nome = ?, cnpj = ?, cidade = ? WHERE id = 1')
+                ->execute([mb_substr(up((string)($_POST['nome'] ?? '')) ?: 'SIDNET TELECOM', 0, 80), $cn, mb_substr(trim((string)($_POST['cidade'] ?? '')), 0, 60)]);
+            registrar($quem, 'alterou dados do recibo do RH');
+            $msg = 'Dados do recibo salvos.';
         } elseif ($a === 'minha_senha') {
             $q = db()->prepare('SELECT senha_hash FROM gestores WHERE id = ?');
             $q->execute([$gestor['id']]);
@@ -529,11 +576,12 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
 $p = !empty($gestor['trocar']) ? 'trocar' : ($_GET['p'] ?? '');
 $AREA_PAG = ['vendas' => 'vendas', 'excluir' => 'vendas', 'mes' => 'vendas', 'dash' => 'dash', 'vendedores' => 'vendedores', 'planos' => 'planos',
     'comissoes' => 'comissoes', 'planilha' => 'comissoes', 'gestores' => 'gestores', 'config' => 'admin', 'senha' => '', 'trocar' => '',
-    'recolhimentos' => 'recolhimentos', 'rec_comissao' => 'admin', 'instalacoes' => 'instalacoes', 'inst_comissao' => 'admin'];
+    'recolhimentos' => 'recolhimentos', 'rec_comissao' => 'admin', 'instalacoes' => 'instalacoes', 'inst_comissao' => 'admin',
+    'rh_lancar' => 'rh', 'rh_fecha' => 'rh', 'rh_recibo' => 'rh', 'rh_func' => 'rh'];
 if (!isset($AREA_PAG[$p])) $p = 'vendas';
 if ($logado && $p !== 'trocar' && ($_GET['p'] ?? '') === '' && !$pode('vendas')) {
     // tela inicial: a primeira área liberada
-    foreach (array_keys(PERM_AREAS) as $ar) if ($pode($ar)) { $p = $ar; break; }
+    foreach (array_keys(PERM_AREAS) as $ar) if ($pode($ar)) { $p = $ar === 'rh' ? 'rh_lancar' : $ar; break; }
 }
 if ($logado && $AREA_PAG[$p] !== '' && !($AREA_PAG[$p] === 'admin' ? $admin : $pode($AREA_PAG[$p]))) $p = 'sem';
 $NOMES = ['venda' => 'Venda', 'segundo' => '2º plano', 'upgrade' => 'Upgrade'];
@@ -574,6 +622,7 @@ $ICONES = [
     'rec_comissao' => '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.8 0-3 .9-3 2.1 0 2.9 6 1.6 6 4.6 0 1.3-1.3 2.3-3 2.3-1.5 0-2.7-.6-3.2-1.7M12 6.5V8m0 9v1.5"/>',
     'instalacao' => '<path d="M3 10l9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
     'permissoes' => '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+    'rh' => '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.4 3.6 5.2"/>',
 ];
 $svg = fn(string $k) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $ICONES[$k] . '</svg>';
 $aba = fn(string $k, string $t, string $ic = '') => '<a href="?p=' . $k . '"' . (($p === $k || ($k === 'vendas' && $p === 'excluir')) ? ' aria-current="page"' : '') . '>' . $svg($ic ?: $k) . $t . '</a>';
@@ -789,9 +838,23 @@ td.dlt{font-weight:800;white-space:nowrap}
 .rec-pes .card{display:grid;gap:4px}.rec-pes .papel{font-size:12.5px;color:var(--muted);font-weight:700}.rec-pes .tot{font-size:26px;font-weight:800}
 .tp.pago{background:#ede9fe;color:#5b21b6}
 .vista>*,main>*{min-width:0}
+.rh-tipos{display:flex;gap:6px;flex-wrap:wrap}.rh-tipos a{display:inline-block;padding:8px 14px;border-radius:12px;border:1px solid var(--line);background:var(--surface);font-weight:700;text-decoration:none;color:var(--ink)}
+.rh-tipos a[aria-current]{background:var(--g-btn);color:#fff;border-color:transparent}
+.tp-horas{background:#dbeafe;color:#1e40af}.tp-sobre{background:#ede9fe;color:#5b21b6}.tp-compl{background:#d1fae5;color:#065f46}.tp-pag{background:#fef3c7;color:#92400e}
+td.r,th.r{text-align:right}
+.recibo{background:#fff;color:#111;border-radius:14px;box-shadow:var(--sombra);padding:26px 28px;max-width:820px;font-size:13.5px;display:grid;gap:10px}
+.recibo .cab{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:2px solid #111;padding-bottom:8px}.recibo .cab b{font-size:16px}
+.recibo h3{margin:0;font-size:18px;letter-spacing:.06em;text-align:center}
+.recibo table{min-width:0}.recibo th,.recibo td{border-bottom:1px solid #ccc;color:#111;padding:6px 8px;background:none!important}.recibo th{color:#444}
+.recibo .tot td{font-weight:800;font-size:15px;border-bottom:2px solid #111}
+.recibo .ass{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-top:28px}.recibo .ass div{flex:1 1 220px;border-top:1px solid #111;padding-top:4px;text-align:center;font-size:12.5px}
+.recibo .via{font-size:11px;color:#555;text-align:right}
+.corte{border:0;border-top:1px dashed #888;margin:18px 0}
+@media print{.lado,.noprint,main>.msg{display:none!important}body.dentro{display:block;background:#fff}body.dentro main{padding:0}
+  .recibo{box-shadow:none;border-radius:0;padding:0 4px;max-width:none;break-inside:avoid}.folha{break-after:page}.folha:last-child{break-after:auto}}
 </style>
 <style>.senha-box{position:relative;display:block}.senha-box input{width:100%;box-sizing:border-box;padding-right:48px}.olho{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:40px;height:40px;border:0!important;background:transparent!important;box-shadow:none!important;color:#475569;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;padding:0}.olho:hover{background:#eef2ff}.olho .risco{display:none}.olho[aria-pressed="true"] .risco{display:inline}</style>
-<script src="/painel/olho.js?v=2" defer></script>
+<script src="/painel/olho.js?v=3" defer></script>
 </head>
 <body class="<?= $logado ? 'dentro' : 'fora' ?>">
 <?php if ($logado):
@@ -803,6 +866,7 @@ td.dlt{font-weight:800;white-space:nowrap}
     . $grupo('comissoes', 'Comissões', [['comissoes', 'Comissões', $pode('comissoes')], ['planilha', 'Comissões planilha', $pode('comissoes')] /* PLANILHA-TEMP */])
     . $grupo('recolhimento', 'Recolhimento', [['recolhimentos', 'Recolhimentos', $pode('recolhimentos')], ['rec_comissao', 'Comissão', $admin]])
     . $grupo('instalacao', 'Instalação', [['instalacoes', 'Instalações concluídas', $pode('instalacoes')], ['inst_comissao', 'Comissões', $admin]])
+    . $grupo('rh', 'RH', [['rh_lancar', 'Lançamentos', $pode('rh')], ['rh_fecha', 'Fechamento e recibos', $pode('rh'), ['rh_fecha', 'rh_recibo']], ['rh_func', 'Funcionários', $pode('rh')]])
     . $grupo('config', 'Configurações', [['config', 'Permissões', $admin], ['gestores', 'Gestores', $pode('gestores')], ['vendedores', 'Usuários', $pode('vendedores')], ['planos', 'Planos', $pode('planos')]]) ?></nav>
   <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?p=senha">Trocar minha senha</a><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
@@ -1743,6 +1807,174 @@ td.dlt{font-weight:800;white-space:nowrap}
     </table></div>
   </div>
 
+<?php elseif ($p === 'rh_lancar'):
+    $mesesH = rh_meses();
+    $mesH = rh_mes_ok((string)($_GET['mes'] ?? '')) ?: date('Y-m');
+    if (!in_array($mesH, $mesesH, true)) { $mesesH[] = $mesH; rsort($mesesH); }
+    $mesesForm = array_values(array_unique(array_merge([mes_soma(date('Y-m'), 1)], $mesesH))); rsort($mesesForm);
+    $fH = (int)($_GET['f'] ?? 0);
+    $tH = isset(RH_TIPOS[$_GET['t'] ?? '']) ? (string)$_GET['t'] : '';
+    $tipoF = isset(RH_TIPOS[$rhForm['tipo'] ?? '']) ? $rhForm['tipo'] : (isset(RH_TIPOS[$_GET['tipo'] ?? '']) ? (string)$_GET['tipo'] : 'horas');
+    $vF = fn(string $k, string $pad = '') => h((string)($rhForm[$k] ?? $pad));
+    $funcsH = rh_funcionarios(true);
+    $linH = rh_do_mes($mesH, $fH, $tH);
+    $doMes = $fH || $tH ? rh_do_mes($mesH) : $linH;
+    $somaT = fn(string $t) => array_sum(array_map(fn($l) => (float)$l['valor'], array_filter($doMes, fn($l) => $l['tipo'] === $t)));
+    $qtdT = fn(string $t) => array_sum(array_map(fn($l) => (float)$l['qtd'], array_filter($doMes, fn($l) => $l['tipo'] === $t)));
+    $linkH = '?p=rh_lancar&amp;mes=' . h($mesH);
+?>
+  <div class="topo"><div><h1>RH · Lançamentos</h1><p class="small">Lance aqui as horas extras informais, o sobreaviso, o complemento de salário e os pagamentos extras de cada funcionário. Cada lançamento entra no mês de referência escolhido; no Fechamento sai o total e o recibo.</p></div>
+    <form method="get" class="in"><input type="hidden" name="p" value="rh_lancar"><select name="mes" aria-label="Mês de referência" data-auto><?php foreach ($mesesH as $om): ?><option value="<?= h($om) ?>" <?= $om === $mesH ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select><noscript><button>Ver</button></noscript></form></div>
+  <div class="kpis">
+    <div class="kpi forte"><span>Total de <?= h(mes_nome($mesH)) ?></span><b><?= rh_rs(array_sum(array_map(fn($l) => (float)$l['valor'], $doMes))) ?></b><small><?= count(array_unique(array_column($doMes, 'funcionario_id'))) ?> funcionário(s)</small></div>
+    <div class="kpi"><span>Horas informais</span><b><?= rh_rs($somaT('horas')) ?></b><small><?= rh_hm($qtdT('horas')) ?> h lançadas</small></div>
+    <div class="kpi"><span>Sobreaviso</span><b><?= rh_rs($somaT('sobre')) ?></b><small><?= rtrim(rtrim(number_format($qtdT('sobre'), 1, ',', ''), '0'), ',') ?> dia(s)</small></div>
+    <div class="kpi"><span>Complemento</span><b><?= rh_rs($somaT('compl')) ?></b><small>&nbsp;</small></div>
+    <div class="kpi"><span>Pagamentos extras</span><b><?= rh_rs($somaT('pag')) ?></b><small>&nbsp;</small></div>
+  </div>
+  <?php if (!$funcsH): ?><div class="msg">Ainda não tem funcionário cadastrado. Cadastre primeiro em <a href="?p=rh_func">RH → Funcionários</a>.</div>
+  <?php else: ?>
+  <form method="post" action="<?= $linkH ?>&amp;tipo=<?= h($tipoF) ?>" class="card" id="form-rh"><?= csrf_campo() ?><input type="hidden" name="l[tipo]" value="<?= h($tipoF) ?>">
+    <h2>Novo lançamento</h2>
+    <nav class="rh-tipos" aria-label="Tipo do lançamento"><?php foreach (RH_TIPOS as $tk => $tt): ?><a href="<?= $linkH ?>&amp;tipo=<?= $tk ?>#form-rh"<?= $tk === $tipoF ? ' aria-current="page"' : '' ?>><?= h($tt) ?></a><?php endforeach ?></nav>
+    <div class="rec-form" style="margin-top:12px">
+      <label>Funcionário<select name="l[funcionario_id]" required><option value="">escolha</option><?php foreach ($funcsH as $fu):
+        $ref = $tipoF === 'horas' ? $fu['valor_hora'] : ($tipoF === 'sobre' ? $fu['valor_sobreaviso'] : ''); ?><option value="<?= (int)$fu['id'] ?>" <?= (int)$fu['id'] === (int)($rhForm['funcionario_id'] ?? 0) ? 'selected' : '' ?>><?= h($fu['nome']) ?><?= $ref !== '' ? ' · R$ ' . h(brl($ref)) . ($tipoF === 'horas' ? '/h' : '/dia') : '' ?></option><?php endforeach ?></select></label>
+      <label>Mês de referência<select name="l[mes]"><?php foreach ($mesesForm as $om): ?><option value="<?= h($om) ?>" <?= $om === ($rhForm['mes'] ?? $mesH) ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select></label>
+      <label>Data<input type="date" name="l[data]" value="<?= $vF('data', date('Y-m-d')) ?>" required></label>
+      <?php if ($tipoF === 'horas'): ?>
+      <label>Horas<input name="l[qtd]" value="<?= $vF('qtd') ?>" placeholder="ex.: 2:30" inputmode="decimal" required></label>
+      <label>Valor da hora R$<input name="l[unitario]" value="<?= $vF('unitario') ?>" placeholder="do cadastro" inputmode="decimal"></label>
+      <?php elseif ($tipoF === 'sobre'): ?>
+      <label>Dias de sobreaviso<input name="l[qtd]" value="<?= $vF('qtd', '1') ?>" placeholder="ex.: 2" inputmode="decimal" required></label>
+      <label>Valor por dia R$<input name="l[unitario]" value="<?= $vF('unitario') ?>" placeholder="do cadastro" inputmode="decimal"></label>
+      <?php else: ?>
+      <label>Valor R$<input name="l[valor]" value="<?= $vF('valor') ?>" placeholder="0,00" inputmode="decimal" required></label>
+      <?php endif ?>
+      <label class="larga">Descrição / motivo (vai no recibo)<input name="l[descricao]" value="<?= $vF('descricao') ?>" maxlength="200" placeholder="<?= h(['horas' => 'ex.: rompimento de fibra na rua 7, após o expediente', 'sobre' => 'ex.: escala do fim de semana', 'compl' => 'ex.: complemento de salário de ' . mb_strtolower(mes_nome($mesH)), 'pag' => 'ex.: ajuda de combustível'][$tipoF]) ?>" <?= in_array($tipoF, ['compl', 'pag'], true) ? 'required' : '' ?>></label>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="pri" name="acao" value="rh_lanc_salvar">Lançar <?= h(mb_strtolower(RH_TIPOS[$tipoF])) ?></button>
+      <span class="small"><?= $tipoF === 'horas' ? 'Valor = horas × valor da hora. Em branco, usa o valor da hora do cadastro do funcionário.' : ($tipoF === 'sobre' ? 'Valor = dias × valor por dia. Em branco, usa o valor do sobreaviso do cadastro do funcionário.' : 'Valor livre, digitado pelo RH.') ?></span></div>
+  </form>
+  <?php endif ?>
+  <div class="card">
+    <form method="get" class="row" style="justify-content:space-between"><input type="hidden" name="p" value="rh_lancar"><input type="hidden" name="mes" value="<?= h($mesH) ?>">
+      <h2 style="margin:0">Lançamentos de <?= h(mes_nome($mesH)) ?></h2>
+      <span class="row"><select name="f" aria-label="Funcionário" data-auto><option value="0">Todos os funcionários</option><?php foreach (rh_funcionarios() as $fu): ?><option value="<?= (int)$fu['id'] ?>" <?= (int)$fu['id'] === $fH ? 'selected' : '' ?>><?= h($fu['nome']) ?></option><?php endforeach ?></select>
+        <select name="t" aria-label="Tipo" data-auto><option value="">Todos os tipos</option><?php foreach (RH_TIPOS as $tk => $tt): ?><option value="<?= $tk ?>" <?= $tk === $tH ? 'selected' : '' ?>><?= h($tt) ?></option><?php endforeach ?></select><noscript><button>Filtrar</button></noscript></span></form>
+    <div class="tw" style="margin-top:10px"><table class="rec">
+      <thead><tr><th>Data</th><th>Funcionário</th><th>Tipo</th><th>Detalhe</th><th>Descrição</th><th class="r">Valor</th><th>Lançado por</th><th></th></tr></thead>
+      <?php foreach ($linH as $l): ?>
+      <tr><td class="n"><?= h(rh_dt($l['data'])) ?></td><td><b><?= h($l['nome']) ?></b></td><td><span class="tp tp-<?= h($l['tipo']) ?>"><?= h(RH_TIPOS[$l['tipo']]) ?></span></td>
+        <td class="n small"><?= h(rh_detalhe($l)) ?></td><td><?= h($l['descricao']) ?></td><td class="n r"><b><?= rh_rs((float)$l['valor']) ?></b></td><td class="small"><?= h($l['lancado_nome']) ?></td>
+        <td><?php if ($l['pago_em'] !== ''): ?><span class="tp pago">pago <?= h(rh_dt($l['pago_em'])) ?></span><?php else: ?><form method="post" action="<?= $linkH ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$l['id'] ?>"><button class="del" name="acao" value="rh_lanc_excluir" title="Excluir este lançamento">Excluir</button></form><?php endif ?></td></tr>
+      <?php endforeach ?>
+      <?php if (!$linH): ?><tr><td colspan="8" class="small">Nenhum lançamento<?= $fH || $tH ? ' com esse filtro' : '' ?> em <?= h(mes_nome($mesH)) ?>.</td></tr><?php else: ?>
+      <tfoot><tr><td colspan="5">Total (<?= count($linH) ?> lançamento<?= count($linH) === 1 ? '' : 's' ?>)</td><td class="n r"><?= rh_rs(array_sum(array_map(fn($l) => (float)$l['valor'], $linH))) ?></td><td colspan="2"></td></tr></tfoot><?php endif ?>
+    </table></div>
+    <p class="small">Lançamento errado: exclua e lance de novo. Depois que o mês do funcionário é marcado como pago, os lançamentos dele ficam travados.</p>
+  </div>
+
+<?php elseif ($p === 'rh_fecha'):
+    $mesesH = rh_meses();
+    $mesH = rh_mes_ok((string)($_GET['mes'] ?? '')) ?: date('Y-m');
+    if (!in_array($mesH, $mesesH, true)) { $mesesH[] = $mesH; rsort($mesesH); }
+    $totH = rh_totais($mesH);
+    $T = fn(string $k) => array_sum(array_column($totH, $k));
+    $faltaH = array_sum(array_map(fn($r) => $r['pago_em'] === '' ? $r['tot'] : 0, $totH));
+    $linkH = '?p=rh_fecha&amp;mes=' . h($mesH);
+?>
+  <div class="topo"><div><h1>RH · Fechamento do mês</h1><p class="small">Soma tudo de cada funcionário no mês. Daqui sai o recibo para assinatura. Depois de "Marcar pago", o mês daquele funcionário fica travado (paga uma vez só); só o admin desfaz.</p></div>
+    <div class="row"><form method="get" class="in"><input type="hidden" name="p" value="rh_fecha"><select name="mes" aria-label="Mês de referência" data-auto><?php foreach ($mesesH as $om): ?><option value="<?= h($om) ?>" <?= $om === $mesH ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select><noscript><button>Ver</button></noscript></form>
+      <?php if ($totH): ?><a class="bt" href="?p=rh_recibo&amp;mes=<?= h($mesH) ?>">Imprimir todos os recibos</a><?php endif ?></div></div>
+  <div class="kpis">
+    <div class="kpi forte"><span>Total de <?= h(mes_nome($mesH)) ?></span><b><?= rh_rs($T('tot')) ?></b><small><?= count($totH) ?> funcionário(s)</small></div>
+    <div class="kpi"><span>Falta pagar</span><b class="q"><?= rh_rs($faltaH) ?></b><small><?= count(array_filter($totH, fn($r) => $r['pago_em'] === '')) ?> a pagar</small></div>
+    <div class="kpi"><span>Já pago</span><b class="ok"><?= rh_rs($T('tot') - $faltaH) ?></b><small><?= count(array_filter($totH, fn($r) => $r['pago_em'] !== '')) ?> pago(s)</small></div>
+  </div>
+  <div class="card"><div class="tw"><table class="rec">
+    <thead><tr><th>Funcionário</th><th class="r">Horas informais</th><th class="r">Sobreaviso</th><th class="r">Complemento</th><th class="r">Pagamentos extras</th><th class="r">Total</th><th>Situação</th><th></th></tr></thead>
+    <?php foreach ($totH as $fid => $r): ?>
+    <tr><td><b><?= h($r['f']['nome']) ?></b><br><span class="small"><?= h($r['f']['funcao'] ?: '—') ?></span></td>
+      <td class="n r"><?= rh_rs($r['horas']) ?><?= $r['h'] ? '<br><span class="small">' . rh_hm($r['h']) . ' h</span>' : '' ?></td>
+      <td class="n r"><?= rh_rs($r['sobre']) ?><?= $r['dias'] ? '<br><span class="small">' . rtrim(rtrim(number_format($r['dias'], 1, ',', ''), '0'), ',') . ' dia(s)</span>' : '' ?></td>
+      <td class="n r"><?= rh_rs($r['compl']) ?></td><td class="n r"><?= rh_rs($r['pag']) ?></td><td class="n r"><b><?= rh_rs($r['tot']) ?></b></td>
+      <td><?= $r['pago_em'] !== '' ? '<span class="tp pago">pago ' . h(rh_dt($r['pago_em'])) . '</span>' : '<span class="pill q">a pagar</span>' ?></td>
+      <td><div class="acoes"><a class="bt" href="?p=rh_recibo&amp;mes=<?= h($mesH) ?>&amp;f=<?= (int)$fid ?>">Recibo</a>
+        <?php if ($r['pago_em'] === ''): ?><form method="post" action="<?= $linkH ?>" class="in row"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$fid ?>"><input type="hidden" name="mes" value="<?= h($mesH) ?>"><input type="date" name="pago_em" value="<?= date('Y-m-d') ?>" aria-label="Data do pagamento" required><button class="pri" name="acao" value="rh_pagar">Marcar pago</button></form>
+        <?php elseif ($admin): ?><form method="post" action="<?= $linkH ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$fid ?>"><input type="hidden" name="mes" value="<?= h($mesH) ?>"><button class="del" name="acao" value="rh_desfazer" title="Volta a deixar mudar os lançamentos deste mês">Desfazer pagamento</button></form><?php endif ?></div></td></tr>
+    <?php endforeach ?>
+    <?php if (!$totH): ?><tr><td colspan="8" class="small">Nada lançado em <?= h(mes_nome($mesH)) ?>.</td></tr><?php else: ?>
+    <tfoot><tr><td>TOTAL</td><td class="n r"><?= rh_rs($T('horas')) ?></td><td class="n r"><?= rh_rs($T('sobre')) ?></td><td class="n r"><?= rh_rs($T('compl')) ?></td><td class="n r"><?= rh_rs($T('pag')) ?></td><td class="n r"><?= rh_rs($T('tot')) ?></td><td colspan="2"></td></tr></tfoot><?php endif ?>
+  </table></div>
+  <p class="small">"Marcar pago" grava a data do pagamento. Lançamento novo para esse funcionário nesse mês, depois de pago, vai para o mês seguinte.</p></div>
+
+<?php elseif ($p === 'rh_recibo'):
+    $mesH = rh_mes_ok((string)($_GET['mes'] ?? '')) ?: date('Y-m');
+    $fR = (int)($_GET['f'] ?? 0);
+    $totH = rh_totais($mesH, $fR ? [$fR] : []);
+    $emp = rh_empresa();
+    $umRecibo = function (array $r, string $via) use ($mesH, $emp): string {
+        ob_start(); ?>
+    <div class="recibo"><div class="via"><?= h($via) ?></div>
+      <div class="cab"><div><b><?= h($emp['nome']) ?></b><?= $emp['cnpj'] !== '' ? '<div>CNPJ ' . h(rh_cnpj($emp['cnpj'])) . '</div>' : '' ?></div><div style="text-align:right">Referência: <b><?= h(mes_nome($mesH)) ?></b></div></div>
+      <h3>RECIBO DE PAGAMENTO</h3>
+      <div>Funcionário: <b><?= h($r['f']['nome']) ?></b><?= $r['f']['cpf'] !== '' ? ' · CPF ' . h(rh_cpf($r['f']['cpf'])) : '' ?><?= $r['f']['funcao'] !== '' ? ' · ' . h($r['f']['funcao']) : '' ?></div>
+      <table><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Detalhe</th><th class="r">Valor</th></tr></thead><tbody>
+        <?php foreach ($r['ls'] as $l): ?><tr><td><?= h(rh_dt($l['data'])) ?></td><td><?= h(RH_TIPOS[$l['tipo']]) ?></td><td><?= h($l['descricao']) ?></td><td><?= h(rh_detalhe($l)) ?></td><td class="r"><?= rh_rs((float)$l['valor']) ?></td></tr><?php endforeach ?>
+      </tbody><tfoot><tr><td colspan="5" class="small">Horas informais <?= rh_rs($r['horas']) ?> · Sobreaviso <?= rh_rs($r['sobre']) ?> · Complemento <?= rh_rs($r['compl']) ?> · Pagamentos extras <?= rh_rs($r['pag']) ?></td></tr>
+        <tr class="tot"><td colspan="4">TOTAL A RECEBER</td><td class="r"><?= rh_rs($r['tot']) ?></td></tr></tfoot></table>
+      <div>Recebi de <?= h($emp['nome']) ?> a importância de <b><?= rh_rs($r['tot']) ?></b> (<?= h(rh_extenso($r['tot'])) ?>), referente aos lançamentos acima de <?= h(mb_strtolower(mes_nome($mesH))) ?>, dando plena quitação.</div>
+      <div><?= $emp['cidade'] !== '' ? h($emp['cidade']) : '________________________' ?>, ____ de ______________ de <?= h(substr($mesH, 0, 4)) ?>.</div>
+      <div class="ass"><div><?= h($r['f']['nome']) ?><?= $r['f']['cpf'] !== '' ? '<br>CPF ' . h(rh_cpf($r['f']['cpf'])) : '' ?></div><div><?= h($emp['nome']) ?><br>Responsável RH</div></div></div>
+<?php   return (string)ob_get_clean();
+    };
+?>
+  <div class="topo noprint"><div><h1>Recibo<?= count($totH) > 1 ? 's' : '' ?> · <?= h(mes_nome($mesH)) ?></h1><p class="small">Imprima em A4 (ou salve em PDF) para o funcionário assinar. Sai em 2 vias na mesma folha: uma fica com o RH, outra com o funcionário.<?= $emp['cnpj'] === '' ? ($admin ? ' Falta o CNPJ no cabeçalho: preencha em RH → Funcionários, no fim da página.' : ' Falta o CNPJ no cabeçalho: peça ao admin para preencher.') : '' ?></p></div>
+    <div class="row"><a class="bt" href="?p=rh_fecha&amp;mes=<?= h($mesH) ?>">Voltar</a><?php if ($totH): ?><button class="pri" type="button" data-imprimir>Imprimir</button><?php endif ?></div></div>
+  <?php foreach ($totH as $r): ?><div class="folha"><?= $umRecibo($r, '1ª via · RH') ?><hr class="corte"><?= $umRecibo($r, '2ª via · funcionário') ?></div><?php endforeach ?>
+  <?php if (!$totH): ?><div class="msg">Nada lançado em <?= h(mes_nome($mesH)) ?><?= $fR ? ' para esse funcionário' : '' ?>.</div><?php endif ?>
+
+<?php elseif ($p === 'rh_func'):
+    $funcsH = rh_funcionarios();
+    $editF = ($eid = (int)($_GET['editar'] ?? 0)) ? rh_funcionario($eid) : null;
+    $vE = fn(string $k) => h((string)($editF[$k] ?? ''));
+    $emp = rh_empresa();
+?>
+  <div class="topo"><div><h1>RH · Funcionários</h1><p class="small">Cadastro de quem recebe horas informais, sobreaviso, complemento e pagamentos extras. É só a ficha do RH: o funcionário não precisa ter usuário no portal. Os valores do cadastro só preenchem o lançamento sozinhos; o RH pode trocar em cada lançamento.</p></div></div>
+  <div class="card"><div class="tw"><table class="rec">
+    <thead><tr><th>Nome</th><th>CPF</th><th>Função</th><th class="r">Valor da hora informal</th><th class="r">Sobreaviso por dia</th><th>Situação</th><th></th></tr></thead>
+    <?php foreach ($funcsH as $fu): ?>
+    <tr><td><b><?= h($fu['nome']) ?></b></td><td class="n"><?= h(rh_cpf($fu['cpf']) ?: '—') ?></td><td><?= h($fu['funcao'] ?: '—') ?></td>
+      <td class="n r"><?= $fu['valor_hora'] !== '' ? 'R$ ' . h(brl($fu['valor_hora'])) : '—' ?></td><td class="n r"><?= $fu['valor_sobreaviso'] !== '' ? 'R$ ' . h(brl($fu['valor_sobreaviso'])) : '—' ?></td>
+      <td><?= $fu['ativo'] ? '<span class="pill ok">ativo</span>' : '<span class="pill er">inativo</span>' ?></td>
+      <td><div class="acoes"><a class="bt" href="?p=rh_func&amp;editar=<?= (int)$fu['id'] ?>#form-func">Corrigir</a><form method="post" action="?p=rh_func" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$fu['id'] ?>"><button name="acao" value="rh_func_ativo" title="<?= $fu['ativo'] ? 'Tirar da lista de lançamentos (o histórico continua)' : 'Voltar para a lista de lançamentos' ?>"><?= $fu['ativo'] ? 'Desativar' : 'Reativar' ?></button></form></div></td></tr>
+    <?php endforeach ?>
+    <?php if (!$funcsH): ?><tr><td colspan="7" class="small">Nenhum funcionário cadastrado ainda.</td></tr><?php endif ?>
+  </table></div></div>
+  <form method="post" action="?p=rh_func" class="card" id="form-func"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)($editF['id'] ?? 0) ?>">
+    <h2><?= $editF ? 'Corrigir ' . h($editF['nome']) : 'Cadastrar funcionário' ?></h2>
+    <div class="rec-form">
+      <label>Nome<input name="f[nome]" value="<?= $vE('nome') ?>" required maxlength="80"></label>
+      <label>CPF<input name="f[cpf]" value="<?= h(rh_cpf((string)($editF['cpf'] ?? ''))) ?>" inputmode="numeric" placeholder="000.000.000-00"></label>
+      <label>Função<input name="f[funcao]" value="<?= $vE('funcao') ?>" maxlength="60" placeholder="ex.: Técnico de campo"></label>
+      <label>Valor da hora informal R$<input name="f[valor_hora]" value="<?= h(brl((string)($editF['valor_hora'] ?? ''))) ?>" inputmode="decimal" placeholder="25,00"></label>
+      <label>Sobreaviso por dia R$<input name="f[valor_sobreaviso]" value="<?= h(brl((string)($editF['valor_sobreaviso'] ?? ''))) ?>" inputmode="decimal" placeholder="60,00"></label>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="pri" name="acao" value="rh_func_salvar"><?= $editF ? 'Salvar correção' : 'Cadastrar' ?></button><?php if ($editF): ?><a href="?p=rh_func">Cancelar</a><?php endif ?></div>
+  </form>
+  <?php if ($admin): ?>
+  <form method="post" action="?p=rh_func" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="rh_empresa_salvar">
+    <h2>Cabeçalho do recibo <span class="small">só o admin</span></h2>
+    <div class="rec-form">
+      <label>Nome da empresa<input name="nome" value="<?= h($emp['nome']) ?>" maxlength="80" required></label>
+      <label>CNPJ<input name="cnpj" value="<?= h(rh_cnpj($emp['cnpj'])) ?>" inputmode="numeric" placeholder="00.000.000/0000-00"></label>
+      <label>Cidade (local da assinatura)<input name="cidade" value="<?= h($emp['cidade']) ?>" maxlength="60" placeholder="em branco: linha para escrever"></label>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="pri">Salvar cabeçalho</button></div>
+  </form>
+  <?php endif ?>
+
 <?php elseif ($p === 'sem'): ?>
   <div class="msg">Você não tem acesso a esta área. Peça ao gestor admin para liberar em Configurações.</div>
 
@@ -1769,7 +2001,7 @@ td.dlt{font-weight:800;white-space:nowrap}
         <?php endif ?></tr>
       <?php endforeach ?>
     </table></div>
-    <p class="small">Vendas inclui a aba Vendas do mês. Comissões inclui Comissões planilha. Recolhimentos libera lançar e corrigir as O.S de recolhimento; a Comissão do recolhimento é só do admin. Instalações libera lançar e corrigir as O.S de instalação; a Comissão da instalação é só do admin. Gestores mostra a lista e as últimas ações; criar gestores, gerar senha, bloquear e dar admin continuam só com o admin.</p>
+    <p class="small">Vendas inclui a aba Vendas do mês. Comissões inclui Comissões planilha. Recolhimentos libera lançar e corrigir as O.S de recolhimento; a Comissão do recolhimento é só do admin. Instalações libera lançar e corrigir as O.S de instalação; a Comissão da instalação é só do admin. RH libera lançar horas informais, sobreaviso, complemento e pagamentos extras, cadastrar funcionários, imprimir recibos e marcar pago; desfazer um pagamento e mudar o nome e CNPJ do recibo são só do admin. Gestores mostra a lista e as últimas ações; criar gestores, gerar senha, bloquear e dar admin continuam só com o admin.</p>
     <div class="row" style="justify-content:flex-end"><button class="pri">Salvar permissões</button></div>
   </form>
   <?php $vsC = db()->query('SELECT id, nome, supervisor FROM vendedores WHERE ativo = 1 OR supervisor = 1 ORDER BY nome')->fetchAll(); ?>
