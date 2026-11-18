@@ -49,7 +49,7 @@ Para abrir só o atendimento, sem mexer no cadastro: `'atualizar_contato' => fal
 
 ## Dashboard comercial (painel)
 
-Aba **Dashboard** do painel, para o gestor admin e para os gestores que o admin liberar em **Gestores → Dashboard e metas** (eles veem a dashboard e as metas, mas não editam metas nem veem as comissões; só o admin define as metas):
+Aba **Dashboard** do painel, para o gestor admin e para quem o admin liberar em **Configurações** (quem não é admin vê as metas, mas só o admin define):
 
 - Resumo do mês: vendas (venda nova + 2º ponto), upgrades, mensalidades novas, % da meta da equipe e projeção do mês.
 - **Quem mais vendeu** e **quem mais fez upgrade**, com a variação contra o mês anterior.
@@ -59,6 +59,14 @@ Aba **Dashboard** do painel, para o gestor admin e para os gestores que o admin 
   e o ritmo esperado pelo dia do mês. "Copiar metas do mês anterior" preenche só quem ainda não tem meta.
 
 Conta tudo o que os vendedores cadastraram no app (menos os descartados), pelo dia em que chegou ao servidor.
+
+## Permissões do painel (Configurações)
+
+O admin vê tudo. Para os outros gestores, o admin marca em **Configurações** o que cada um pode abrir:
+Dashboard, Vendas (com Vendas do mês), Vendedores, Planos, Comissões (com Comissões planilha) e Gestores.
+O menu mostra só o que está liberado, e o servidor recusa ações de áreas não liberadas.
+Gestor novo nasce só com Vendas. Configurações, metas da dashboard e criar/bloquear/dar admin a gestores são só do admin.
+Todo gestor troca a própria senha em **Trocar minha senha** (embaixo do menu).
 
 ## Consultar CPF (já foi cliente?)
 

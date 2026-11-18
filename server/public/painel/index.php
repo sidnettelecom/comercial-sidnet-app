@@ -10,7 +10,9 @@ require_once __DIR__ . '/../../lib/vendedores.php';
 require_once __DIR__ . '/../../lib/comissoes.php';
 require_once __DIR__ . '/../../lib/comissoes_planilha.php'; // PLANILHA-TEMP
 require_once __DIR__ . '/../../lib/dashboard.php';
+require_once __DIR__ . '/../../lib/permissoes.php';
 dash_tabela();
+perm_tabela();
 
 const PAINEL_INATIVO_MAX = 8 * 3600; // sai sozinho depois de 8 horas sem uso
 
@@ -76,11 +78,11 @@ if (isset($_GET['sair'])) {
 $gestor = $_SESSION['gestor'] ?? null;
 if ($gestor) {
     // sessão parada há muito tempo, ou gestor bloqueado/apagado depois que entrou
-    $q = db()->prepare('SELECT ativo, admin, trocar_senha, ver_dash FROM gestores WHERE id = ?');
+    $q = db()->prepare('SELECT ativo, admin, trocar_senha, permissoes FROM gestores WHERE id = ?');
     $q->execute([$gestor['id']]);
-    $gq = $q->fetch() ?: ['ativo' => 0, 'admin' => 0, 'trocar_senha' => 0, 'ver_dash' => 0];
+    $gq = $q->fetch() ?: ['ativo' => 0, 'admin' => 0, 'trocar_senha' => 0, 'permissoes' => ''];
     $gestor['admin'] = (bool)$gq['admin'];
-    $gestor['ver_dash'] = (bool)$gq['ver_dash'];
+    $gestor['perms'] = perm_lista($gq['permissoes']);
     $gestor['trocar'] = (bool)$gq['trocar_senha']; // senha provisória: só deixa trocar a senha
     if (time() - (int)($_SESSION['visto'] ?? 0) > PAINEL_INATIVO_MAX || !$gq['ativo']) {
         $_SESSION = [];
@@ -95,7 +97,14 @@ if ($gestor) {
 }
 $logado = (bool)$gestor;
 $admin = $logado && !empty($gestor['admin']); // só o admin vê e mexe nas comissões
-$verDash = $admin || ($logado && !empty($gestor['ver_dash'])); // dashboard: admin ou gestor liberado (metas: só o admin edita)
+// o que este gestor pode abrir (o admin pode tudo; os outros, o que o admin liberou em Configurações)
+$pode = fn(string $area): bool => $admin || ($logado && in_array($area, $gestor['perms'] ?? [], true));
+const PERM_ACOES = [
+    'tentar' => 'vendas', 'forcar' => 'vendas', 'descartar' => 'vendas', 'excluir' => 'vendas', 'enviar_agora' => 'vendas',
+    'vend_novo' => 'vendedores', 'vend_senha' => 'vendedores', 'vend_crm' => 'vendedores', 'vend_ativo' => 'vendedores', 'crm_vendedores' => 'vendedores',
+    'plano_salvar' => 'planos', 'plano_novo' => 'planos', 'plano_ativo' => 'planos', 'plano_excluir' => 'planos', 'plano_mover' => 'planos', 'planos_ixc' => 'planos',
+    'comissoes_salvar' => 'comissoes', 'comissoes_ixc' => 'comissoes', 'planilha_importar' => 'comissoes', 'planilha_salvar' => 'comissoes',
+];
 $quem = $gestor['usuario'] ?? '';
 
 // ---- ações ----
@@ -124,6 +133,10 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
     $a = $_POST['acao'] ?? '';
     $id = (int)($_POST['id'] ?? 0);
     if (!empty($gestor['trocar']) && $a !== 'minha_senha') $a = '';
+    if (isset(PERM_ACOES[$a]) && !$pode(PERM_ACOES[$a])) {
+        $msg = 'Você não tem permissão para isso. Peça ao admin para liberar em Configurações.';
+        $a = '';
+    }
     try {
         if ($a === 'tentar') {
             db()->prepare("UPDATE vendas SET status='fila', erro='', tentativas=0 WHERE id=? AND status<>'crm'")->execute([$id]);
@@ -257,21 +270,19 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $q->execute([$u]);
             if ($q->fetchColumn()) throw new RuntimeException("Já existe o gestor \"$u\".");
             $senha = gerar_senha();
-            db()->prepare('INSERT INTO gestores (usuario, nome, senha_hash, trocar_senha) VALUES (?, ?, ?, 1)')->execute([$u, up($_POST['nome']), password_hash($senha, PASSWORD_DEFAULT)]);
+            db()->prepare('INSERT INTO gestores (usuario, nome, senha_hash, trocar_senha, permissoes) VALUES (?, ?, ?, 1, ?)')->execute([$u, up($_POST['nome']), password_hash($senha, PASSWORD_DEFAULT), PERM_PADRAO_NOVO]);
             $novaSenha = ['quem' => up($_POST['nome']), 'usuario' => $u, 'senha' => $senha];
             registrar($quem, 'criou gestor', $u);
+            $msg = 'Gestor criado só com acesso a Vendas. Libere o resto em Configurações.';
         } elseif ($a === 'comissoes_salvar') {
-            if (!$admin) throw new RuntimeException('Só o gestor admin mexe nas comissões.');
             $n = comissoes_salvar((array)($_POST['c'] ?? []), $quem);
             registrar($quem, 'salvou comissões', $n . ' venda(s)');
             $msg = "Comissões salvas ($n venda" . ($n === 1 ? '' : 's') . ').';
         } elseif ($a === 'comissoes_ixc') {
-            if (!$admin) throw new RuntimeException('Só o gestor admin mexe nas comissões.');
             $n = comissoes_atualizar_ixc(300);
             registrar($quem, 'atualizou comissões do IXC', (string)$n);
             $msg = $n ? "$n venda(s) atualizadas com dados do IXC." : 'Nada novo no IXC: o que dava para achar já está preenchido.';
         } elseif ($a === 'planilha_importar') { // PLANILHA-TEMP
-            if (!$admin) throw new RuntimeException('Só o gestor admin mexe nas comissões.');
             $arq = $_FILES['csv'] ?? null;
             if (!$arq || ($arq['error'] ?? 1) !== UPLOAD_ERR_OK || !is_uploaded_file((string)$arq['tmp_name'])) throw new RuntimeException('Escolha o arquivo CSV da planilha.');
             if (planilha_qtd() > 0 && empty($_POST['substituir'])) throw new RuntimeException('Já tem uma planilha importada. Marque "trocar tudo" para importar de novo (o que você marcou aqui se perde).');
@@ -279,7 +290,6 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             registrar($quem, 'importou comissões da planilha', $n . ' linha(s)');
             $msg = "Planilha importada: $n linhas.";
         } elseif ($a === 'planilha_salvar') { // PLANILHA-TEMP
-            if (!$admin) throw new RuntimeException('Só o gestor admin mexe nas comissões.');
             $n = planilha_salvar((array)($_POST['pl'] ?? []), $quem);
             registrar($quem, 'salvou comissões da planilha', $n . ' linha(s)');
             $msg = $n ? "Comissões da planilha salvas ($n linha" . ($n === 1 ? '' : 's') . ' alterada' . ($n === 1 ? '' : 's') . ').' : 'Nada mudou.';
@@ -289,11 +299,15 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             db()->prepare('UPDATE gestores SET admin = 1 - admin WHERE id = ?')->execute([$id]);
             registrar($quem, 'deu/tirou admin', '#' . $id);
             $msg = 'Permissão de admin alterada.';
-        } elseif ($a === 'gest_dash') {
-            if (!$admin) throw new RuntimeException('Só um gestor admin pode liberar a dashboard.');
-            db()->prepare('UPDATE gestores SET ver_dash = 1 - ver_dash WHERE id = ?')->execute([$id]);
-            registrar($quem, 'liberou/tirou dashboard e metas', '#' . $id);
-            $msg = 'Acesso à dashboard e metas alterado.';
+        } elseif ($a === 'perm_salvar') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin mexe nas permissões.');
+            $ids = array_map('intval', (array)($_POST['ids'] ?? []));
+            perm_salvar((array)($_POST['perm'] ?? []), $ids);
+            $resumo = [];
+            $qn = db()->prepare('SELECT usuario, permissoes FROM gestores WHERE id = ? AND admin = 0');
+            foreach ($ids as $gid) { $qn->execute([$gid]); if ($r = $qn->fetch()) $resumo[] = $r['usuario'] . ' = ' . ($r['permissoes'] ?: 'nada'); }
+            registrar($quem, 'alterou permissões', implode('; ', $resumo));
+            $msg = 'Permissões salvas.';
         } elseif ($a === 'gest_senha' && $id !== $gestor['id']) {
             if (!$admin) throw new RuntimeException('Só um gestor admin pode trocar a senha de outro gestor.');
             $g = db()->query('SELECT nome, usuario FROM gestores WHERE id = ' . $id)->fetch();
@@ -335,7 +349,15 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$p = !empty($gestor['trocar']) ? 'trocar' : ($_GET['p'] ?? 'vendas');
+$p = !empty($gestor['trocar']) ? 'trocar' : ($_GET['p'] ?? '');
+$AREA_PAG = ['vendas' => 'vendas', 'excluir' => 'vendas', 'mes' => 'vendas', 'dash' => 'dash', 'vendedores' => 'vendedores', 'planos' => 'planos',
+    'comissoes' => 'comissoes', 'planilha' => 'comissoes', 'gestores' => 'gestores', 'config' => 'admin', 'senha' => '', 'trocar' => ''];
+if (!isset($AREA_PAG[$p])) $p = 'vendas';
+if ($logado && $p !== 'trocar' && ($_GET['p'] ?? '') === '' && !$pode('vendas')) {
+    // tela inicial: a primeira área liberada
+    foreach (array_keys(PERM_AREAS) as $ar) if ($pode($ar)) { $p = $ar; break; }
+}
+if ($logado && $AREA_PAG[$p] !== '' && !($AREA_PAG[$p] === 'admin' ? $admin : $pode($AREA_PAG[$p]))) $p = 'sem';
 $NOMES = ['venda' => 'Venda', 'segundo' => '2º plano', 'upgrade' => 'Upgrade'];
 $SITUACAO = ['fila' => ['Na fila', 'q'], 'forcar' => ['Na fila', 'q'], 'tentar' => ['Tentando de novo', 'q'], 'crm' => ['No ' . $DEST, 'ok'], 'erro' => ['Erro', 'er'], 'descartada' => ['Descartada', 'mu']];
 $crmVend = [];
@@ -367,6 +389,7 @@ $ICONES = [
     'comissoes' => '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.8 0-3 .9-3 2.1 0 2.9 6 1.6 6 4.6 0 1.3-1.3 2.3-3 2.3-1.5 0-2.7-.6-3.2-1.7M12 6.5V8m0 9v1.5"/>',
     'mes' => '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2.5v3M16 2.5v3M7.5 13.5h3M7.5 17h6"/>',
     'dash' => '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    'config' => '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
     'gestores' => '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
 ];
 $aba = fn(string $k, string $t) => '<a href="?p=' . $k . '"' . (($p === $k || ($k === 'vendas' && $p === 'excluir')) ? ' aria-current="page"' : '') . '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $ICONES[$k] . '</svg>' . $t . '</a>';
@@ -551,6 +574,8 @@ main>*{min-width:0}
 .dh-metas table{min-width:860px}.dh-metas td{vertical-align:middle}.dh-metas input{width:76px;text-align:center;font-weight:700}
 .dh-chip{display:inline-block;white-space:nowrap;font-size:11.5px;font-weight:800;padding:3px 8px;border-radius:8px}.dh-chip.ok{background:var(--ok-bg);color:var(--ok)}.dh-chip.q{background:#fef3c7;color:#92400e}.dh-chip.er{background:var(--er-bg);color:var(--er)}
 td.dlt{font-weight:800;white-space:nowrap}
+.perm{min-width:760px}.perm td,.perm th{vertical-align:middle}.perm th:not(:first-child),.perm td:not(:first-child){text-align:center}.perm .ck input{width:20px;height:20px;cursor:pointer}
+.lado .status a+a{margin-top:-2px}
 </style>
 <style>.senha-box{position:relative;display:block}.senha-box input{width:100%;box-sizing:border-box;padding-right:48px}.olho{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:40px;height:40px;border:0!important;background:transparent!important;box-shadow:none!important;color:#475569;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;padding:0}.olho:hover{background:#eef2ff}.olho .risco{display:none}.olho[aria-pressed="true"] .risco{display:inline}</style>
 <script src="/painel/olho.js?v=2" defer></script>
@@ -560,8 +585,8 @@ td.dlt{font-weight:800;white-space:nowrap}
     $ultimo = db()->query("SELECT MAX(enviado_crm_em) FROM vendas")->fetchColumn(); ?>
 <aside class="lado">
   <div class="marca"><img src="/app/logo-96.png" alt="" width="48" height="48"><div><b>Comercial + SIDNET</b><span>Painel do gestor</span></div></div>
-  <nav aria-label="Seções"><?= ($verDash ? $aba('dash', 'Dashboard') : '') . $aba('vendas', 'Vendas') . $aba('mes', 'Vendas do mês') . $aba('vendedores', 'Vendedores') . $aba('planos', 'Planos') . ($admin ? $aba('comissoes', 'Comissões') . $aba('planilha', 'Comissões planilha') : '') /* PLANILHA-TEMP */ . $aba('gestores', 'Gestores') ?></nav>
-  <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
+  <nav aria-label="Seções"><?= ($pode('dash') ? $aba('dash', 'Dashboard') : '') . ($pode('vendas') ? $aba('vendas', 'Vendas') . $aba('mes', 'Vendas do mês') : '') . ($pode('vendedores') ? $aba('vendedores', 'Vendedores') : '') . ($pode('planos') ? $aba('planos', 'Planos') : '') . ($pode('comissoes') ? $aba('comissoes', 'Comissões') . $aba('planilha', 'Comissões planilha') : '') /* PLANILHA-TEMP */ . ($pode('gestores') ? $aba('gestores', 'Gestores') : '') . ($admin ? $aba('config', 'Configurações') : '') ?></nav>
+  <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?p=senha">Trocar minha senha</a><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
 <?php endif ?>
 <main>
@@ -706,9 +731,6 @@ td.dlt{font-weight:800;white-space:nowrap}
     <?php if ($porV): ?><div class="mes-l mes-t"><span>Total</span><span data-r="Vendas novas"><?= $totM['venda'] ?></span><span data-r="Upgrades"><?= $totM['upgrade'] ?></span><span data-r="2º ponto"><?= $totM['segundo'] ?></span><span data-r="Total"><?= $totM['n'] ?></span><span data-r="Concluídos"><?= $totM['ixc'] ?></span><span data-r="Mensalidades"><?= $R($totM['plano']) ?></span><span data-r="Instalação"><?= $R($totM['inst']) ?></span><span data-r="Roteador"><?= $R($totM['rot']) ?></span></div>
     <?php else: ?><p class="small">Nenhum cadastro em <?= h(mes_nome($mesM)) ?>.</p><?php endif ?>
   </div>
-<?php elseif ($p === 'dash' && !$verDash): ?>
-  <div class="msg">A dashboard é só para o gestor admin ou para quem o admin liberar em Gestores.</div>
-
 <?php elseif ($p === 'dash'):
     // ---- dashboard comercial: ranking, mês a mês e metas ----
     $mesHoje = date('Y-m');
@@ -976,9 +998,6 @@ td.dlt{font-weight:800;white-space:nowrap}
     <label for="nova2">Repita a senha nova</label><input id="nova2" name="nova2" type="password" autocomplete="new-password" minlength="8" required>
     <button class="pri">Criar senha e entrar</button></form>
 
-<?php elseif ($p === 'comissoes' && !$admin): ?>
-  <div class="msg">Só o gestor admin vê as comissões.</div>
-
 <?php elseif ($p === 'comissoes'):
     $meses = comissoes_meses();
     $mesAtual = date('Y-m');
@@ -1092,8 +1111,6 @@ td.dlt{font-weight:800;white-space:nowrap}
     </table></div>
 
 <?php /* ---- PLANILHA-TEMP: comissões da planilha do Excel (apagar este bloco inteiro quando quitar tudo) ---- */ ?>
-<?php elseif ($p === 'planilha' && !$admin): ?>
-  <div class="msg">Só o gestor admin vê as comissões.</div>
 
 <?php elseif ($p === 'planilha'):
     $plVend = (string)($_GET['vend'] ?? '');
@@ -1187,17 +1204,45 @@ td.dlt{font-weight:800;white-space:nowrap}
   <?php endif ?>
 <?php /* ---- fim PLANILHA-TEMP ---- */ ?>
 
+<?php elseif ($p === 'sem'): ?>
+  <div class="msg">Você não tem acesso a esta área. Peça ao gestor admin para liberar em Configurações.</div>
+
+<?php elseif ($p === 'senha'): ?>
+  <form method="post" class="card login"><?= csrf_campo() ?><input type="hidden" name="acao" value="minha_senha">
+    <h2>Trocar minha senha</h2>
+    <label for="atual">Senha atual</label><input id="atual" name="atual" type="password" autocomplete="current-password" required>
+    <label for="nova">Senha nova (8+ caracteres, letras e números)</label><input id="nova" name="nova" type="password" autocomplete="new-password" minlength="8" required>
+    <label for="nova2">Repita a senha nova</label><input id="nova2" name="nova2" type="password" autocomplete="new-password" minlength="8" required>
+    <button class="pri">Trocar senha</button></form>
+
+<?php elseif ($p === 'config'):
+    $gsC = db()->query('SELECT id, nome, usuario, admin, ativo, permissoes FROM gestores ORDER BY admin DESC, ativo DESC, nome')->fetchAll(); ?>
+  <div class="topo"><div><h1>Configurações</h1><p class="small">Marque o que cada gestor pode abrir no painel. O admin sempre vê tudo. As metas da dashboard só o admin define; quem tem Dashboard só vê.</p></div></div>
+  <form method="post" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="perm_salvar">
+    <h2>Permissões de acesso</h2>
+    <div class="tw"><table class="perm">
+      <tr><th>Gestor</th><?php foreach (PERM_AREAS as $ar => $tx): ?><th><?= h($tx) ?></th><?php endforeach ?></tr>
+      <?php foreach ($gsC as $g): $pl = perm_lista($g['permissoes']); ?>
+      <tr><td><b><?= h($g['nome']) ?></b><br><span class="small"><?= h($g['usuario']) ?><?= $g['ativo'] ? '' : ' · bloqueado' ?></span></td>
+        <?php if ($g['admin']): ?><td colspan="<?= count(PERM_AREAS) ?>"><span class="pill ok">Admin</span> <span class="small">vê e mexe em tudo, inclusive Configurações e metas</span></td>
+        <?php else: ?><input type="hidden" name="ids[]" value="<?= (int)$g['id'] ?>">
+          <?php foreach (PERM_AREAS as $ar => $tx): ?><td><label class="ck"><input type="checkbox" name="perm[<?= (int)$g['id'] ?>][<?= $ar ?>]" value="1" <?= in_array($ar, $pl, true) ? 'checked' : '' ?> aria-label="<?= h($tx . ' para ' . $g['usuario']) ?>"></label></td><?php endforeach ?>
+        <?php endif ?></tr>
+      <?php endforeach ?>
+    </table></div>
+    <p class="small">Vendas inclui a aba Vendas do mês. Comissões inclui Comissões planilha. Gestores mostra a lista e as últimas ações; criar gestores, gerar senha, bloquear e dar admin continuam só com o admin.</p>
+    <div class="row" style="justify-content:flex-end"><button class="pri">Salvar permissões</button></div>
+  </form>
+
 <?php elseif ($p === 'gestores'): ?>
   <div class="card tw"><table>
-    <tr><th>Gestor</th><th>Usuário</th><th>Acesso</th><th>Admin (comissões)</th><th>Dashboard e metas</th><th>Último acesso</th><th></th></tr>
+    <tr><th>Gestor</th><th>Usuário</th><th>Acesso</th><th>Admin (tudo)</th><th>Último acesso</th><th></th></tr>
     <?php foreach (db()->query('SELECT * FROM gestores ORDER BY ativo DESC, nome') as $g): ?>
     <tr><td><?= h($g['nome']) ?></td><td><?= h($g['usuario']) ?></td>
       <td><?= $g['ativo'] ? '<span class="pill ok">Ativo</span>' : '<span class="pill er">Bloqueado</span>' ?></td>
       <td><?= $g['admin'] ? '<span class="pill ok">Admin</span>' : '<span class="small">não</span>' ?>
         <?php if ($admin && (int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_senha"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button>Gerar senha nova</button></form>
         <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_admin"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button><?= $g['admin'] ? 'Tirar admin' : 'Tornar admin' ?></button></form><?php endif ?></td>
-      <td><?php if ($g['admin']): ?><span class="pill ok">Sim</span> <span class="small">(admin)</span><?php else: ?><?= $g['ver_dash'] ? '<span class="pill ok">Sim</span>' : '<span class="small">não</span>' ?>
-        <?php if ($admin): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_dash"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button><?= $g['ver_dash'] ? 'Tirar' : 'Liberar' ?></button></form><?php endif ?><?php endif ?></td>
       <td class="n"><?= h($g['ultimo_acesso'] ?? '—') ?></td>
       <td><?php if ($admin && (int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_ativo"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button class="<?= $g['ativo'] ? 'del' : '' ?>"><?= $g['ativo'] ? 'Bloquear' : 'Liberar' ?></button></form><?php elseif ((int)$g['id'] === $gestor['id']): ?><span class="small">você</span><?php endif ?></td></tr>
     <?php endforeach ?>
@@ -1206,12 +1251,6 @@ td.dlt{font-weight:800;white-space:nowrap}
     <label for="gnome">Novo gestor</label><input id="gnome" name="nome" placeholder="NOME" required>
     <label for="gusu">Usuário</label><input id="gusu" name="usuario" autocapitalize="none" size="12" required pattern="[a-z0-9._-]{3,40}">
     <button class="pri">Criar e gerar senha</button></form><?php endif ?>
-  <form method="post" class="card login"><?= csrf_campo() ?><input type="hidden" name="acao" value="minha_senha">
-    <h2>Trocar minha senha</h2>
-    <label for="atual">Senha atual</label><input id="atual" name="atual" type="password" autocomplete="current-password" required>
-    <label for="nova">Senha nova (8+ caracteres, letras e números)</label><input id="nova" name="nova" type="password" autocomplete="new-password" minlength="8" required>
-    <label for="nova2">Repita a senha nova</label><input id="nova2" name="nova2" type="password" autocomplete="new-password" minlength="8" required>
-    <button class="pri">Trocar senha</button></form>
   <div class="card tw"><h2>Últimas ações</h2><table>
     <tr><th>Quando</th><th>Quem</th><th>O quê</th></tr>
     <?php foreach (db()->query('SELECT * FROM registro ORDER BY id DESC LIMIT 40') as $l): ?>
