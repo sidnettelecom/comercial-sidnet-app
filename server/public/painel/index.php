@@ -436,6 +436,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $o = rec_os_ixc((string)$instForm['os']);
                 if (!$o) throw new RuntimeException('Não achei a O.S nº ' . so_digitos((string)$instForm['os']) . ' no IXC. Confira o número.');
                 foreach (['cliente', 'contrato', 'abertura', 'fechamento', 'assunto'] as $k) if ($o[$k] !== '') $instForm[$k] = $o[$k];
+                if (empty($instForm['servico_id']) && ($sid = inst_lista_por_nome('servico', $o['assunto']))) $instForm['servico_id'] = $sid; // assunto da O.S com o mesmo nome de um serviço
                 $avisos = [];
                 if ($o['tecnico'] !== '') {
                     // técnico da O.S no IXC: entra como o primeiro (e vai para a lista de técnicos se ainda não estiver)
@@ -472,26 +473,29 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             inst_excluir($id);
             if ($ii) registrar($quem, 'excluiu O.S de instalação', "#$id {$ii['cliente']} contrato {$ii['contrato']}");
             $msg = 'O.S excluída.';
-        } elseif ($a === 'inst_tec_novo') {
-            if (!$admin) throw new RuntimeException('Só o gestor admin mexe na lista de técnicos.');
-            $nt = up(preg_replace('/\s+/', ' ', trim((string)($_POST['nome'] ?? ''))) ?? '');
-            if ($nt === '') throw new RuntimeException('Digite o nome do técnico.');
-            inst_tecnico_por_nome($nt, true);
-            registrar($quem, 'cadastrou técnico de instalação', $nt);
-            $msg = "Técnico $nt na lista.";
-        } elseif ($a === 'inst_tec_ativo') {
-            if (!$admin) throw new RuntimeException('Só o gestor admin mexe na lista de técnicos.');
-            db()->prepare('UPDATE inst_tecnicos SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
-            registrar($quem, 'escondeu/mostrou técnico de instalação', '#' . $id);
-            $msg = 'Técnico alterado. As O.S antigas dele não mudam.';
-        } elseif ($a === 'inst_regra_salvar') {
+        } elseif ($a === 'inst_lista_novo' || $a === 'inst_lista_ativo') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin mexe nas listas da instalação.');
+            $tl = (string)($_POST['tipo'] ?? '');
+            if (!isset(INST_LISTAS[$tl])) throw new RuntimeException('Lista desconhecida.');
+            $rot = ['tec' => 'técnico', 'agenda' => 'quem agenda', 'servico' => 'tipo de serviço'][$tl];
+            if ($a === 'inst_lista_novo') {
+                $nt = up(preg_replace('/\s+/', ' ', trim((string)($_POST['nome'] ?? ''))) ?? '');
+                if ($nt === '') throw new RuntimeException('Digite o nome.');
+                inst_lista_por_nome($tl, $nt, true);
+                registrar($quem, "cadastrou $rot (instalação)", $nt);
+                $msg = "$nt na lista.";
+            } else {
+                inst_lista_ativo($tl, $id);
+                registrar($quem, "escondeu/mostrou $rot (instalação)", '#' . $id);
+                $msg = 'Lista alterada. As O.S antigas não mudam.';
+            }
+        } elseif ($a === 'inst_servicos_salvar') {
             if (!$admin) throw new RuntimeException('Só o gestor admin mexe na comissão da instalação.');
-            db()->prepare('UPDATE inst_regra SET valor_um = ?, valor_dupla = ? WHERE id = 1')
-                ->execute([dinheiro((string)($_POST['valor_um'] ?? '')), dinheiro((string)($_POST['valor_dupla'] ?? ''))]);
+            inst_servicos_salvar((array)($_POST['sv'] ?? []));
             $mesI = preg_match('/^\d{4}-\d{2}$/', (string)($_POST['mes'] ?? '')) ? (string)$_POST['mes'] : date('Y-m');
             $n = inst_aplicar_regra($mesI, !empty($_POST['sobrescrever']));
-            registrar($quem, 'salvou valor padrão da instalação', mes_nome($mesI) . " ($n O.S preenchidas)");
-            $msg = 'Valor padrão salvo.' . ($n ? " $n O.S de " . mes_nome($mesI) . ' preenchidas com ele.' : '');
+            registrar($quem, 'salvou valores por serviço da instalação', mes_nome($mesI) . " ($n O.S preenchidas)");
+            $msg = 'Valores por serviço salvos.' . ($n ? " $n O.S de " . mes_nome($mesI) . ' preenchidas com eles.' : '');
         } elseif ($a === 'inst_com_salvar' || $a === 'inst_pagar') {
             if (!$admin) throw new RuntimeException('Só o gestor admin mexe na comissão da instalação.');
             $n = inst_comissao_salvar((array)($_POST['c'] ?? []), $quem);
@@ -1574,6 +1578,8 @@ td.dlt{font-weight:800;white-space:nowrap}
     $buscaI = trim((string)($_GET['q'] ?? ''));
     $linI = inst_do_mes($mesI, $buscaI);
     $tecsI = inst_tecnicos();
+    $servI = inst_lista('servico');
+    $agsI = inst_lista('agenda');
     $edit = $instForm;
     if ($edit === null && ($eid = (int)($_GET['editar'] ?? 0)) && ($er = inst_um($eid)) && $er['pago_em'] === '') {
         $edit = $er + ['id' => $eid];
@@ -1589,6 +1595,7 @@ td.dlt{font-weight:800;white-space:nowrap}
     while (count($eqForm) < $nLinhasEq) $eqForm[] = ['mac' => '', 'modelo' => ''];
     // técnicos: começa com 1; "+ Adicionar técnico" põe mais um
     $tecForm = array_values(array_map('intval', (array)($edit['tec'] ?? [])));
+    if (empty($edit['agendador_id']) && empty($edit['id']) && $instForm === null && count($soAg = inst_lista('agenda', true)) === 1) $edit['agendador_id'] = (int)$soAg[0]['id']; // um só agenda: já vem escolhido
     if (!$tecForm && count($soAtivosI = inst_tecnicos(true)) === 1) $tecForm = [(int)$soAtivosI[0]['id']]; // um técnico só: já vem escolhido
     $nLinhasTec = max(1, count($tecForm), min(INST_MAX_TEC, (int)($edit['linhas_tec'] ?? 0)));
     while (count($tecForm) < $nLinhasTec) $tecForm[] = 0;
@@ -1598,7 +1605,7 @@ td.dlt{font-weight:800;white-space:nowrap}
     $vI = fn(string $k) => h((string)($edit[$k] ?? ''));
     $linkMes = '?p=instalacoes&amp;mes=' . h($mesI);
 ?>
-  <div class="topo"><div><h1>Instalações concluídas</h1><p class="small">Lance aqui as O.S de instalação que já foram feitas no IXC, com os técnicos que fizeram e os equipamentos recolhidos na instalação. O sistema não abre nem fecha O.S e não grava nada no IXC: serve só para a comissão.</p></div>
+  <div class="topo"><div><h1>Instalações concluídas</h1><p class="small">Lance aqui as O.S de instalação que já foram feitas no IXC, com o tipo de serviço, os técnicos que fizeram, quem agendou e os equipamentos recolhidos na instalação. O sistema não abre nem fecha O.S e não grava nada no IXC: serve só para a comissão.</p></div>
     <a class="bt" href="<?= $linkMes ?>&amp;novo=1#form-inst" style="background:var(--g-cta);border:0;color:#1c1203;height:46px;display:inline-flex;align-items:center;padding:0 18px;border-radius:14px;font-weight:800">+ Lançar O.S de instalação</a></div>
   <form method="get" class="row"><input type="hidden" name="p" value="instalacoes">
     <select name="mes" aria-label="Mês do fechamento" data-auto><?php foreach ($mesesI as $om): ?><option value="<?= h($om) ?>" <?= $om === $mesI ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select>
@@ -1622,6 +1629,8 @@ td.dlt{font-weight:800;white-space:nowrap}
       <label>Nome do cliente<input name="r[cliente]" value="<?= $vI('cliente') ?>" placeholder="vem da O.S" required></label>
       <label>Abertura da O.S<input type="date" name="r[abertura]" value="<?= $vI('abertura') ?>" max="<?= date('Y-m-d') ?>"></label>
       <label>Fechamento da O.S<input type="date" name="r[fechamento]" value="<?= $vI('fechamento') ?>" max="<?= date('Y-m-d') ?>" required></label>
+      <label>Tipo de serviço<select name="r[servico_id]" required><option value="">escolha</option><?php foreach ($servI as $sv): if (!$sv['ativo'] && (int)$sv['id'] !== (int)($edit['servico_id'] ?? 0)) continue; ?><option value="<?= (int)$sv['id'] ?>" <?= (int)$sv['id'] === (int)($edit['servico_id'] ?? 0) ? 'selected' : '' ?>><?= h($sv['nome']) ?></option><?php endforeach ?></select></label>
+      <label>Quem agendou<select name="r[agendador_id]"><option value="">ninguém / não sei</option><?php foreach ($agsI as $ag): if (!$ag['ativo'] && (int)$ag['id'] !== (int)($edit['agendador_id'] ?? 0)) continue; ?><option value="<?= (int)$ag['id'] ?>" <?= (int)$ag['id'] === (int)($edit['agendador_id'] ?? 0) ? 'selected' : '' ?>><?= h($ag['nome']) ?></option><?php endforeach ?></select></label>
       <div class="larga"><b class="small" style="font-weight:700">Técnicos que fizeram a instalação<?= ($edit['assunto'] ?? '') !== '' ? ' · ' . $vI('assunto') : '' ?></b>
         <div class="rec-eqs"><?php foreach ($tecForm as $n => $tsel): ?>
           <label>Técnico <?= $n + 1 ?><select name="r[tec][<?= $n ?>]" <?= $n === 0 ? 'required' : '' ?>><option value=""><?= $n === 0 ? 'escolha' : 'nenhum' ?></option><?php foreach ($tecsI as $tc): if (!$tc['ativo'] && (int)$tc['id'] !== $tsel) continue; ?><option value="<?= (int)$tc['id'] ?>" <?= (int)$tc['id'] === $tsel ? 'selected' : '' ?>><?= h($tc['nome']) ?></option><?php endforeach ?></select></label>
@@ -1641,20 +1650,20 @@ td.dlt{font-weight:800;white-space:nowrap}
   </form>
   <?php endif ?>
   <div class="card tw"><table class="rec">
-    <thead><tr><th>Cliente</th><th>Contrato</th><th>Abertura O.S</th><th>Fechamento O.S</th><th>Técnicos</th><th>Equipamentos recolhidos</th><th>Lançado por</th><th></th></tr></thead>
+    <thead><tr><th>Cliente</th><th>Contrato</th><th>Serviço</th><th>Abertura O.S</th><th>Fechamento O.S</th><th>Técnicos</th><th>Agendou</th><th>Equipamentos recolhidos</th><th>Lançado por</th><th></th></tr></thead>
     <?php foreach ($linI as $r): ?>
     <tr><td><b><?= h($r['cliente']) ?></b><?php if ($r['os'] !== ''): ?><br><span class="small">O.S <?= h($r['os']) ?><?= $r['assunto'] !== '' ? ' · ' . h($r['assunto']) : '' ?></span><?php endif ?><?php if ($r['obs'] !== ''): ?><br><span class="small"><?= h($r['obs']) ?></span><?php endif ?></td>
-      <td class="n"><?= h($r['contrato']) ?></td>
+      <td class="n"><?= h($r['contrato']) ?></td><td class="small"><?= h($r['servico'] ?: '—') ?></td>
       <td class="n"><?= h(rec_dt($r['abertura']) ?: '—') ?></td><td class="n"><?= h(rec_dt($r['fechamento'])) ?></td>
-      <td><?= implode('<br>', array_map(fn($t) => h($t['nome']), $r['tecs'])) ?></td>
+      <td><?= implode('<br>', array_map(fn($t) => h($t['nome']), $r['tecs'])) ?></td><td class="small"><?= h($r['agendador'] ?: '—') ?></td>
       <td><?php foreach (rec_equipamentos($r) as $e): ?><span class="mac"><?= h($e['mac']) ?></span> <span class="small"><?= h($e['modelo'] ?: 'sem modelo') ?></span><br><?php endforeach ?><?= $r['qtd'] ? '' : '<span class="small">—</span>' ?></td>
       <td class="small"><?= h($r['lancado_nome']) ?></td>
       <td><div class="acoes"><?php if ($r['pago_em'] !== ''): ?><span class="tp pago">pago</span>
         <?php else: ?><a class="bt" href="<?= $linkMes ?>&amp;editar=<?= (int)$r['id'] ?>#form-inst">Corrigir</a>
         <form method="post" action="<?= $linkMes ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$r['id'] ?>"><button class="del" name="acao" value="inst_excluir" title="Excluir esta O.S">Excluir</button></form><?php endif ?></div></td></tr>
     <?php endforeach ?>
-    <?php if (!$linI): ?><tr><td colspan="8" class="small">Nenhuma O.S de instalação <?= $buscaI !== '' ? 'nessa busca' : 'fechada em ' . h(mes_nome($mesI)) ?>.</td></tr><?php endif ?>
-    <tfoot><tr><td colspan="4">TOTAL</td><td class="n"><?= count($linI) ?> O.S</td><td class="n"><?= $eqI ?> equip.</td><td colspan="2"></td></tr></tfoot>
+    <?php if (!$linI): ?><tr><td colspan="10" class="small">Nenhuma O.S de instalação <?= $buscaI !== '' ? 'nessa busca' : 'fechada em ' . h(mes_nome($mesI)) ?>.</td></tr><?php endif ?>
+    <tfoot><tr><td colspan="5">TOTAL</td><td class="n"><?= count($linI) ?> O.S</td><td></td><td class="n"><?= $eqI ?> equip.</td><td colspan="2"></td></tr></tfoot>
   </table></div>
 
 <?php elseif ($p === 'inst_comissao'):
@@ -1662,62 +1671,75 @@ td.dlt{font-weight:800;white-space:nowrap}
     $mesI = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) ? (string)$_GET['mes'] : date('Y-m');
     if (!in_array($mesI, $mesesI, true)) { $mesesI[] = $mesI; rsort($mesesI); }
     $linI = inst_do_mes($mesI);
-    $regraI = inst_regra();
-    $porTec = inst_por_tecnico($linI);
-    $somaV = fn(array $r) => array_sum(array_map(fn($t) => (float)($t['valor'] ?: 0), $r['tecs']));
+    $servI = inst_servicos_por_id();
+    $porPes = inst_por_pessoa($linI);
+    $somaV = fn(array $r) => array_sum(array_map(fn($t) => (float)($t['valor'] ?: 0), $r['tecs'])) + ($r['agendador_id'] ? (float)($r['valor_agenda'] ?: 0) : 0);
     $totI = array_sum(array_map($somaV, $linI));
     $faltaI = array_sum(array_map(fn($r) => $r['pago_em'] === '' ? $somaV($r) : 0, $linI));
     $confI = count(array_filter($linI, fn($r) => $r['conferido']));
-    $semValorI = count(array_filter($linI, fn($r) => $r['pago_em'] === '' && in_array('', array_column($r['tecs'], 'valor'), true)));
+    $semValorI = count(array_filter($linI, fn($r) => $r['pago_em'] === '' && (in_array('', array_column($r['tecs'], 'valor'), true) || ($r['agendador_id'] && $r['valor_agenda'] === ''))));
     $Rr = fn(float $v) => 'R$ ' . brl(number_format($v, 2, '.', ''));
     $linkMes = '?p=inst_comissao&amp;mes=' . h($mesI);
 ?>
-  <div class="topo"><div><h1>Comissão da instalação</h1><p class="small">Só o admin. Coloque o valor de cada técnico em cada O.S (feita em dupla: um valor para cada um), marque ✔ e registre o mês em que pagou. No fim, o total de cada técnico. Paga uma vez só.</p></div>
+  <div class="topo"><div><h1>Comissão da instalação</h1><p class="small">Só o admin. Coloque o valor de cada técnico em cada O.S (feita em dupla: um valor para cada um) e o de quem agendou, marque ✔ e registre o mês em que pagou. No fim, o total de cada pessoa. Paga uma vez só.</p></div>
     <form method="get" class="in"><input type="hidden" name="p" value="inst_comissao"><select name="mes" aria-label="Mês do fechamento" data-auto><?php foreach ($mesesI as $om): ?><option value="<?= h($om) ?>" <?= $om === $mesI ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select><noscript><button>Ver</button></noscript></form></div>
-  <form method="post" action="<?= $linkMes ?>" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_regra_salvar"><input type="hidden" name="mes" value="<?= h($mesI) ?>">
-    <h2>Valor padrão (opcional)</h2>
-    <p class="small" style="margin:0 0 8px">Sugestão que já vem preenchida para os técnicos sem valor. Você muda o que precisar O.S por O.S.</p>
-    <div class="row">
-      <label>Técnico sozinho R$ <input name="valor_um" value="<?= h(brl($regraI['valor_um'])) ?>" size="7" inputmode="decimal"></label>
-      <label>Cada técnico, quando em dupla R$ <input name="valor_dupla" value="<?= h(brl($regraI['valor_dupla'])) ?>" size="7" inputmode="decimal"></label>
+  <form method="post" action="<?= $linkMes ?>" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_servicos_salvar"><input type="hidden" name="mes" value="<?= h($mesI) ?>">
+    <h2>Valor padrão por tipo de serviço</h2>
+    <p class="small" style="margin:0 0 8px">Sugestão que já vem preenchida nas O.S sem valor, conforme o serviço. Você muda o que precisar O.S por O.S. Em branco: sem sugestão.</p>
+    <div class="tw"><table class="rec">
+      <thead><tr><th>Serviço</th><th>Técnico sozinho R$</th><th>Cada técnico em dupla R$</th><th>Quem agendou R$</th><th></th></tr></thead>
+      <?php foreach ($servI as $sv): $si = (int)$sv['id']; ?>
+      <tr><td><b><?= h($sv['nome']) ?></b><?= $sv['ativo'] ? '' : ' <span class="pill er">escondido</span>' ?></td>
+        <td><input class="val" name="sv[<?= $si ?>][um]" value="<?= h(brl($sv['valor_um'])) ?>" inputmode="decimal" aria-label="Técnico sozinho em <?= h($sv['nome']) ?>"></td>
+        <td><input class="val" name="sv[<?= $si ?>][dupla]" value="<?= h(brl($sv['valor_dupla'])) ?>" placeholder="igual" inputmode="decimal" aria-label="Cada técnico em dupla em <?= h($sv['nome']) ?>"></td>
+        <td><input class="val" name="sv[<?= $si ?>][agenda]" value="<?= h(brl($sv['valor_agenda'])) ?>" inputmode="decimal" aria-label="Quem agendou em <?= h($sv['nome']) ?>"></td>
+        <td><button form="sv-at-<?= $si ?>" title="<?= $sv['ativo'] ? 'Tirar da lista de serviços' : 'Mostrar de novo' ?>"><?= $sv['ativo'] ? 'Esconder' : 'Mostrar' ?></button></td></tr>
+      <?php endforeach ?>
+    </table></div>
+    <div class="row" style="margin-top:10px">
       <label><input type="checkbox" name="sobrescrever" value="1"> trocar também os valores já digitados (não conferidos)</label>
       <button class="pri">Salvar e preencher <?= h(mes_nome($mesI)) ?></button></div>
   </form>
+  <?php foreach ($servI as $sv): ?><form method="post" action="<?= $linkMes ?>" id="sv-at-<?= (int)$sv['id'] ?>" class="in" hidden><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_lista_ativo"><input type="hidden" name="tipo" value="servico"><input type="hidden" name="id" value="<?= (int)$sv['id'] ?>"></form><?php endforeach ?>
+  <form method="post" action="<?= $linkMes ?>" class="row" style="margin:-4px 0 14px"><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_lista_novo"><input type="hidden" name="tipo" value="servico"><input name="nome" placeholder="NOVO TIPO DE SERVIÇO" required aria-label="Novo tipo de serviço"><button>Adicionar serviço</button></form>
   <div class="kpis">
     <div class="kpi forte"><span>Total de <?= h(mes_nome($mesI)) ?></span><b><?= $Rr($totI) ?></b><small><?= count($linI) ?> instalações</small></div>
     <div class="kpi"><span>Conferidas</span><b class="ok"><?= $confI ?> de <?= count($linI) ?></b><small>marcadas com ✔</small></div>
-    <div class="kpi"><span>Falta pagar</span><b class="q"><?= $Rr($faltaI) ?></b><small><?= $semValorI ? "$semValorI O.S com técnico sem valor" : 'sem mês de pagamento' ?></small></div>
+    <div class="kpi"><span>Falta pagar</span><b class="q"><?= $Rr($faltaI) ?></b><small><?= $semValorI ? "$semValorI O.S com alguém sem valor" : 'sem mês de pagamento' ?></small></div>
   </div>
   <form method="post" action="<?= $linkMes ?>" class="card"><?= csrf_campo() ?><input type="hidden" name="mes" value="<?= h($mesI) ?>">
-    <h2>Valor por O.S e por técnico</h2>
+    <h2>Valor por O.S e por pessoa</h2>
     <div class="tw"><table class="rec">
-      <thead><tr><th>✔</th><th>Cliente</th><th>Fechou</th><th>Técnicos e valor de cada um</th><th>Total da O.S</th><th>Pago em</th></tr></thead>
-      <?php foreach ($linI as $r): $i = (int)$r['id']; $dis = $r['pago_em'] !== '' ? 'disabled' : ''; $sug = inst_sugestao(count($r['tecs']), $regraI); ?>
+      <thead><tr><th>✔</th><th>Cliente</th><th>Serviço</th><th>Fechou</th><th>Técnicos e valor de cada um</th><th>Quem agendou</th><th>Total da O.S</th><th>Pago em</th></tr></thead>
+      <?php foreach ($linI as $r): $i = (int)$r['id']; $dis = $r['pago_em'] !== '' ? 'disabled' : ''; [$sugT, $sugA] = inst_sugestao($r, $servI); ?>
       <tr><td class="ck"><?php if (!$dis): ?><input type="hidden" name="c[<?= $i ?>][ok]" value="0"><?php endif ?><input type="checkbox" name="c[<?= $i ?>][ok]" value="1" <?= $r['conferido'] ? 'checked' : '' ?> <?= $dis ?> aria-label="Conferido <?= h($r['cliente']) ?>"></td>
         <td><b><?= h($r['cliente']) ?></b><br><span class="small">contrato <?= h($r['contrato']) ?><?= $r['os'] !== '' ? ' · O.S ' . h($r['os']) : '' ?><?= $r['qtd'] ? ' · ' . (int)$r['qtd'] . ' equip. recolhido' . ($r['qtd'] == 1 ? '' : 's') : '' ?></span></td>
+        <td class="small"><?= h($r['servico'] ?: '—') ?></td>
         <td class="n"><?= h(rec_dt($r['fechamento'])) ?></td>
-        <td><div class="inst-tecs"><?php foreach ($r['tecs'] as $t): ?><label><span><?= h($t['nome']) ?></span><input class="val" name="c[<?= $i ?>][v][<?= (int)$t['id'] ?>]" value="<?= h(brl($t['valor'])) ?>" placeholder="<?= h(brl($sug)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor de <?= h($t['nome']) ?>"></label><?php endforeach ?></div></td>
+        <td><div class="inst-tecs"><?php foreach ($r['tecs'] as $t): ?><label><span><?= h($t['nome']) ?></span><input class="val" name="c[<?= $i ?>][v][<?= (int)$t['id'] ?>]" value="<?= h(brl($t['valor'])) ?>" placeholder="<?= h(brl($sugT)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor de <?= h($t['nome']) ?>"></label><?php endforeach ?></div></td>
+        <td><?php if ($r['agendador_id']): ?><div class="inst-tecs"><label><span><?= h($r['agendador']) ?></span><input class="val" name="c[<?= $i ?>][va]" value="<?= h(brl($r['valor_agenda'])) ?>" placeholder="<?= h(brl($sugA)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor de quem agendou"></label></div><?php else: ?><span class="small">—</span><?php endif ?></td>
         <td class="n"><b><?= $Rr($somaV($r)) ?></b></td>
         <td><?= $r['pago_em'] !== '' ? '<span class="tp pago">' . h(mes_nome($r['pago_em'])) . '</span>' : '<span class="small">—</span>' ?></td></tr>
       <?php endforeach ?>
-      <?php if (!$linI): ?><tr><td colspan="6" class="small">Nenhuma instalação fechada em <?= h(mes_nome($mesI)) ?>.</td></tr><?php endif ?>
+      <?php if (!$linI): ?><tr><td colspan="8" class="small">Nenhuma instalação fechada em <?= h(mes_nome($mesI)) ?>.</td></tr><?php endif ?>
     </table></div>
     <div class="row" style="margin-top:10px;justify-content:space-between">
       <button name="acao" value="inst_com_salvar">Salvar valores e conferência</button>
       <span class="row"><button class="pri" name="acao" value="inst_pagar">Salvar e marcar conferidas como pagas em</button>
         <select name="pago_em" aria-label="Mês do pagamento"><?php for ($k = -1; $k <= 2; $k++): $om = mes_soma(date('Y-m'), $k); ?><option value="<?= $om ?>" <?= $k === 0 ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endfor ?></select></span>
     </div>
-    <p class="small">Valor em cinza é a sugestão do valor padrão: só vale depois de salvo (use "Salvar e preencher" acima). Se a O.S for corrigida e mudar os técnicos, ela volta sem ✔.</p>
+    <p class="small">Valor em cinza é a sugestão do serviço: só vale depois de salvo (use "Salvar e preencher" acima). Se a O.S for corrigida e mudar técnicos, quem agendou ou o serviço, ela volta sem ✔.</p>
   </form>
-  <div class="card"><h2>Total de cada técnico em <?= h(mes_nome($mesI)) ?></h2>
+  <div class="card"><h2>Total de cada pessoa em <?= h(mes_nome($mesI)) ?></h2>
     <div class="tw"><table class="rec">
-      <thead><tr><th>Técnico</th><th>Instalações</th><th>Sozinho</th><th>Em dupla</th><th>Total</th><th>Falta pagar</th></tr></thead>
-      <?php foreach ($porTec as $pt): ?>
-      <tr><td><b><?= h($pt['nome']) ?></b><?= $pt['sem_valor'] ? '<br><span class="small er">' . $pt['sem_valor'] . ' O.S sem valor</span>' : '' ?></td><td class="n"><?= $pt['os'] ?></td><td class="n"><?= $pt['sozinho'] ?></td><td class="n"><?= $pt['os'] - $pt['sozinho'] ?></td>
+      <thead><tr><th>Pessoa</th><th>Como</th><th>Instalações</th><th>Sozinho</th><th>Em dupla</th><th>Total</th><th>Falta pagar</th></tr></thead>
+      <?php foreach ($porPes as $pt): $tec = $pt['papel'] === 'Técnico'; ?>
+      <tr><td><b><?= h($pt['nome']) ?></b><?= $pt['sem_valor'] ? '<br><span class="small er">' . $pt['sem_valor'] . ' O.S sem valor</span>' : '' ?></td><td class="small"><?= $tec ? 'Técnico' : 'Agendou' ?></td><td class="n"><?= $pt['os'] ?></td>
+        <td class="n"><?= $tec ? $pt['sozinho'] : '—' ?></td><td class="n"><?= $tec ? $pt['os'] - $pt['sozinho'] : '—' ?></td>
         <td class="n"><b><?= $Rr($pt['valor']) ?></b></td><td class="n"><?= $pt['falta'] > 0 ? $Rr($pt['falta']) : ($pt['valor'] > 0 ? '<span class="tp pago">pago</span>' : '—') ?></td></tr>
       <?php endforeach ?>
-      <?php if (!$porTec): ?><tr><td colspan="6" class="small">Nenhuma instalação fechada em <?= h(mes_nome($mesI)) ?>.</td></tr><?php endif ?>
-      <tfoot><tr><td>TOTAL</td><td class="n"><?= count($linI) ?> O.S</td><td colspan="2"></td><td class="n"><?= $Rr($totI) ?></td><td class="n"><?= $Rr($faltaI) ?></td></tr></tfoot>
+      <?php if (!$porPes): ?><tr><td colspan="7" class="small">Nenhuma instalação fechada em <?= h(mes_nome($mesI)) ?>.</td></tr><?php endif ?>
+      <tfoot><tr><td>TOTAL</td><td></td><td class="n"><?= count($linI) ?> O.S</td><td colspan="2"></td><td class="n"><?= $Rr($totI) ?></td><td class="n"><?= $Rr($faltaI) ?></td></tr></tfoot>
     </table></div>
   </div>
 
@@ -1763,11 +1785,14 @@ td.dlt{font-weight:800;white-space:nowrap}
     <div class="row"><?php foreach (rec_tecnicos() as $tc): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="rec_tec_ativo"><input type="hidden" name="id" value="<?= (int)$tc['id'] ?>"><span class="pill <?= $tc['ativo'] ? 'mu' : 'er' ?>"><?= h($tc['nome']) ?><?= $tc['ativo'] ? '' : ' · escondido' ?></span> <button title="<?= $tc['ativo'] ? 'Esconder da lista' : 'Mostrar de novo' ?>"><?= $tc['ativo'] ? 'Esconder' : 'Mostrar' ?></button></form><?php endforeach ?></div>
     <form method="post" class="row" style="margin-top:10px"><?= csrf_campo() ?><input type="hidden" name="acao" value="rec_tec_novo"><input name="nome" placeholder="NOME DO RECOLHEDOR" required aria-label="Nome do recolhedor"><button class="pri">Adicionar recolhedor</button></form>
   </div>
-  <div class="card"><h2>Técnicos de instalação</h2>
-    <p class="small" style="margin:0 0 8px">Quem faz as instalações. É a lista do campo "Técnico" das Instalações concluídas; o técnico que vem na O.S do IXC entra aqui sozinho ao clicar em Buscar O.S. Só aparece pelo nome, não entra no sistema. Esconder tira da lista, mas as O.S antigas continuam com o nome.</p>
-    <div class="row"><?php foreach (inst_tecnicos() as $tc): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_tec_ativo"><input type="hidden" name="id" value="<?= (int)$tc['id'] ?>"><span class="pill <?= $tc['ativo'] ? 'mu' : 'er' ?>"><?= h($tc['nome']) ?><?= $tc['ativo'] ? '' : ' · escondido' ?></span> <button title="<?= $tc['ativo'] ? 'Esconder da lista' : 'Mostrar de novo' ?>"><?= $tc['ativo'] ? 'Esconder' : 'Mostrar' ?></button></form><?php endforeach ?></div>
-    <form method="post" class="row" style="margin-top:10px"><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_tec_novo"><input name="nome" placeholder="NOME DO TÉCNICO" required aria-label="Nome do técnico"><button class="pri">Adicionar técnico</button></form>
+  <?php foreach (['tec' => ['Técnicos de instalação', 'Quem faz as instalações. É a lista do campo "Técnico" das Instalações concluídas; o técnico que vem na O.S do IXC entra aqui sozinho ao clicar em Buscar O.S.', 'NOME DO TÉCNICO', 'Adicionar técnico'],
+      'agenda' => ['Quem agenda as instalações', 'Quem agenda a instalação também recebe comissão. É a lista do campo "Quem agendou".', 'NOME DE QUEM AGENDA', 'Adicionar']] as $tl => [$tt, $td, $tph, $tbt]): ?>
+  <div class="card"><h2><?= h($tt) ?></h2>
+    <p class="small" style="margin:0 0 8px"><?= h($td) ?> Só aparece pelo nome, não entra no sistema. Esconder tira da lista, mas as O.S antigas continuam com o nome.</p>
+    <div class="row"><?php foreach (inst_lista($tl) as $tc): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_lista_ativo"><input type="hidden" name="tipo" value="<?= $tl ?>"><input type="hidden" name="id" value="<?= (int)$tc['id'] ?>"><span class="pill <?= $tc['ativo'] ? 'mu' : 'er' ?>"><?= h($tc['nome']) ?><?= $tc['ativo'] ? '' : ' · escondido' ?></span> <button title="<?= $tc['ativo'] ? 'Esconder da lista' : 'Mostrar de novo' ?>"><?= $tc['ativo'] ? 'Esconder' : 'Mostrar' ?></button></form><?php endforeach ?></div>
+    <form method="post" class="row" style="margin-top:10px"><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_lista_novo"><input type="hidden" name="tipo" value="<?= $tl ?>"><input name="nome" placeholder="<?= h($tph) ?>" required aria-label="<?= h($tph) ?>"><button class="pri"><?= h($tbt) ?></button></form>
   </div>
+  <?php endforeach ?>
 
 <?php elseif ($p === 'gestores'): ?>
   <div class="card tw"><table>

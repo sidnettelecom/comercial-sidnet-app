@@ -2,8 +2,9 @@
 /**
  * Instalações concluídas: o gestor lança as O.S de instalação que já foram feitas no IXC
  * (só para registro, o sistema não abre nem fecha O.S e não grava nada no IXC), com os técnicos
- * que fizeram e os equipamentos recolhidos na instalação. O admin põe o valor de cada técnico
- * em cada O.S (dois técnicos: um valor para cada; um só: um valor) e vê o total de cada técnico.
+ * que fizeram, quem agendou, o tipo de serviço e os equipamentos recolhidos na instalação. O admin põe o valor
+ * de cada técnico em cada O.S (dois técnicos: um valor para cada; um só: um valor) e o de quem agendou,
+ * com valor padrão por tipo de serviço, e vê o total de cada pessoa.
  * Regra do ALEX: comissão paga uma vez só; quando paga, marca-se o mês do pagamento.
  * O mês de cada O.S é o mês da data de fechamento.
  */
@@ -46,43 +47,90 @@ function inst_tabela(): void
         valor TEXT NOT NULL DEFAULT '',
         PRIMARY KEY (inst_id, tecnico_id)
     );
-    CREATE TABLE IF NOT EXISTS inst_regra (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        valor_um TEXT NOT NULL DEFAULT '',
-        valor_dupla TEXT NOT NULL DEFAULT ''
+    CREATE TABLE IF NOT EXISTS inst_agendadores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT NOT NULL UNIQUE,
+        ativo INTEGER NOT NULL DEFAULT 1
     );
-    INSERT OR IGNORE INTO inst_regra (id) VALUES (1);
+    CREATE TABLE IF NOT EXISTS inst_servicos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT NOT NULL UNIQUE,
+        ativo INTEGER NOT NULL DEFAULT 1,
+        valor_um TEXT NOT NULL DEFAULT '',
+        valor_dupla TEXT NOT NULL DEFAULT '',
+        valor_agenda TEXT NOT NULL DEFAULT ''
+    );
     SQL);
+    $cols = array_column(db()->query('PRAGMA table_info(instalacoes)')->fetchAll(), 'name');
+    foreach (['servico_id' => "INTEGER NOT NULL DEFAULT 0", 'agendador_id' => "INTEGER NOT NULL DEFAULT 0", 'valor_agenda' => "TEXT NOT NULL DEFAULT ''"] as $c => $t)
+        if (!in_array($c, $cols, true)) db()->exec("ALTER TABLE instalacoes ADD COLUMN $c $t");
+    if (!db()->query('SELECT COUNT(*) FROM inst_servicos')->fetchColumn()) {
+        $q = db()->prepare('INSERT INTO inst_servicos (nome) VALUES (?)');
+        foreach (['INSTALAÇÃO NOVA', '2º PONTO', 'MUDANÇA DE ENDEREÇO'] as $n) $q->execute([$n]);
+    }
 }
 
-function inst_tecnicos(bool $soAtivos = false): array
+/** Listas simples por nome (técnicos, quem agenda, serviços). */
+const INST_LISTAS = ['tec' => 'inst_tecnicos', 'agenda' => 'inst_agendadores', 'servico' => 'inst_servicos'];
+
+function inst_lista(string $tipo, bool $soAtivos = false): array
 {
-    return db()->query('SELECT id, nome, ativo FROM inst_tecnicos' . ($soAtivos ? ' WHERE ativo = 1' : '') . ' ORDER BY nome')->fetchAll();
+    $t = INST_LISTAS[$tipo];
+    return db()->query("SELECT * FROM $t" . ($soAtivos ? ' WHERE ativo = 1' : '') . ' ORDER BY nome')->fetchAll();
 }
 
-/** Id do técnico com esse nome (igual, sem acento); com $criar, põe na lista se não tiver. 0 se vazio. */
-function inst_tecnico_por_nome(string $nome, bool $criar = false): int
+/** Id do item com esse nome (igual, sem acento); com $criar, põe na lista se não tiver. 0 se vazio. */
+function inst_lista_por_nome(string $tipo, string $nome, bool $criar = false): int
 {
     $nome = up(preg_replace('/\s+/', ' ', trim($nome)) ?? '');
     if ($nome === '') return 0;
     require_once __DIR__ . '/ixc.php'; // sem_acento()
     $alvo = up(sem_acento($nome));
-    foreach (inst_tecnicos() as $t) if (up(sem_acento($t['nome'])) === $alvo) return (int)$t['id'];
+    foreach (inst_lista($tipo) as $t) if (up(sem_acento($t['nome'])) === $alvo) return (int)$t['id'];
     if (!$criar) return 0;
-    db()->prepare('INSERT OR IGNORE INTO inst_tecnicos (nome) VALUES (?)')->execute([$nome]);
+    db()->prepare('INSERT INTO ' . INST_LISTAS[$tipo] . ' (nome) VALUES (?)')->execute([$nome]);
     return (int)db()->lastInsertId();
 }
 
-function inst_regra(): array
+function inst_lista_ativo(string $tipo, int $id): void
 {
-    return db()->query('SELECT * FROM inst_regra WHERE id = 1')->fetch() ?: ['valor_um' => '', 'valor_dupla' => ''];
+    db()->prepare('UPDATE ' . INST_LISTAS[$tipo] . ' SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
 }
 
-/** Valor sugerido para cada técnico de uma O.S com $n técnicos ("0.00"). */
-function inst_sugestao(int $n, array $regra): string
+/** Admin: valores padrão de cada serviço. $v = [servico_id => ['um' => , 'dupla' => , 'agenda' => ]] */
+function inst_servicos_salvar(array $v): void
 {
-    $v = $n <= 1 ? $regra['valor_um'] : ($regra['valor_dupla'] !== '' ? $regra['valor_dupla'] : $regra['valor_um']);
-    return number_format((float)($v ?: 0), 2, '.', '');
+    $up = db()->prepare('UPDATE inst_servicos SET valor_um = ?, valor_dupla = ?, valor_agenda = ? WHERE id = ?');
+    foreach ($v as $id => $l) $up->execute([dinheiro((string)($l['um'] ?? '')), dinheiro((string)($l['dupla'] ?? '')), dinheiro((string)($l['agenda'] ?? '')), (int)$id]);
+}
+
+function inst_tecnicos(bool $soAtivos = false): array
+{
+    return inst_lista('tec', $soAtivos);
+}
+
+function inst_tecnico_por_nome(string $nome, bool $criar = false): int
+{
+    return inst_lista_por_nome('tec', $nome, $criar);
+}
+
+/** Valores sugeridos pelo serviço da O.S: [cada técnico, quem agendou] em "0.00" ('' se o serviço não tem valor). */
+function inst_sugestao(array $r, array $servicos): array
+{
+    $s = $servicos[(int)($r['servico_id'] ?? 0)] ?? null;
+    if (!$s) return ['', ''];
+    $n = count($r['tecs'] ?? []);
+    $v = $n <= 1 ? $s['valor_um'] : ($s['valor_dupla'] !== '' ? $s['valor_dupla'] : $s['valor_um']);
+    $f = fn(string $x) => $x === '' ? '' : number_format((float)$x, 2, '.', '');
+    return [$f($v), $f($s['valor_agenda'])];
+}
+
+/** Serviços por id */
+function inst_servicos_por_id(): array
+{
+    $o = [];
+    foreach (inst_lista('servico') as $s) $o[(int)$s['id']] = $s;
+    return $o;
 }
 
 /** Técnicos do formulário (r[tec][n]) -> [id, ...] sem vazios e sem repetir */
@@ -114,6 +162,8 @@ function inst_validar(array $in): array
         'qtd' => count($macs),
         'obs' => mb_substr(trim((string)($in['obs'] ?? '')), 0, 300),
         'tecs' => $tecs,
+        'servico_id' => (int)($in['servico_id'] ?? 0),
+        'agendador_id' => (int)($in['agendador_id'] ?? 0),
     ];
     if ($d['cliente'] === '') throw new RuntimeException('Preencha o nome do cliente.');
     if ($d['contrato'] === '') throw new RuntimeException('Preencha o ID do contrato.');
@@ -122,6 +172,14 @@ function inst_validar(array $in): array
     if ($d['fechamento'] === '') throw new RuntimeException('Preencha a data de fechamento da O.S.');
     if ($d['abertura'] !== '' && $d['abertura'] > $d['fechamento']) throw new RuntimeException('A abertura da O.S está depois do fechamento.');
     if ($d['fechamento'] > date('Y-m-d')) throw new RuntimeException('A data de fechamento está no futuro.');
+    $q = db()->prepare('SELECT 1 FROM inst_servicos WHERE id = ?');
+    $q->execute([$d['servico_id']]);
+    if (!$q->fetchColumn()) throw new RuntimeException('Escolha o tipo de serviço.');
+    if ($d['agendador_id']) {
+        $q = db()->prepare('SELECT 1 FROM inst_agendadores WHERE id = ?');
+        $q->execute([$d['agendador_id']]);
+        if (!$q->fetchColumn()) throw new RuntimeException('Quem agendou não está na lista. Escolha de novo.');
+    }
     if (!$tecs) throw new RuntimeException('Escolha pelo menos um técnico que fez a instalação.');
     if (count($tecs) > INST_MAX_TEC) throw new RuntimeException('No máximo ' . INST_MAX_TEC . ' técnicos por O.S.');
     $q = db()->prepare('SELECT COUNT(*) FROM inst_tecnicos WHERE id IN (' . implode(',', array_fill(0, count($tecs), '?')) . ')');
@@ -146,6 +204,9 @@ function inst_salvar(array $in, int $id, string $quem): array
         $pg = $q->fetchColumn();
         if ($pg === false) throw new RuntimeException('Essa O.S não existe mais.');
         if ($pg !== '') throw new RuntimeException('Essa O.S já teve a comissão paga e não pode mais ser mudada.');
+        $q = $db->prepare('SELECT servico_id, agendador_id FROM instalacoes WHERE id = ?');
+        $q->execute([$id]);
+        $velho = $q->fetch();
         $q = $db->prepare('SELECT tecnico_id, valor FROM inst_tec WHERE inst_id = ?');
         $q->execute([$id]);
         $antes = $q->fetchAll(PDO::FETCH_KEY_PAIR);
@@ -166,19 +227,21 @@ function inst_salvar(array $in, int $id, string $quem): array
     $db->beginTransaction();
     try {
         if ($id) {
-            // mudou quem fez: volta a ser conferida
+            // mudou quem fez, quem agendou ou o serviço: volta a ser conferida; quem agendou mudou perde o valor
             $mudouTec = array_map('intval', array_keys($antes));
             sort($mudouTec);
             $novos = $d['tecs'];
             sort($novos);
-            $db->prepare('UPDATE instalacoes SET cliente=?, contrato=?, os=?, assunto=?, abertura=?, fechamento=?, macs=?, modelos=?, qtd=?, obs=?, alterado_por=?,
-                conferido = CASE WHEN ? THEN conferido ELSE 0 END WHERE id=?')
+            $igual = $mudouTec === $novos && (int)$velho['servico_id'] === $d['servico_id'] && (int)$velho['agendador_id'] === $d['agendador_id'];
+            $db->prepare("UPDATE instalacoes SET cliente=?, contrato=?, os=?, assunto=?, abertura=?, fechamento=?, macs=?, modelos=?, qtd=?, obs=?, alterado_por=?,
+                valor_agenda = CASE WHEN agendador_id = ? AND ? > 0 THEN valor_agenda ELSE '' END, servico_id=?, agendador_id=?,
+                conferido = CASE WHEN ? THEN conferido ELSE 0 END WHERE id=?")
                 ->execute([$d['cliente'], $d['contrato'], $d['os'], $d['assunto'], $d['abertura'], $d['fechamento'], $d['macs'], $d['modelos'], $d['qtd'], $d['obs'], $quem,
-                    $mudouTec === $novos ? 1 : 0, $id]);
+                    $d['agendador_id'], $d['agendador_id'], $d['servico_id'], $d['agendador_id'], $igual ? 1 : 0, $id]);
             $db->prepare('DELETE FROM inst_tec WHERE inst_id = ?')->execute([$id]);
         } else {
-            $db->prepare('INSERT INTO instalacoes (cliente, contrato, os, assunto, abertura, fechamento, macs, modelos, qtd, obs, lancado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-                ->execute([$d['cliente'], $d['contrato'], $d['os'], $d['assunto'], $d['abertura'], $d['fechamento'], $d['macs'], $d['modelos'], $d['qtd'], $d['obs'], $quem]);
+            $db->prepare('INSERT INTO instalacoes (cliente, contrato, os, assunto, abertura, fechamento, macs, modelos, qtd, obs, servico_id, agendador_id, lancado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+                ->execute([$d['cliente'], $d['contrato'], $d['os'], $d['assunto'], $d['abertura'], $d['fechamento'], $d['macs'], $d['modelos'], $d['qtd'], $d['obs'], $d['servico_id'], $d['agendador_id'], $quem]);
             $id = (int)$db->lastInsertId();
         }
         $ins = $db->prepare('INSERT INTO inst_tec (inst_id, tecnico_id, valor) VALUES (?, ?, ?)');
@@ -205,7 +268,8 @@ function inst_excluir(int $id): void
 /** Uma O.S com a lista de técnicos em 'tecs' = [['id', 'nome', 'valor'], ...] */
 function inst_um(int $id): ?array
 {
-    $q = db()->prepare('SELECT * FROM instalacoes WHERE id = ?');
+    $q = db()->prepare("SELECT i.*, COALESCE(s.nome, '') AS servico, COALESCE(a.nome, '') AS agendador FROM instalacoes i
+        LEFT JOIN inst_servicos s ON s.id = i.servico_id LEFT JOIN inst_agendadores a ON a.id = i.agendador_id WHERE i.id = ?");
     $q->execute([$id]);
     $r = $q->fetch();
     if (!$r) return null;
@@ -230,16 +294,17 @@ function inst_com_tecs(array $linhas): array
 /** O.S fechadas no mês (aaaa-mm), com técnicos e o nome de quem lançou. */
 function inst_do_mes(string $mes, string $busca = ''): array
 {
-    $sql = "SELECT i.*, COALESCE(g.nome, i.lancado_por) AS lancado_nome
+    $sql = "SELECT i.*, COALESCE(g.nome, i.lancado_por) AS lancado_nome, COALESCE(s.nome, '') AS servico, COALESCE(a.nome, '') AS agendador
         FROM instalacoes i LEFT JOIN gestores g ON g.usuario = i.lancado_por
+        LEFT JOIN inst_servicos s ON s.id = i.servico_id LEFT JOIN inst_agendadores a ON a.id = i.agendador_id
         WHERE substr(i.fechamento, 1, 7) = ?";
     $par = [$mes];
     $b = up(trim($busca));
     if ($b !== '') {
         $sql .= " AND (i.cliente LIKE ? OR i.contrato = ? OR i.os = ? OR i.macs LIKE ? OR i.modelos LIKE ?
-            OR i.id IN (SELECT it.inst_id FROM inst_tec it JOIN inst_tecnicos t ON t.id = it.tecnico_id WHERE t.nome LIKE ?))";
+            OR a.nome LIKE ? OR s.nome LIKE ? OR i.id IN (SELECT it.inst_id FROM inst_tec it JOIN inst_tecnicos t ON t.id = it.tecnico_id WHERE t.nome LIKE ?))";
         $mac = preg_replace('/[^A-Z0-9]/', '', $b);
-        array_push($par, "%$b%", so_digitos($b) ?: '-', so_digitos($b) ?: '-', '%' . ($mac ?: '-') . '%', "%$b%", "%$b%");
+        array_push($par, "%$b%", so_digitos($b) ?: '-', so_digitos($b) ?: '-', '%' . ($mac ?: '-') . '%', "%$b%", "%$b%", "%$b%", "%$b%");
     }
     $q = db()->prepare($sql . ' ORDER BY i.fechamento, i.cliente, i.id');
     $q->execute($par);
@@ -257,7 +322,7 @@ function inst_meses(): array
 
 /**
  * Admin: grava os valores de cada técnico e a conferência das O.S ainda não pagas.
- * $linhas = [inst_id => ['ok' => '1', 'v' => [tecnico_id => '50,00', ...]]]
+ * $linhas = [inst_id => ['ok' => '1', 'v' => [tecnico_id => '50,00', ...], 'va' => '10,00']]
  */
 function inst_comissao_salvar(array $linhas, string $quem): int
 {
@@ -266,6 +331,7 @@ function inst_comissao_salvar(array $linhas, string $quem): int
     $upT = $db->prepare("UPDATE inst_tec SET valor = ? WHERE inst_id = ? AND tecnico_id = ? AND valor <> ?");
     $upO = $db->prepare("UPDATE instalacoes SET conferido = ?, alterado_por = ? WHERE id = ? AND conferido <> ?");
     $toca = $db->prepare("UPDATE instalacoes SET alterado_por = ? WHERE id = ?");
+    $upA = $db->prepare("UPDATE instalacoes SET valor_agenda = ? WHERE id = ? AND agendador_id > 0 AND valor_agenda <> ?");
     $n = 0;
     $db->beginTransaction();
     foreach ($linhas as $id => $l) {
@@ -278,6 +344,11 @@ function inst_comissao_salvar(array $linhas, string $quem): int
             $upT->execute([$v, $id, (int)$tid, $v]);
             $mudou = $mudou || $upT->rowCount() > 0;
         }
+        if (isset($l['va'])) {
+            $va = dinheiro((string)$l['va']);
+            $upA->execute([$va, $id, $va]);
+            $mudou = $mudou || $upA->rowCount() > 0;
+        }
         $ok = !empty($l['ok']) ? 1 : 0;
         $upO->execute([$ok, $quem, $id, $ok]);
         $mudou = $mudou || $upO->rowCount() > 0;
@@ -287,19 +358,24 @@ function inst_comissao_salvar(array $linhas, string $quem): int
     return $n;
 }
 
-/** Admin: preenche com o valor padrão os técnicos sem valor das O.S não conferidas e não pagas do mês. */
+/** Admin: preenche com o valor do serviço os valores vazios das O.S não conferidas e não pagas do mês. */
 function inst_aplicar_regra(string $mes, bool $sobrescrever): int
 {
-    $regra = inst_regra();
-    $up = db()->prepare('UPDATE inst_tec SET valor = ? WHERE inst_id = ? AND tecnico_id = ?');
+    $serv = inst_servicos_por_id();
+    $upT = db()->prepare('UPDATE inst_tec SET valor = ? WHERE inst_id = ? AND tecnico_id = ?');
+    $upA = db()->prepare('UPDATE instalacoes SET valor_agenda = ? WHERE id = ?');
     $n = 0;
     foreach (inst_do_mes($mes) as $r) {
         if ($r['pago_em'] !== '' || $r['conferido']) continue;
-        $sug = inst_sugestao(count($r['tecs']), $regra);
+        [$vt, $va] = inst_sugestao($r, $serv);
         $mexeu = false;
-        foreach ($r['tecs'] as $t) {
+        if ($vt !== '') foreach ($r['tecs'] as $t) {
             if (!$sobrescrever && $t['valor'] !== '') continue;
-            $up->execute([$sug, $r['id'], $t['id']]);
+            $upT->execute([$vt, $r['id'], $t['id']]);
+            $mexeu = true;
+        }
+        if ($va !== '' && $r['agendador_id'] && ($sobrescrever || $r['valor_agenda'] === '')) {
+            $upA->execute([$va, $r['id']]);
             $mexeu = true;
         }
         if ($mexeu) $n++;
@@ -316,22 +392,24 @@ function inst_pagar(string $mes, string $pagoEm, string $quem): int
     return $q->rowCount();
 }
 
-/** Total de cada técnico: [['nome', 'os', 'sozinho', 'valor', 'falta', 'sem_valor'], ...] do maior para o menor */
-function inst_por_tecnico(array $linhas): array
+/** Total de cada pessoa: [['nome', 'papel', 'os', 'sozinho', 'valor', 'falta', 'sem_valor'], ...] técnicos primeiro, do maior para o menor */
+function inst_por_pessoa(array $linhas): array
 {
     $out = [];
+    $soma = function (string $k, string $nome, string $papel, string $valor, array $r, bool $sozinho) use (&$out) {
+        $o = &$out[$k];
+        $o ??= ['nome' => $nome, 'papel' => $papel, 'os' => 0, 'sozinho' => 0, 'valor' => 0.0, 'falta' => 0.0, 'sem_valor' => 0];
+        $o['os']++;
+        if ($sozinho) $o['sozinho']++;
+        $o['valor'] += (float)($valor ?: 0);
+        if ($r['pago_em'] === '') $o['falta'] += (float)($valor ?: 0);
+        if ($valor === '') $o['sem_valor']++;
+    };
     foreach ($linhas as $r) {
-        foreach ($r['tecs'] as $t) {
-            $o = &$out[$t['id']];
-            $o ??= ['nome' => $t['nome'], 'os' => 0, 'sozinho' => 0, 'valor' => 0.0, 'falta' => 0.0, 'sem_valor' => 0];
-            $o['os']++;
-            if (count($r['tecs']) === 1) $o['sozinho']++;
-            $o['valor'] += (float)($t['valor'] ?: 0);
-            if ($r['pago_em'] === '') $o['falta'] += (float)($t['valor'] ?: 0);
-            if ($t['valor'] === '') $o['sem_valor']++;
-            unset($o);
-        }
+        foreach ($r['tecs'] as $t) $soma('t' . $t['id'], $t['nome'], 'Técnico', (string)$t['valor'], $r, count($r['tecs']) === 1);
+        if ($r['agendador_id'] && $r['agendador'] !== '') $soma('a' . $r['agendador_id'], $r['agendador'], 'Agendou', (string)$r['valor_agenda'], $r, false);
     }
-    usort($out, fn($a, $b) => [$b['valor'], $a['nome']] <=> [$a['valor'], $b['nome']]);
+    $out = array_values($out);
+    usort($out, fn($a, $b) => [$a['papel'] !== 'Técnico', $b['valor'], $a['nome']] <=> [$b['papel'] !== 'Técnico', $a['valor'], $b['nome']]);
     return $out;
 }
