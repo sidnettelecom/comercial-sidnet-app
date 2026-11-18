@@ -347,11 +347,24 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($a === 'rec_buscar') {
             $recForm = (array)($_POST['r'] ?? []);
             $recForm['id'] = $id;
-            if (destino() !== 'ixc') throw new RuntimeException('A busca do nome só funciona com o IXC. Digite o nome do cliente.');
-            $nomeIxc = rec_nome_ixc((string)($recForm['contrato'] ?? ''));
-            if ($nomeIxc === '') throw new RuntimeException('Não achei esse contrato no IXC. Confira o número ou digite o nome do cliente.');
-            $recForm['cliente'] = $nomeIxc;
-            $msg = 'Nome do cliente preenchido pelo IXC (só leitura, nada foi gravado lá).';
+            if (destino() !== 'ixc') throw new RuntimeException('A busca só funciona com o IXC. Preencha à mão.');
+            if (so_digitos((string)($recForm['os'] ?? '')) !== '') {
+                $o = rec_os_ixc((string)$recForm['os']);
+                if (!$o) throw new RuntimeException('Não achei a O.S nº ' . so_digitos((string)$recForm['os']) . ' no IXC. Confira o número.');
+                foreach (['cliente', 'contrato', 'abertura', 'fechamento'] as $k) if ($o[$k] !== '') $recForm[$k] = $o[$k];
+                $avisos = [];
+                if ($o['tecnico'] !== '') {
+                    if ($tid = rec_tecnico_por_nome($o['tecnico'])) $recForm['tecnico_id'] = $tid;
+                    else $avisos[] = "o técnico da O.S no IXC é {$o['tecnico']}, que não está na lista de técnicos: escolha à mão";
+                }
+                if (!$o['finalizada'] || $o['fechamento'] === '') $avisos[] = 'a O.S ainda não está finalizada no IXC, então o fechamento não veio';
+                $msg = 'O.S ' . so_digitos((string)$recForm['os']) . ($o['assunto'] !== '' ? " ({$o['assunto']})" : '') . ' carregada do IXC (só leitura, nada foi gravado lá). Confira e preencha MAC e modelo dos equipamentos.' . ($avisos ? ' Atenção: ' . implode('; ', $avisos) . '.' : '');
+            } else {
+                $nomeIxc = rec_nome_ixc((string)($recForm['contrato'] ?? ''));
+                if ($nomeIxc === '') throw new RuntimeException('Não achei esse contrato no IXC. Confira o número ou digite o nome do cliente.');
+                $recForm['cliente'] = $nomeIxc;
+                $msg = 'Nome do cliente preenchido pelo IXC (só leitura, nada foi gravado lá).';
+            }
         } elseif ($a === 'rec_salvar') {
             $recForm = (array)($_POST['r'] ?? []);
             $recForm['id'] = $id;
@@ -669,6 +682,7 @@ td.dlt{font-weight:800;white-space:nowrap}
 .rec-form input,.rec-form select,.rec-form textarea{width:100%;min-width:0;font:inherit;color:var(--ink);padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
 .rec-form .larga{grid-column:1/-1}.rec-form textarea{min-height:64px;font-family:var(--mono);font-size:13px;text-transform:uppercase}
 .rec-form .comb{display:flex;gap:6px}.rec-form .comb input{flex:1}
+.rec-eqs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;margin:6px 0 4px;max-width:760px}.rec-eqs input{font-family:var(--mono);text-transform:uppercase}
 .mac{display:inline-block;font:600 12px/1.2 var(--mono);background:var(--bg);border-radius:6px;padding:3px 6px;margin:1px 2px 1px 0;white-space:nowrap}
 .rec tfoot td{font-weight:800;border-bottom:0}.rec td{vertical-align:middle}
 .rec input.val{width:96px;text-align:right;font-weight:700}.rec .ck input{width:18px;height:18px}
@@ -1321,10 +1335,14 @@ td.dlt{font-weight:800;white-space:nowrap}
     $edit = $recForm;
     if ($edit === null && ($eid = (int)($_GET['editar'] ?? 0)) && ($er = rec_um($eid)) && $er['pago_em'] === '') {
         $edit = $er + ['id' => $eid];
-        $edit['tecnico_id'] = $er['tecnico_id'];
+        $edit['eq'] = array_map(fn($e) => ['mac' => $e['mac'], 'modelo' => $e['modelo']], rec_equipamentos($er));
     }
     $abrirForm = $edit !== null || isset($_GET['novo']);
     $edit ??= ['id' => 0, 'funcionando' => 'SIM'];
+    $eqForm = array_values(array_filter((array)($edit['eq'] ?? []), fn($e) => trim((string)($e['mac'] ?? '')) !== '' || trim((string)($e['modelo'] ?? '')) !== ''));
+    $nLinhasEq = max(3, count($eqForm) + 1); // sempre uma linha vazia a mais
+    while (count($eqForm) < $nLinhasEq) $eqForm[] = ['mac' => '', 'modelo' => ''];
+    $modelosUsados = rec_modelos_usados();
     $eqR = array_sum(array_map(fn($r) => (int)$r['qtd'], $linR));
     $eqF = array_sum(array_map(fn($r) => $r['funcionando'] === 'SIM' ? (int)$r['qtd'] : 0, $linR));
     $vR = fn(string $k) => h((string)($edit[$k] ?? ''));
@@ -1334,7 +1352,7 @@ td.dlt{font-weight:800;white-space:nowrap}
     <a class="bt" href="<?= $linkMes ?>&amp;novo=1#form-rec" style="background:var(--g-cta);border:0;color:#1c1203;height:46px;display:inline-flex;align-items:center;padding:0 18px;border-radius:14px;font-weight:800">+ Lançar O.S de recolhimento</a></div>
   <form method="get" class="row"><input type="hidden" name="p" value="recolhimentos">
     <select name="mes" aria-label="Mês do fechamento" data-auto><?php foreach ($mesesR as $om): ?><option value="<?= h($om) ?>" <?= $om === $mesR ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select>
-    <input name="q" value="<?= h($buscaR) ?>" placeholder="Buscar nome, contrato, O.S ou MAC" aria-label="Buscar"><button>Buscar</button>
+    <input name="q" value="<?= h($buscaR) ?>" placeholder="Buscar nome, contrato, O.S, MAC ou modelo" aria-label="Buscar"><button>Buscar</button>
     <?php if ($buscaR !== ''): ?><a href="<?= $linkMes ?>">limpar</a><?php endif ?></form>
   <div class="kpis">
     <div class="kpi forte"><span>Equipamentos em <?= h(mes_nome($mesR)) ?></span><b><?= $eqR ?></b><small>pela data de fechamento da O.S</small></div>
@@ -1348,15 +1366,21 @@ td.dlt{font-weight:800;white-space:nowrap}
     <h2><?= $edit['id'] ? 'Corrigir O.S de recolhimento' : 'Lançar O.S de recolhimento' ?></h2>
     <?php if (!$tecsR): ?><div class="msg">Ainda não tem técnico de campo cadastrado. <?= $admin ? 'Cadastre em Configurações → Permissões, no fim da página.' : 'Peça ao admin para cadastrar em Configurações.' ?></div><?php endif ?>
     <div class="rec-form">
-      <label>ID do contrato<span class="comb"><input name="r[contrato]" value="<?= $vR('contrato') ?>" inputmode="numeric" placeholder="ex.: 5495" required>
-        <?php if (destino() === 'ixc'): ?><button name="acao" value="rec_buscar" formnovalidate title="Só lê o nome do cliente no IXC">Buscar nome</button><?php endif ?></span></label>
-      <label>Nome do cliente<input name="r[cliente]" value="<?= $vR('cliente') ?>" required></label>
-      <label>Nº da O.S (opcional)<input name="r[os]" value="<?= $vR('os') ?>" inputmode="numeric" placeholder="evita lançar a mesma O.S 2 vezes"></label>
+      <label>Nº da O.S no IXC<span class="comb"><input name="r[os]" value="<?= $vR('os') ?>" inputmode="numeric" placeholder="ex.: 104532">
+        <?php if (destino() === 'ixc'): ?><button name="acao" value="rec_buscar" formnovalidate title="Só lê a O.S no IXC: cliente, contrato, abertura, fechamento e técnico">Buscar O.S</button><?php endif ?></span></label>
+      <label>ID do contrato<input name="r[contrato]" value="<?= $vR('contrato') ?>" inputmode="numeric" placeholder="vem da O.S" required></label>
+      <label>Nome do cliente<input name="r[cliente]" value="<?= $vR('cliente') ?>" placeholder="vem da O.S" required></label>
       <label>Abertura da O.S<input type="date" name="r[abertura]" value="<?= $vR('abertura') ?>" max="<?= date('Y-m-d') ?>"></label>
       <label>Fechamento da O.S<input type="date" name="r[fechamento]" value="<?= $vR('fechamento') ?>" max="<?= date('Y-m-d') ?>" required></label>
       <label>Funcionando?<select name="r[funcionando]"><option>SIM</option><option <?= ($edit['funcionando'] ?? '') === 'NÃO' ? 'selected' : '' ?>>NÃO</option></select></label>
       <label>Técnico que recolheu<select name="r[tecnico_id]" required><option value="">escolha</option><?php foreach ($tecsR as $tc): if (!$tc['ativo'] && (int)$tc['id'] !== (int)($edit['tecnico_id'] ?? 0)) continue; ?><option value="<?= (int)$tc['id'] ?>" <?= (int)$tc['id'] === (int)($edit['tecnico_id'] ?? 0) ? 'selected' : '' ?>><?= h($tc['nome']) ?></option><?php endforeach ?></select></label>
-      <label class="larga">MAC dos equipamentos (um por linha ou separados por /; o nº de equipamentos é contado sozinho)<textarea name="r[macs]" required placeholder="CCB1822D48C7&#10;A82948A0DBD3"><?= $vR('macs') ?></textarea></label>
+      <div class="larga"><b class="small" style="font-weight:700">Equipamentos recolhidos (o nº de equipamentos é contado sozinho; linha vazia é ignorada)</b>
+        <div class="rec-eqs"><?php foreach ($eqForm as $n => $e): ?>
+          <label>MAC <?= $n + 1 ?><input name="r[eq][<?= $n ?>][mac]" value="<?= h((string)($e['mac'] ?? '')) ?>" placeholder="CCB1822D48C7" autocapitalize="characters" <?= $n === 0 ? 'required' : '' ?>></label>
+          <label>Modelo <?= $n + 1 ?><input name="r[eq][<?= $n ?>][modelo]" value="<?= h((string)($e['modelo'] ?? '')) ?>" list="rec-modelos" placeholder="ex.: ONU ZTE F670L" <?= $n === 0 ? 'required' : '' ?>></label>
+        <?php endforeach ?></div>
+        <datalist id="rec-modelos"><?php foreach ($modelosUsados as $mu): ?><option value="<?= h($mu) ?>"><?php endforeach ?></datalist>
+        <span class="small">Precisa de mais linhas? Salve e use "Corrigir": sempre aparece uma linha vazia a mais.</span></div>
       <label class="larga">Observação<input name="r[obs]" value="<?= $vR('obs') ?>" maxlength="300"></label>
     </div>
     <div class="row" style="margin-top:10px"><button class="pri" name="acao" value="rec_salvar"><?= $edit['id'] ? 'Salvar correção' : 'Salvar O.S' ?></button><a href="<?= $linkMes ?>">Cancelar</a>
@@ -1364,11 +1388,11 @@ td.dlt{font-weight:800;white-space:nowrap}
   </form>
   <?php endif ?>
   <div class="card tw"><table class="rec">
-    <thead><tr><th>Cliente</th><th>Contrato</th><th>Nº equip.</th><th>MAC dos equipamentos</th><th>Abertura O.S</th><th>Fechamento O.S</th><th>Funcionando</th><th>Técnico</th><th>Lançado por</th><th></th></tr></thead>
+    <thead><tr><th>Cliente</th><th>Contrato</th><th>Nº equip.</th><th>MAC e modelo</th><th>Abertura O.S</th><th>Fechamento O.S</th><th>Funcionando</th><th>Técnico</th><th>Lançado por</th><th></th></tr></thead>
     <?php foreach ($linR as $r): ?>
     <tr><td><b><?= h($r['cliente']) ?></b><?php if ($r['os'] !== ''): ?><br><span class="small">O.S <?= h($r['os']) ?></span><?php endif ?><?php if ($r['obs'] !== ''): ?><br><span class="small"><?= h($r['obs']) ?></span><?php endif ?></td>
       <td class="n"><?= h($r['contrato']) ?></td><td class="n"><?= (int)$r['qtd'] ?></td>
-      <td><?php foreach (explode("\n", $r['macs']) as $m): ?><span class="mac"><?= h($m) ?></span><?php endforeach ?></td>
+      <td><?php foreach (rec_equipamentos($r) as $e): ?><span class="mac"><?= h($e['mac']) ?></span> <span class="small"><?= h($e['modelo'] ?: 'sem modelo') ?></span><br><?php endforeach ?></td>
       <td class="n"><?= h(rec_dt($r['abertura']) ?: '—') ?></td><td class="n"><?= h(rec_dt($r['fechamento'])) ?></td>
       <td><?= $r['funcionando'] === 'SIM' ? '<span class="pill ok">Sim</span>' : '<span class="pill er">Não</span>' ?></td>
       <td><?= h($r['tecnico']) ?></td><td class="small"><?= h($r['lancado_nome']) ?></td>
@@ -1393,6 +1417,7 @@ td.dlt{font-weight:800;white-space:nowrap}
     $semValor = count(array_filter($linR, fn($r) => $r['pago_em'] === '' && ($r['valor_fin'] === '' || $r['valor_tec'] === '')));
     $Rr = fn(float $v) => 'R$ ' . brl(number_format($v, 2, '.', ''));
     $linkMes = '?p=rec_comissao&amp;mes=' . h($mesR);
+    $modR = rec_por_modelo($linR);
 ?>
   <div class="topo"><div><h1>Comissão do recolhimento</h1><p class="small">Só o admin. Confira cada O.S lançada pelo financeiro, ajuste o valor linha por linha, marque ✔ e registre o mês em que pagou. Paga uma vez só.</p></div>
     <form method="get" class="in"><input type="hidden" name="p" value="rec_comissao"><select name="mes" aria-label="Mês do fechamento" data-auto><?php foreach ($mesesR as $om): ?><option value="<?= h($om) ?>" <?= $om === $mesR ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select><noscript><button>Ver</button></noscript></form></div>
@@ -1412,6 +1437,7 @@ td.dlt{font-weight:800;white-space:nowrap}
     <div class="kpi"><span>Conferidas</span><b class="ok"><?= $confR ?> de <?= count($linR) ?></b><small>marcadas com ✔</small></div>
     <div class="kpi"><span>Falta pagar</span><b class="q"><?= $Rr($faltaR) ?></b><small><?= $semValor ? "$semValor O.S ainda sem valor" : 'sem mês de pagamento' ?></small></div>
   </div>
+  <?php if ($modR): ?><div class="card"><h2>Modelos recolhidos em <?= h(mes_nome($mesR)) ?></h2><div class="row"><?php foreach ($modR as $mn => $mq): ?><span class="pill mu"><?= h($mn) ?>: <?= (int)$mq ?></span><?php endforeach ?></div></div><?php endif ?>
   <?php if ($pesR): ?><div class="rec-pes"><?php foreach ($pesR as $pp): ?>
     <div class="card"><b><?= h($pp['nome']) ?></b><span class="papel"><?= h($pp['papel']) ?></span><span class="tot"><?= $Rr($pp['valor']) ?></span>
       <span class="small"><?= $pp['os'] ?> O.S · <?= $pp['eq'] ?> equipamentos<?= $pp['falta'] > 0 && $pp['falta'] < $pp['valor'] ? ' · falta pagar ' . $Rr($pp['falta']) : ($pp['falta'] <= 0 && $pp['valor'] > 0 ? ' · pago' : '') ?></span></div>
@@ -1419,12 +1445,12 @@ td.dlt{font-weight:800;white-space:nowrap}
   <form method="post" action="<?= $linkMes ?>" class="card"><?= csrf_campo() ?><input type="hidden" name="mes" value="<?= h($mesR) ?>">
     <h2>Conferência linha por linha</h2>
     <div class="tw"><table class="rec">
-      <thead><tr><th>✔</th><th>Cliente</th><th>Contrato</th><th>Equip.</th><th>Fechou</th><th>Func.</th><th>Financeiro</th><th>R$ financeiro</th><th>Técnico</th><th>R$ técnico</th><th>Pago em</th></tr></thead>
+      <thead><tr><th>✔</th><th>Cliente</th><th>Equipamentos (modelo)</th><th>Fechou</th><th>Func.</th><th>Quem lançou</th><th>R$ quem lançou</th><th>Técnico</th><th>R$ técnico</th><th>Pago em</th></tr></thead>
       <?php foreach ($linR as $r): $i = (int)$r['id']; $dis = $r['pago_em'] !== '' ? 'disabled' : '';
           [$sf, $st] = rec_sugestao($r, $regraR); ?>
       <tr><td class="ck"><?php if (!$dis): ?><input type="hidden" name="c[<?= $i ?>][ok]" value="0"><?php endif ?><input type="checkbox" name="c[<?= $i ?>][ok]" value="1" <?= $r['conferido'] ? 'checked' : '' ?> <?= $dis ?> aria-label="Conferido <?= h($r['cliente']) ?>"></td>
-        <td><b><?= h($r['cliente']) ?></b><?php if ($r['os'] !== ''): ?><br><span class="small">O.S <?= h($r['os']) ?></span><?php endif ?></td>
-        <td class="n"><?= h($r['contrato']) ?></td><td class="n"><?= (int)$r['qtd'] ?></td><td class="n"><?= h(rec_dt($r['fechamento'])) ?></td>
+        <td><b><?= h($r['cliente']) ?></b><br><span class="small">contrato <?= h($r['contrato']) ?><?= $r['os'] !== '' ? ' · O.S ' . h($r['os']) : '' ?></span></td>
+        <td><?php foreach (rec_equipamentos($r) as $e): ?><?= h($e['modelo'] ?: 'sem modelo') ?><br><?php endforeach ?><span class="small"><?= (int)$r['qtd'] ?> equip.</span></td><td class="n"><?= h(rec_dt($r['fechamento'])) ?></td>
         <td><?= $r['funcionando'] === 'SIM' ? '<span class="pill ok">Sim</span>' : '<span class="pill er">Não</span>' ?></td>
         <td class="small"><?= h($r['lancado_nome']) ?></td>
         <td><input class="val" name="c[<?= $i ?>][vf]" value="<?= h(brl($r['valor_fin'])) ?>" placeholder="<?= h(brl($sf)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor do financeiro"></td>
@@ -1432,7 +1458,7 @@ td.dlt{font-weight:800;white-space:nowrap}
         <td><input class="val" name="c[<?= $i ?>][vt]" value="<?= h(brl($r['valor_tec'])) ?>" placeholder="<?= h(brl($st)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor do técnico"></td>
         <td><?= $r['pago_em'] !== '' ? '<span class="tp pago">' . h(mes_nome($r['pago_em'])) . '</span>' : '<span class="small">—</span>' ?></td></tr>
       <?php endforeach ?>
-      <?php if (!$linR): ?><tr><td colspan="11" class="small">Nenhuma O.S fechada em <?= h(mes_nome($mesR)) ?>.</td></tr><?php endif ?>
+      <?php if (!$linR): ?><tr><td colspan="10" class="small">Nenhuma O.S fechada em <?= h(mes_nome($mesR)) ?>.</td></tr><?php endif ?>
     </table></div>
     <div class="row" style="margin-top:10px;justify-content:space-between">
       <button name="acao" value="rec_com_salvar">Salvar valores e conferência</button>

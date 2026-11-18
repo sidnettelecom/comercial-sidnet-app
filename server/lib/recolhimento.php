@@ -49,6 +49,60 @@ function rec_tabela(): void
     );
     INSERT OR IGNORE INTO rec_regra (id) VALUES (1);
     SQL);
+    $cols = array_column(db()->query('PRAGMA table_info(recolhimentos)')->fetchAll(), 'name');
+    // modelo de cada equipamento, na mesma ordem dos MACs (um por linha)
+    if (!in_array('modelos', $cols, true)) db()->exec("ALTER TABLE recolhimentos ADD COLUMN modelos TEXT NOT NULL DEFAULT ''");
+}
+
+/** Equipamentos da O.S: [['mac' => ..., 'modelo' => ...], ...] */
+function rec_equipamentos(array $r): array
+{
+    $macs = $r['macs'] === '' ? [] : explode("\n", (string)$r['macs']);
+    $mods = explode("\n", (string)($r['modelos'] ?? ''));
+    $out = [];
+    foreach ($macs as $i => $m) $out[] = ['mac' => $m, 'modelo' => $mods[$i] ?? ''];
+    return $out;
+}
+
+/** Linhas de equipamento do formulário (r[eq][n][mac|modelo]) -> [[mac, modelo], ...] sem linhas vazias e sem MAC repetido */
+function rec_eq_form(array $in): array
+{
+    $out = [];
+    $vistos = [];
+    $linhas = (array)($in['eq'] ?? []);
+    if (!$linhas && isset($in['macs'])) foreach (rec_macs((string)$in['macs']) as $m) $linhas[] = ['mac' => $m, 'modelo' => ''];
+    foreach ($linhas as $l) {
+        $mac = rec_macs((string)($l['mac'] ?? ''))[0] ?? '';
+        $mod = up(preg_replace('/\s+/', ' ', trim(str_replace("\n", ' ', (string)($l['modelo'] ?? '')))) ?? '');
+        if ($mac === '' && $mod === '') continue;
+        if ($mac !== '' && isset($vistos[$mac])) continue;
+        $vistos[$mac] = 1;
+        $out[] = [$mac, mb_substr($mod, 0, 60)];
+    }
+    return $out;
+}
+
+/** Modelos já usados (para sugerir no campo). */
+function rec_modelos_usados(): array
+{
+    $m = [];
+    foreach (db()->query("SELECT modelos FROM recolhimentos WHERE modelos <> '' ORDER BY id DESC LIMIT 500")->fetchAll(PDO::FETCH_COLUMN) as $s) {
+        foreach (explode("\n", $s) as $x) if ($x !== '') $m[$x] = 1;
+    }
+    ksort($m);
+    return array_keys($m);
+}
+
+/** Quantos equipamentos de cada modelo nas O.S: ['ZTE F670L' => 3, ...] (mais recolhidos primeiro) */
+function rec_por_modelo(array $linhas): array
+{
+    $c = [];
+    foreach ($linhas as $r) foreach (rec_equipamentos($r) as $e) {
+        $k = $e['modelo'] !== '' ? $e['modelo'] : 'SEM MODELO';
+        $c[$k] = ($c[$k] ?? 0) + 1;
+    }
+    arsort($c);
+    return $c;
 }
 
 /** "CCB1822D48C7 / A8:29:48:A0:DB:D3" -> ['CCB1822D48C7', 'A82948A0DBD3'] (sem repetir) */
@@ -97,12 +151,14 @@ function rec_sugestao(array $r, array $regra): array
 /** Lê e confere o formulário de uma O.S. Lança RuntimeException com o motivo se faltar algo. */
 function rec_validar(array $in): array
 {
-    $macs = rec_macs((string)($in['macs'] ?? ''));
+    $eqs = rec_eq_form($in);
+    $macs = array_column($eqs, 0);
     $d = [
         'cliente' => up(preg_replace('/\s+/', ' ', trim((string)($in['cliente'] ?? ''))) ?? ''),
         'contrato' => so_digitos((string)($in['contrato'] ?? '')),
         'os' => so_digitos((string)($in['os'] ?? '')),
         'macs' => implode("\n", $macs),
+        'modelos' => implode("\n", array_column($eqs, 1)),
         'qtd' => count($macs),
         'abertura' => rec_data((string)($in['abertura'] ?? '')),
         'fechamento' => rec_data((string)($in['fechamento'] ?? '')),
@@ -113,6 +169,8 @@ function rec_validar(array $in): array
     if ($d['cliente'] === '') throw new RuntimeException('Preencha o nome do cliente.');
     if ($d['contrato'] === '') throw new RuntimeException('Preencha o ID do contrato.');
     if (!$macs) throw new RuntimeException('Preencha o MAC de pelo menos um equipamento.');
+    if (in_array('', $macs, true)) throw new RuntimeException('Tem equipamento com modelo e sem MAC. Preencha o MAC ou apague a linha.');
+    if (in_array('', array_column($eqs, 1), true)) throw new RuntimeException('Preencha o modelo de cada equipamento.');
     if ($d['fechamento'] === '') throw new RuntimeException('Preencha a data de fechamento da O.S.');
     if ($d['abertura'] !== '' && $d['abertura'] > $d['fechamento']) throw new RuntimeException('A abertura da O.S está depois do fechamento.');
     if ($d['fechamento'] > date('Y-m-d')) throw new RuntimeException('A data de fechamento está no futuro.');
@@ -149,13 +207,13 @@ function rec_salvar(array $in, int $id, string $quem): array
     }
     if ($id) {
         // mudou o que muda o valor: volta a ser conferida
-        db()->prepare('UPDATE recolhimentos SET cliente=?, contrato=?, os=?, macs=?, qtd=?, abertura=?, fechamento=?, funcionando=?, tecnico_id=?, obs=?, alterado_por=?,
+        db()->prepare('UPDATE recolhimentos SET cliente=?, contrato=?, os=?, macs=?, modelos=?, qtd=?, abertura=?, fechamento=?, funcionando=?, tecnico_id=?, obs=?, alterado_por=?,
             conferido = CASE WHEN qtd = ? AND funcionando = ? AND tecnico_id = ? THEN conferido ELSE 0 END WHERE id=?')
-            ->execute([$d['cliente'], $d['contrato'], $d['os'], $d['macs'], $d['qtd'], $d['abertura'], $d['fechamento'], $d['funcionando'], $d['tecnico_id'], $d['obs'], $quem,
+            ->execute([$d['cliente'], $d['contrato'], $d['os'], $d['macs'], $d['modelos'], $d['qtd'], $d['abertura'], $d['fechamento'], $d['funcionando'], $d['tecnico_id'], $d['obs'], $quem,
                 $d['qtd'], $d['funcionando'], $d['tecnico_id'], $id]);
     } else {
-        db()->prepare('INSERT INTO recolhimentos (cliente, contrato, os, macs, qtd, abertura, fechamento, funcionando, tecnico_id, obs, lancado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-            ->execute([$d['cliente'], $d['contrato'], $d['os'], $d['macs'], $d['qtd'], $d['abertura'], $d['fechamento'], $d['funcionando'], $d['tecnico_id'], $d['obs'], $quem]);
+        db()->prepare('INSERT INTO recolhimentos (cliente, contrato, os, macs, modelos, qtd, abertura, fechamento, funcionando, tecnico_id, obs, lancado_por) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+            ->execute([$d['cliente'], $d['contrato'], $d['os'], $d['macs'], $d['modelos'], $d['qtd'], $d['abertura'], $d['fechamento'], $d['funcionando'], $d['tecnico_id'], $d['obs'], $quem]);
         $id = (int)db()->lastInsertId();
     }
     return [$id, $repetidos ? 'Atenção: MAC já lançado em outra O.S: ' . implode(', ', $repetidos) . '.' : ''];
@@ -187,9 +245,9 @@ function rec_do_mes(string $mes, string $busca = ''): array
     $par = [$mes];
     $b = up(trim($busca));
     if ($b !== '') {
-        $sql .= " AND (r.cliente LIKE ? OR r.contrato = ? OR r.os = ? OR r.macs LIKE ?)";
+        $sql .= " AND (r.cliente LIKE ? OR r.contrato = ? OR r.os = ? OR r.macs LIKE ? OR r.modelos LIKE ?)";
         $mac = preg_replace('/[^A-Z0-9]/', '', $b);
-        array_push($par, "%$b%", so_digitos($b) ?: '-', so_digitos($b) ?: '-', '%' . ($mac ?: '-') . '%');
+        array_push($par, "%$b%", so_digitos($b) ?: '-', so_digitos($b) ?: '-', '%' . ($mac ?: '-') . '%', "%$b%");
     }
     $q = db()->prepare($sql . ' ORDER BY r.fechamento, r.cliente, r.id');
     $q->execute($par);
@@ -278,4 +336,51 @@ function rec_nome_ixc(string $contrato): string
     if (!$ct || ($ct['id_cliente'] ?? '') === '') return '';
     $cli = ixc()->um('cliente', 'id', (string)$ct['id_cliente']);
     return up((string)($cli['razao'] ?? ''));
+}
+
+/** "2026-03-25 14:10:00" -> "2026-03-25" ('' se vazia ou zerada) */
+function rec_data_ixc(mixed $v): string
+{
+    return preg_match('/^(\d{4}-\d{2}-\d{2})/', (string)$v, $m) && $m[1] !== '0000-00-00' ? $m[1] : '';
+}
+
+/**
+ * Busca só de leitura no IXC: a O.S pelo número (su_oss_chamado) e o cliente dela.
+ * Devolve cliente, contrato, abertura, fechamento, se está finalizada e o técnico; null se não achar.
+ */
+function rec_os_ixc(string $os): ?array
+{
+    $id = so_digitos($os);
+    if ($id === '' || destino() !== 'ixc') return null;
+    require_once __DIR__ . '/ixc.php';
+    $o = ixc()->um('su_oss_chamado', 'id', $id);
+    if (!$o) return null;
+    $cli = ($o['id_cliente'] ?? '') !== '' ? ixc()->um('cliente', 'id', (string)$o['id_cliente']) : null;
+    $tec = '';
+    if ((string)($o['id_tecnico'] ?? '0') !== '' && (string)($o['id_tecnico'] ?? '0') !== '0') {
+        try { $f = ixc()->um('funcionarios', 'id', (string)$o['id_tecnico']); $tec = up((string)($f['funcionario'] ?? ($f['nome'] ?? ''))); } catch (Throwable) {}
+    }
+    $assunto = '';
+    if (($o['id_assunto'] ?? '') !== '') {
+        try { $assunto = up((string)(ixc()->um('su_oss_assunto', 'id', (string)$o['id_assunto'])['assunto'] ?? '')); } catch (Throwable) {}
+    }
+    return [
+        'cliente' => up((string)($cli['razao'] ?? '')),
+        'contrato' => so_digitos((string)($o['id_contrato_kit'] ?? ($o['id_contrato'] ?? ''))),
+        'abertura' => rec_data_ixc($o['data_abertura'] ?? ''),
+        'fechamento' => rec_data_ixc($o['data_fechamento'] ?? ''),
+        'finalizada' => ($o['status'] ?? '') === 'F',
+        'tecnico' => $tec,
+        'assunto' => $assunto,
+    ];
+}
+
+/** Id do técnico de campo com esse nome (igual, sem acento), ou 0. */
+function rec_tecnico_por_nome(string $nome): int
+{
+    if ($nome === '') return 0;
+    require_once __DIR__ . '/ixc.php';
+    $alvo = up(sem_acento($nome));
+    foreach (rec_tecnicos(true) as $t) if (up(sem_acento($t['nome'])) === $alvo) return (int)$t['id'];
+    return 0;
 }
