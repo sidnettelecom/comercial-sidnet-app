@@ -107,7 +107,7 @@ const PERM_ACOES = [
     'vend_novo' => 'vendedores', 'vend_senha' => 'vendedores', 'vend_crm' => 'vendedores', 'vend_ativo' => 'vendedores', 'crm_vendedores' => 'vendedores',
     'plano_salvar' => 'planos', 'plano_novo' => 'planos', 'plano_ativo' => 'planos', 'plano_excluir' => 'planos', 'plano_mover' => 'planos', 'planos_ixc' => 'planos',
     'comissoes_salvar' => 'comissoes', 'comissoes_ixc' => 'comissoes', 'planilha_importar' => 'comissoes', 'planilha_salvar' => 'comissoes',
-    'rec_salvar' => 'recolhimentos', 'rec_excluir' => 'recolhimentos', 'rec_buscar' => 'recolhimentos',
+    'rec_salvar' => 'recolhimentos', 'rec_excluir' => 'recolhimentos', 'rec_buscar' => 'recolhimentos', 'rec_mais' => 'recolhimentos',
 ];
 $recForm = null; // formulário de O.S de recolhimento para mostrar de novo (erro ou "Buscar nome")
 $quem = $gestor['usuario'] ?? '';
@@ -344,6 +344,10 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $n = dash_metas_copiar($mesMeta, $quem);
             if ($n) registrar($quem, 'copiou metas', mes_nome($mesMeta) . " ($n vendedores)");
             $msg = $n ? "Metas de " . mes_nome(mes_soma($mesMeta, -1)) . " copiadas para $n vendedores. Confira e salve se mudar algo." : 'Nada para copiar: o mês anterior não tem metas, ou este mês já tem meta para todos.';
+        } elseif ($a === 'rec_mais') { // + Adicionar equipamento: mostra o formulário de novo com uma linha a mais
+            $recForm = (array)($_POST['r'] ?? []);
+            $recForm['id'] = $id;
+            $recForm['linhas_eq'] = count((array)($recForm['eq'] ?? [])) + 1;
         } elseif ($a === 'rec_buscar') {
             $recForm = (array)($_POST['r'] ?? []);
             $recForm['id'] = $id;
@@ -1339,8 +1343,11 @@ td.dlt{font-weight:800;white-space:nowrap}
     }
     $abrirForm = $edit !== null || isset($_GET['novo']);
     $edit ??= ['id' => 0, 'funcionando' => 'SIM'];
-    $eqForm = array_values(array_filter((array)($edit['eq'] ?? []), fn($e) => trim((string)($e['mac'] ?? '')) !== '' || trim((string)($e['modelo'] ?? '')) !== ''));
-    $nLinhasEq = max(3, count($eqForm) + 1); // sempre uma linha vazia a mais
+    $eqForm = (array)($edit['eq'] ?? []);
+    if (empty($edit['linhas_eq'])) $eqForm = array_filter($eqForm, fn($e) => trim((string)($e['mac'] ?? '')) !== '' || trim((string)($e['modelo'] ?? '')) !== '');
+    $eqForm = array_values($eqForm);
+    // começa com 1 equipamento; "+ Adicionar equipamento" põe mais uma linha (a corrigir mostra as que já tem)
+    $nLinhasEq = max(1, count($eqForm), min(50, (int)($edit['linhas_eq'] ?? 0)));
     while (count($eqForm) < $nLinhasEq) $eqForm[] = ['mac' => '', 'modelo' => ''];
     $modelosUsados = rec_modelos_usados();
     $eqR = array_sum(array_map(fn($r) => (int)$r['qtd'], $linR));
@@ -1380,7 +1387,7 @@ td.dlt{font-weight:800;white-space:nowrap}
           <label>Modelo <?= $n + 1 ?><input name="r[eq][<?= $n ?>][modelo]" value="<?= h((string)($e['modelo'] ?? '')) ?>" list="rec-modelos" placeholder="ex.: ONU ZTE F670L" <?= $n === 0 ? 'required' : '' ?>></label>
         <?php endforeach ?></div>
         <datalist id="rec-modelos"><?php foreach ($modelosUsados as $mu): ?><option value="<?= h($mu) ?>"><?php endforeach ?></datalist>
-        <span class="small">Precisa de mais linhas? Salve e use "Corrigir": sempre aparece uma linha vazia a mais.</span></div>
+        <button id="eq-fim" name="acao" value="rec_mais" formnovalidate formaction="<?= $linkMes ?>#eq-fim">+ Adicionar equipamento</button></div>
       <label class="larga">Observação<input name="r[obs]" value="<?= $vR('obs') ?>" maxlength="300"></label>
     </div>
     <div class="row" style="margin-top:10px"><button class="pri" name="acao" value="rec_salvar"><?= $edit['id'] ? 'Salvar correção' : 'Salvar O.S' ?></button><a href="<?= $linkMes ?>">Cancelar</a>
