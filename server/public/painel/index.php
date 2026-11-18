@@ -76,10 +76,11 @@ if (isset($_GET['sair'])) {
 $gestor = $_SESSION['gestor'] ?? null;
 if ($gestor) {
     // sessão parada há muito tempo, ou gestor bloqueado/apagado depois que entrou
-    $q = db()->prepare('SELECT ativo, admin, trocar_senha FROM gestores WHERE id = ?');
+    $q = db()->prepare('SELECT ativo, admin, trocar_senha, ver_dash FROM gestores WHERE id = ?');
     $q->execute([$gestor['id']]);
-    $gq = $q->fetch() ?: ['ativo' => 0, 'admin' => 0, 'trocar_senha' => 0];
+    $gq = $q->fetch() ?: ['ativo' => 0, 'admin' => 0, 'trocar_senha' => 0, 'ver_dash' => 0];
     $gestor['admin'] = (bool)$gq['admin'];
+    $gestor['ver_dash'] = (bool)$gq['ver_dash'];
     $gestor['trocar'] = (bool)$gq['trocar_senha']; // senha provisória: só deixa trocar a senha
     if (time() - (int)($_SESSION['visto'] ?? 0) > PAINEL_INATIVO_MAX || !$gq['ativo']) {
         $_SESSION = [];
@@ -94,6 +95,7 @@ if ($gestor) {
 }
 $logado = (bool)$gestor;
 $admin = $logado && !empty($gestor['admin']); // só o admin vê e mexe nas comissões
+$verDash = $admin || ($logado && !empty($gestor['ver_dash'])); // dashboard: admin ou gestor liberado (metas: só o admin edita)
 $quem = $gestor['usuario'] ?? '';
 
 // ---- ações ----
@@ -287,6 +289,11 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             db()->prepare('UPDATE gestores SET admin = 1 - admin WHERE id = ?')->execute([$id]);
             registrar($quem, 'deu/tirou admin', '#' . $id);
             $msg = 'Permissão de admin alterada.';
+        } elseif ($a === 'gest_dash') {
+            if (!$admin) throw new RuntimeException('Só um gestor admin pode liberar a dashboard.');
+            db()->prepare('UPDATE gestores SET ver_dash = 1 - ver_dash WHERE id = ?')->execute([$id]);
+            registrar($quem, 'liberou/tirou dashboard e metas', '#' . $id);
+            $msg = 'Acesso à dashboard e metas alterado.';
         } elseif ($a === 'gest_senha' && $id !== $gestor['id']) {
             if (!$admin) throw new RuntimeException('Só um gestor admin pode trocar a senha de outro gestor.');
             $g = db()->query('SELECT nome, usuario FROM gestores WHERE id = ' . $id)->fetch();
@@ -300,7 +307,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             db()->prepare('UPDATE gestores SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
             registrar($quem, 'bloqueou/liberou gestor', '#' . $id);
             $msg = 'Acesso do gestor alterado.';
-        } elseif ($a === 'metas_salvar' && $admin) {
+        } elseif ($a === 'metas_salvar' && $admin) { // só o admin define as metas
             $mesMeta = (string)($_POST['mes'] ?? '');
             $n = dash_metas_salvar($mesMeta, (array)($_POST['meta'] ?? []), $quem);
             registrar($quem, 'salvou metas', mes_nome($mesMeta) . " ($n vendedores)");
@@ -553,7 +560,7 @@ td.dlt{font-weight:800;white-space:nowrap}
     $ultimo = db()->query("SELECT MAX(enviado_crm_em) FROM vendas")->fetchColumn(); ?>
 <aside class="lado">
   <div class="marca"><img src="/app/logo-96.png" alt="" width="48" height="48"><div><b>Comercial + SIDNET</b><span>Painel do gestor</span></div></div>
-  <nav aria-label="Seções"><?= ($admin ? $aba('dash', 'Dashboard') : '') . $aba('vendas', 'Vendas') . $aba('mes', 'Vendas do mês') . $aba('vendedores', 'Vendedores') . $aba('planos', 'Planos') . ($admin ? $aba('comissoes', 'Comissões') . $aba('planilha', 'Comissões planilha') : '') /* PLANILHA-TEMP */ . $aba('gestores', 'Gestores') ?></nav>
+  <nav aria-label="Seções"><?= ($verDash ? $aba('dash', 'Dashboard') : '') . $aba('vendas', 'Vendas') . $aba('mes', 'Vendas do mês') . $aba('vendedores', 'Vendedores') . $aba('planos', 'Planos') . ($admin ? $aba('comissoes', 'Comissões') . $aba('planilha', 'Comissões planilha') : '') /* PLANILHA-TEMP */ . $aba('gestores', 'Gestores') ?></nav>
   <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
 <?php endif ?>
@@ -699,8 +706,8 @@ td.dlt{font-weight:800;white-space:nowrap}
     <?php if ($porV): ?><div class="mes-l mes-t"><span>Total</span><span data-r="Vendas novas"><?= $totM['venda'] ?></span><span data-r="Upgrades"><?= $totM['upgrade'] ?></span><span data-r="2º ponto"><?= $totM['segundo'] ?></span><span data-r="Total"><?= $totM['n'] ?></span><span data-r="Concluídos"><?= $totM['ixc'] ?></span><span data-r="Mensalidades"><?= $R($totM['plano']) ?></span><span data-r="Instalação"><?= $R($totM['inst']) ?></span><span data-r="Roteador"><?= $R($totM['rot']) ?></span></div>
     <?php else: ?><p class="small">Nenhum cadastro em <?= h(mes_nome($mesM)) ?>.</p><?php endif ?>
   </div>
-<?php elseif ($p === 'dash' && !$admin): ?>
-  <div class="msg">Só o gestor admin vê a dashboard.</div>
+<?php elseif ($p === 'dash' && !$verDash): ?>
+  <div class="msg">A dashboard é só para o gestor admin ou para quem o admin liberar em Gestores.</div>
 
 <?php elseif ($p === 'dash'):
     // ---- dashboard comercial: ranking, mês a mês e metas ----
@@ -852,14 +859,14 @@ td.dlt{font-weight:800;white-space:nowrap}
 
   <section class="card dh-card dh-metas">
     <h2>Metas de <?= h(mes_nome($mesD)) ?>
-      <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="metas_copiar"><input type="hidden" name="mes" value="<?= h($mesD) ?>"><button>Copiar metas de <?= h(mes_nome($antD)) ?></button></form>
+      <?php if ($admin): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="metas_copiar"><input type="hidden" name="mes" value="<?= h($mesD) ?>"><button>Copiar metas de <?= h(mes_nome($antD)) ?></button></form><?php endif ?>
     </h2>
-    <p class="small" style="margin:0 0 8px">Digite a meta de cada vendedor e clique em Salvar. Campo vazio = sem meta. A barra mostra quanto já foi feito<?= $corrente ? '; o tracinho preto marca onde ele deveria estar hoje, pelo dia do mês' : '' ?>.</p>
-    <form method="post"><?= csrf_campo() ?><input type="hidden" name="acao" value="metas_salvar"><input type="hidden" name="mes" value="<?= h($mesD) ?>">
+    <p class="small" style="margin:0 0 8px"><?= $admin ? 'Digite a meta de cada vendedor e clique em Salvar. Campo vazio = sem meta.' : 'As metas são definidas pelo gestor admin.' ?> A barra mostra quanto já foi feito<?= $corrente ? '; o tracinho preto marca onde ele deveria estar hoje, pelo dia do mês' : '' ?>.</p>
+    <?php if ($admin): ?><form method="post"><?= csrf_campo() ?><input type="hidden" name="acao" value="metas_salvar"><?php endif ?><input type="hidden" name="mes" value="<?= h($mesD) ?>">
     <div class="tw"><table>
       <tr><th>Vendedor</th><th>Meta vendas</th><th>Vendas feitas</th><th>Progresso vendas</th><th>Meta upgrades</th><th>Upgrades feitos</th><th>Progresso upgrades</th><th>Situação</th></tr>
       <?php foreach ($vendD as $vid => $nome): $a = $de($num, $vid, $mesD); $mv = $metasD[$vid]['v'] ?? null; $mu = $metasD[$vid]['u'] ?? null;
-        if (!$mv && !$mu) $sit = '<span class="dh-chip q">definir meta</span>';
+        if (!$mv && !$mu) $sit = '<span class="dh-chip q">' . ($admin ? 'definir meta' : 'sem meta') . '</span>';
         else {
             $ok = (!$mv || $a['v'] >= $mv * $esperado) && (!$mu || $a['u'] >= $mu * $esperado);
             if (!$corrente) $sit = $ok ? '<span class="dh-chip ok">bateu a meta</span>' : '<span class="dh-chip er">não bateu</span>';
@@ -870,16 +877,16 @@ td.dlt{font-weight:800;white-space:nowrap}
             }
         } ?>
       <tr><td><b><?= h($nome) ?></b></td>
-        <td><input type="number" min="0" inputmode="numeric" name="meta[<?= $vid ?>][v]" value="<?= $mv ?? '' ?>" aria-label="Meta de vendas de <?= h($nome) ?>"></td>
+        <td><?php if ($admin): ?><input type="number" min="0" inputmode="numeric" name="meta[<?= $vid ?>][v]" value="<?= $mv ?? '' ?>" aria-label="Meta de vendas de <?= h($nome) ?>"><?php else: ?><b><?= $mv ?? '—' ?></b><?php endif ?></td>
         <td class="n"><b><?= $a['v'] ?></b></td><td><?= dash_barra($a['v'], $mv, $esperado) ?></td>
-        <td><input type="number" min="0" inputmode="numeric" name="meta[<?= $vid ?>][u]" value="<?= $mu ?? '' ?>" aria-label="Meta de upgrades de <?= h($nome) ?>"></td>
+        <td><?php if ($admin): ?><input type="number" min="0" inputmode="numeric" name="meta[<?= $vid ?>][u]" value="<?= $mu ?? '' ?>" aria-label="Meta de upgrades de <?= h($nome) ?>"><?php else: ?><b><?= $mu ?? '—' ?></b><?php endif ?></td>
         <td class="n"><b><?= $a['u'] ?></b></td><td><?= dash_barra($a['u'], $mu, $esperado) ?></td><td><?= $sit ?></td></tr>
       <?php endforeach ?>
       <tr class="soma"><td>EQUIPE</td><td class="n"><?= $metaTV ?: '—' ?></td><td class="n"><?= $tA['v'] ?></td><td><?= dash_barra($tA['v'], $metaTV ?: null, $esperado) ?></td>
         <td class="n"><?= $metaTU ?: '—' ?></td><td class="n"><?= $tA['u'] ?></td><td><?= dash_barra($tA['u'], $metaTU ?: null, $esperado) ?></td><td></td></tr>
     </table></div>
-    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="pri">Salvar metas</button></div>
-    </form>
+    <?php if ($admin): ?><div class="row" style="justify-content:flex-end;margin-top:10px"><button class="pri">Salvar metas</button></div>
+    </form><?php endif ?>
   </section>
 <?php elseif ($p === 'vendedores'): ?>
   <form method="post" class="card row">
@@ -1182,13 +1189,15 @@ td.dlt{font-weight:800;white-space:nowrap}
 
 <?php elseif ($p === 'gestores'): ?>
   <div class="card tw"><table>
-    <tr><th>Gestor</th><th>Usuário</th><th>Acesso</th><th>Admin (comissões)</th><th>Último acesso</th><th></th></tr>
+    <tr><th>Gestor</th><th>Usuário</th><th>Acesso</th><th>Admin (comissões)</th><th>Dashboard e metas</th><th>Último acesso</th><th></th></tr>
     <?php foreach (db()->query('SELECT * FROM gestores ORDER BY ativo DESC, nome') as $g): ?>
     <tr><td><?= h($g['nome']) ?></td><td><?= h($g['usuario']) ?></td>
       <td><?= $g['ativo'] ? '<span class="pill ok">Ativo</span>' : '<span class="pill er">Bloqueado</span>' ?></td>
       <td><?= $g['admin'] ? '<span class="pill ok">Admin</span>' : '<span class="small">não</span>' ?>
         <?php if ($admin && (int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_senha"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button>Gerar senha nova</button></form>
         <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_admin"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button><?= $g['admin'] ? 'Tirar admin' : 'Tornar admin' ?></button></form><?php endif ?></td>
+      <td><?php if ($g['admin']): ?><span class="pill ok">Sim</span> <span class="small">(admin)</span><?php else: ?><?= $g['ver_dash'] ? '<span class="pill ok">Sim</span>' : '<span class="small">não</span>' ?>
+        <?php if ($admin): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_dash"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button><?= $g['ver_dash'] ? 'Tirar' : 'Liberar' ?></button></form><?php endif ?><?php endif ?></td>
       <td class="n"><?= h($g['ultimo_acesso'] ?? '—') ?></td>
       <td><?php if ($admin && (int)$g['id'] !== $gestor['id']): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="gest_ativo"><input type="hidden" name="id" value="<?= (int)$g['id'] ?>"><button class="<?= $g['ativo'] ? 'del' : '' ?>"><?= $g['ativo'] ? 'Bloquear' : 'Liberar' ?></button></form><?php elseif ((int)$g['id'] === $gestor['id']): ?><span class="small">você</span><?php endif ?></td></tr>
     <?php endforeach ?>

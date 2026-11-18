@@ -47,9 +47,9 @@ Upgrade no IXC (desligado até o ALEX liberar): no `config.php`, `'enviar_upgrad
 (ALTERAÇÃO DE PLANO DE VENDA) e `'setor_id'` do Comercial. O usuário do app no IXC precisa poder **alterar cliente** e incluir atendimento.
 Para abrir só o atendimento, sem mexer no cadastro: `'atualizar_contato' => false`.
 
-## Dashboard comercial (painel, só admin)
+## Dashboard comercial (painel)
 
-Aba **Dashboard** do painel, visível só para o gestor admin:
+Aba **Dashboard** do painel, para o gestor admin e para os gestores que o admin liberar em **Gestores → Dashboard e metas** (eles veem a dashboard e as metas, mas não editam metas nem veem as comissões; só o admin define as metas):
 
 - Resumo do mês: vendas (venda nova + 2º ponto), upgrades, mensalidades novas, % da meta da equipe e projeção do mês.
 - **Quem mais vendeu** e **quem mais fez upgrade**, com a variação contra o mês anterior.
