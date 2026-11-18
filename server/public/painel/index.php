@@ -9,6 +9,8 @@ require_once __DIR__ . '/../../lib/repasse.php';
 require_once __DIR__ . '/../../lib/vendedores.php';
 require_once __DIR__ . '/../../lib/comissoes.php';
 require_once __DIR__ . '/../../lib/comissoes_planilha.php'; // PLANILHA-TEMP
+require_once __DIR__ . '/../../lib/dashboard.php';
+dash_tabela();
 
 const PAINEL_INATIVO_MAX = 8 * 3600; // sai sozinho depois de 8 horas sem uso
 
@@ -298,6 +300,16 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             db()->prepare('UPDATE gestores SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
             registrar($quem, 'bloqueou/liberou gestor', '#' . $id);
             $msg = 'Acesso do gestor alterado.';
+        } elseif ($a === 'metas_salvar' && $admin) {
+            $mesMeta = (string)($_POST['mes'] ?? '');
+            $n = dash_metas_salvar($mesMeta, (array)($_POST['meta'] ?? []), $quem);
+            registrar($quem, 'salvou metas', mes_nome($mesMeta) . " ($n vendedores)");
+            $msg = 'Metas de ' . mes_nome($mesMeta) . ' salvas.';
+        } elseif ($a === 'metas_copiar' && $admin) {
+            $mesMeta = (string)($_POST['mes'] ?? '');
+            $n = dash_metas_copiar($mesMeta, $quem);
+            if ($n) registrar($quem, 'copiou metas', mes_nome($mesMeta) . " ($n vendedores)");
+            $msg = $n ? "Metas de " . mes_nome(mes_soma($mesMeta, -1)) . " copiadas para $n vendedores. Confira e salve se mudar algo." : 'Nada para copiar: o mês anterior não tem metas, ou este mês já tem meta para todos.';
         } elseif ($a === 'minha_senha') {
             $q = db()->prepare('SELECT senha_hash FROM gestores WHERE id = ?');
             $q->execute([$gestor['id']]);
@@ -347,6 +359,7 @@ $ICONES = [
     'planilha' => '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16M10 3v18"/>', // PLANILHA-TEMP
     'comissoes' => '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.8 0-3 .9-3 2.1 0 2.9 6 1.6 6 4.6 0 1.3-1.3 2.3-3 2.3-1.5 0-2.7-.6-3.2-1.7M12 6.5V8m0 9v1.5"/>',
     'mes' => '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2.5v3M16 2.5v3M7.5 13.5h3M7.5 17h6"/>',
+    'dash' => '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     'gestores' => '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
 ];
 $aba = fn(string $k, string $t) => '<a href="?p=' . $k . '"' . (($p === $k || ($k === 'vendas' && $p === 'excluir')) ? ' aria-current="page"' : '') . '><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $ICONES[$k] . '</svg>' . $t . '</a>';
@@ -505,6 +518,32 @@ body.fora main{max-width:none;margin:0;padding:0;min-height:100vh;display:grid;g
 
 
 td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2px 0 2px 4px;vertical-align:middle}
+/* dashboard comercial (só admin) */
+main>*{min-width:0}
+.dh-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.dh-kpis .kpi b.dh-r{font-size:24px}.dh-kpis .kpi small{font-weight:700}
+.dh-up{color:var(--ok)}.dh-dn{color:var(--er)}.dh-eq{color:var(--muted)}
+.kpi.forte .dh-up,.kpi.forte .dh-dn,.kpi.forte .dh-eq{color:#fff}
+.dh-2{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(380px,100%),1fr));gap:14px}
+.dh-card h2{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}.dh-card h2 small{font-weight:600;color:var(--muted);font-size:12.5px}
+.dh-rank{display:grid;gap:10px;margin-top:6px}
+.dh-rk{display:grid;grid-template-columns:34px 1fr auto;gap:10px;align-items:center}
+.dh-rk .pos{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:var(--bg);color:var(--muted)}
+.dh-rk:nth-child(1) .pos{background:#fde68a;color:#78350f}.dh-rk:nth-child(2) .pos{background:#e2e8f0;color:#334155}.dh-rk:nth-child(3) .pos{background:#fed7aa;color:#7c2d12}
+.dh-rk .nm{font-weight:700;display:flex;gap:6px;align-items:baseline;flex-wrap:wrap}.dh-rk .nm small{color:var(--muted);font-weight:600}
+.dh-bar{height:10px;border-radius:6px;background:var(--bg);overflow:hidden;margin-top:5px;position:relative}.dh-bar i{display:block;height:100%;border-radius:6px}
+.dh-bar.v i{background:linear-gradient(90deg,#1d4ed8,#0891b2)}.dh-bar.u i{background:linear-gradient(90deg,#7c3aed,#c026d3)}
+.dh-bar.ok i{background:linear-gradient(90deg,#059669,#10b981)}.dh-bar.mid i{background:linear-gradient(90deg,#f59e0b,#f97316)}.dh-bar.low i{background:linear-gradient(90deg,#e11d48,#f43f5e)}
+.dh-bar .ritmo{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ink);opacity:.55}
+.dh-rk .num{text-align:right;font-variant-numeric:tabular-nums}.dh-rk .num b{font-size:20px;display:block;line-height:1.1}.dh-rk .num span{font-size:12px;font-weight:800}
+.dh-seg{display:inline-flex;background:var(--bg);border-radius:12px;padding:3px;gap:2px}
+.dh-seg a{padding:5px 12px;border-radius:9px;font-size:13px;font-weight:600;text-decoration:none;color:inherit}.dh-seg a[aria-current]{background:var(--surface);box-shadow:0 1px 4px rgba(15,27,61,.12);color:var(--brand)}
+.dh-chart{width:100%;height:auto;display:block}.dh-chart text{font:12px var(--f);fill:var(--muted)}.dh-chart text.on{font-weight:800;fill:var(--ink)}
+.dh-leg{display:flex;flex-wrap:wrap;gap:12px;font-size:12.5px;font-weight:700;margin-top:6px}.dh-leg span{display:flex;align-items:center;gap:6px}.dh-leg i{width:12px;height:12px;border-radius:4px;display:inline-block}
+.dh-prog{display:flex;align-items:center;gap:8px;min-width:170px}.dh-prog .dh-bar{flex:1;margin:0;height:12px}.dh-prog b{font-size:12.5px;min-width:42px;text-align:right}
+.dh-metas table{min-width:860px}.dh-metas td{vertical-align:middle}.dh-metas input{width:76px;text-align:center;font-weight:700}
+.dh-chip{display:inline-block;white-space:nowrap;font-size:11.5px;font-weight:800;padding:3px 8px;border-radius:8px}.dh-chip.ok{background:var(--ok-bg);color:var(--ok)}.dh-chip.q{background:#fef3c7;color:#92400e}.dh-chip.er{background:var(--er-bg);color:var(--er)}
+td.dlt{font-weight:800;white-space:nowrap}
 </style>
 <style>.senha-box{position:relative;display:block}.senha-box input{width:100%;box-sizing:border-box;padding-right:48px}.olho{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:40px;height:40px;border:0!important;background:transparent!important;box-shadow:none!important;color:#475569;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;padding:0}.olho:hover{background:#eef2ff}.olho .risco{display:none}.olho[aria-pressed="true"] .risco{display:inline}</style>
 <script src="/painel/olho.js?v=2" defer></script>
@@ -514,7 +553,7 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     $ultimo = db()->query("SELECT MAX(enviado_crm_em) FROM vendas")->fetchColumn(); ?>
 <aside class="lado">
   <div class="marca"><img src="/app/logo-96.png" alt="" width="48" height="48"><div><b>Comercial + SIDNET</b><span>Painel do gestor</span></div></div>
-  <nav aria-label="Seções"><?= $aba('vendas', 'Vendas') . $aba('mes', 'Vendas do mês') . $aba('vendedores', 'Vendedores') . $aba('planos', 'Planos') . ($admin ? $aba('comissoes', 'Comissões') . $aba('planilha', 'Comissões planilha') : '') /* PLANILHA-TEMP */ . $aba('gestores', 'Gestores') ?></nav>
+  <nav aria-label="Seções"><?= ($admin ? $aba('dash', 'Dashboard') : '') . $aba('vendas', 'Vendas') . $aba('mes', 'Vendas do mês') . $aba('vendedores', 'Vendedores') . $aba('planos', 'Planos') . ($admin ? $aba('comissoes', 'Comissões') . $aba('planilha', 'Comissões planilha') : '') /* PLANILHA-TEMP */ . $aba('gestores', 'Gestores') ?></nav>
   <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
 <?php endif ?>
@@ -660,6 +699,188 @@ td.row{display:table-cell;white-space:nowrap;text-align:right}td.row>*{margin:2p
     <?php if ($porV): ?><div class="mes-l mes-t"><span>Total</span><span data-r="Vendas novas"><?= $totM['venda'] ?></span><span data-r="Upgrades"><?= $totM['upgrade'] ?></span><span data-r="2º ponto"><?= $totM['segundo'] ?></span><span data-r="Total"><?= $totM['n'] ?></span><span data-r="Concluídos"><?= $totM['ixc'] ?></span><span data-r="Mensalidades"><?= $R($totM['plano']) ?></span><span data-r="Instalação"><?= $R($totM['inst']) ?></span><span data-r="Roteador"><?= $R($totM['rot']) ?></span></div>
     <?php else: ?><p class="small">Nenhum cadastro em <?= h(mes_nome($mesM)) ?>.</p><?php endif ?>
   </div>
+<?php elseif ($p === 'dash' && !$admin): ?>
+  <div class="msg">Só o gestor admin vê a dashboard.</div>
+
+<?php elseif ($p === 'dash'):
+    // ---- dashboard comercial: ranking, mês a mês e metas ----
+    $mesHoje = date('Y-m');
+    $mesD = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) && (string)$_GET['mes'] <= $mesHoje ? (string)$_GET['mes'] : $mesHoje;
+    $antD = mes_soma($mesD, -1);
+    $corrente = $mesD === $mesHoje;
+    $diasMes = (int)date('t', strtotime($mesD . '-01'));
+    $diaHoje = (int)date('j');
+    $esperado = $corrente ? $diaHoje / $diasMes : 1.0;         // quanto do mês já passou
+    $mesesG = array_map(fn($i) => mes_soma($mesD, $i), range(-5, 0)); // 6 meses do gráfico
+    $num = dash_numeros($mesesG[0], $mesD);
+    // mês corrente: compara com o mesmo período do mês anterior (dia 1 até hoje)
+    $numAnt = $corrente ? dash_numeros($antD, $antD, $diaHoje) : $num;
+    $metasD = dash_metas($mesD);
+    $metasG = dash_metas_periodo($mesesG[0], $mesD);
+    $vz = ['nova' => 0, 'seg' => 0, 'v' => 0, 'u' => 0, 'r' => 0.0];
+    $de = fn(array $n, int $vid, string $m) => $n[$vid][$m] ?? $vz;
+    // vendedores: ativos, mais quem teve movimento no período ou tem meta no mês
+    $vendD = [];
+    foreach (db()->query('SELECT id, nome, ativo FROM vendedores ORDER BY nome') as $vd) {
+        $vid = (int)$vd['id'];
+        if ($vd['ativo'] || isset($num[$vid]) || isset($metasD[$vid])) $vendD[$vid] = $vd['nome'];
+    }
+    $CORES = ['#2563eb', '#db2777', '#059669', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#65a30d', '#c026d3', '#475569'];
+    $corV = [];
+    $iC = 0;
+    foreach ($vendD as $vid => $_) $corV[$vid] = $CORES[$iC++ % count($CORES)];
+    $tot = function (array $n, string $m) use ($vendD, $de, $vz) {
+        $t = $vz;
+        foreach ($vendD as $vid => $_) foreach ($de($n, $vid, $m) as $k => $x) $t[$k] += $x;
+        return $t;
+    };
+    $tA = $tot($num, $mesD);
+    $tB = $tot($numAnt, $antD);
+    $metaTV = array_sum(array_map(fn($m) => (int)$m['v'], $metasD));
+    $metaTU = array_sum(array_map(fn($m) => (int)$m['u'], $metasD));
+    $proj = $corrente ? (int)round($tA['v'] / max(1, $diaHoje) * $diasMes) : $tA['v'];
+    $cmpTxt = $corrente ? "vs. dia 1 a $diaHoje de " . mes_nome($antD) : 'vs. ' . mes_nome($antD);
+    $R = fn(float $v) => 'R$ ' . brl(number_format($v, 2, '.', ''));
+    $g = in_array($_GET['g'] ?? '', ['v', 'u', 't'], true) ? (string)$_GET['g'] : 'v';
+    $gv = isset($vendD[(int)($_GET['gv'] ?? 0)]) ? (int)$_GET['gv'] : 0;
+    $lnkD = fn(array $mais) => '?' . h(http_build_query(array_merge(['p' => 'dash', 'mes' => $mesD, 'g' => $g, 'gv' => $gv ?: null], $mais)));
+    $ranking = function (string $campo) use ($vendD, $num, $numAnt, $de, $mesD, $antD, $metasD) {
+        $l = [];
+        foreach ($vendD as $vid => $nome) {
+            $a = $de($num, $vid, $mesD);
+            $b = $de($numAnt, $vid, $antD);
+            if ($a[$campo] || $b[$campo]) $l[] = ['id' => $vid, 'nome' => $nome, 'a' => $a, 'b' => $b[$campo], 'meta' => $metasD[$vid][$campo] ?? null];
+        }
+        usort($l, fn($x, $y) => [$y['a'][$campo], $x['nome']] <=> [$x['a'][$campo], $y['nome']]);
+        return $l;
+    };
+?>
+  <div class="topo">
+    <div><h1>Dashboard comercial</h1><p class="small"><?= h(mes_nome($mesD)) ?><?= $corrente ? ", dia $diaHoje de $diasMes" : ', mês fechado' ?>. Vendas = venda nova + 2º ponto; upgrades contam à parte.</p></div>
+    <form method="get" class="row"><input type="hidden" name="p" value="dash"><input type="hidden" name="g" value="<?= h($g) ?>"><?php if ($gv): ?><input type="hidden" name="gv" value="<?= $gv ?>"><?php endif ?>
+      <select name="mes" aria-label="Mês" data-auto><?php for ($i = 0; $i <= 12; $i++): $om = mes_soma($mesHoje, -$i); ?><option value="<?= $om ?>" <?= $om === $mesD ? 'selected' : '' ?>><?= h(mes_nome($om)) ?><?= $i === 0 ? ' (até hoje)' : '' ?></option><?php endfor ?></select>
+      <noscript><button>Ver</button></noscript></form>
+  </div>
+
+  <section class="dh-kpis" aria-label="Resumo do mês">
+    <div class="kpi forte"><span>Vendas no mês</span><b><?= $tA['v'] ?></b><small><?= dash_delta($tA['v'], $tB['v']) ?> <?= h($cmpTxt) ?></small></div>
+    <div class="kpi"><span>Upgrades no mês</span><b style="color:#6d28d9"><?= $tA['u'] ?></b><small><?= dash_delta($tA['u'], $tB['u']) ?> <span class="small"><?= h($cmpTxt) ?></span></small></div>
+    <div class="kpi"><span>Mensalidades novas</span><b class="dh-r"><?= $R($tA['r']) ?></b><small><?= dash_delta($tA['r'], $tB['r']) ?> <span class="small"><?= h($cmpTxt) ?></span></small></div>
+    <div class="kpi"><span>Meta da equipe (vendas)</span><b class="<?= $metaTV && $tA['v'] >= $metaTV * $esperado ? 'ok' : 'q' ?>"><?= $metaTV ? round($tA['v'] / $metaTV * 100) . '%' : '—' ?></b><small class="small"><?= $metaTV ? $tA['v'] . ' de ' . $metaTV : 'sem meta' ?> · upgrades <?= $metaTU ? $tA['u'] . ' de ' . $metaTU : 'sem meta' ?></small></div>
+    <?php if ($corrente): ?><div class="kpi"><span>Projeção do mês</span><b><?= $proj ?></b><small class="small">vendas no ritmo atual<?= $metaTV ? ($proj >= $metaTV ? ', bate a meta de ' : ', abaixo da meta de ') . $metaTV : '' ?></small></div><?php endif ?>
+  </section>
+
+  <div class="dh-2">
+  <?php foreach (['v' => ['Quem mais vendeu', 'vendas novas + 2º ponto'], 'u' => ['Quem mais fez upgrade', 'upgrades cadastrados no app']] as $campo => [$tit, $sub]): $lista = $ranking($campo); $mx = max([1, ...array_map(fn($x) => $x['a'][$campo], $lista)]); ?>
+    <section class="card dh-card"><h2><?= $tit ?> <small><?= $sub ?></small></h2>
+      <div class="dh-rank">
+      <?php foreach ($lista as $i => $x): $det = $campo === 'v' ? $x['a']['nova'] . ' novas · ' . $x['a']['seg'] . ' 2º ponto' : ''; ?>
+        <div class="dh-rk"><div class="pos"><?= $i + 1 ?>º</div>
+          <div><div class="nm"><?= h($x['nome']) ?> <small><?= h(implode(' · ', array_filter([$det, $x['meta'] ? 'meta ' . $x['meta'] : '']))) ?></small></div>
+            <div class="dh-bar <?= $campo ?>"><i style="width:<?= round($x['a'][$campo] / $mx * 100) ?>%"></i></div></div>
+          <div class="num"><b><?= $x['a'][$campo] ?></b><?= dash_delta($x['a'][$campo], $x['b']) ?></div></div>
+      <?php endforeach ?>
+      <?php if (!$lista): ?><p class="small">Nada em <?= h(mes_nome($mesD)) ?>.</p><?php endif ?>
+      </div></section>
+  <?php endforeach ?>
+  </div>
+
+  <?php // ---- gráfico mês a mês (SVG feito aqui, o painel não roda script dentro da página) ----
+    $val = fn(array $o) => $g === 't' ? $o['v'] + $o['u'] : $o[$g];
+    $metaDe = function (int $vid, string $m) use ($metasG, $g) {
+        $mt = $metasG[$m][$vid] ?? null;
+        if (!$mt) return 0;
+        return $g === 't' ? (int)$mt['v'] + (int)$mt['u'] : (int)$mt[$g];
+    };
+    $series = $gv ? [$gv => $vendD[$gv]] : array_filter($vendD, fn($vid) => array_sum(array_map(fn($m) => $val($de($num, $vid, $m)), $mesesG)) > 0, ARRAY_FILTER_USE_KEY);
+    $mx = 0;
+    foreach ($series as $vid => $_) foreach ($mesesG as $m) $mx = max($mx, $val($de($num, $vid, $m)), $gv ? $metaDe($vid, $m) : 0);
+    $mx = (int)ceil($mx * 1.08);
+    $mx = $mx > 20 ? (int)ceil($mx / 20) * 20 : max(4, (int)ceil($mx / 4) * 4);
+    [$W, $H, $L, $Rm, $T, $B] = [900, 300, 44, 16, 16, 34];
+    $x = fn(int $i) => $L + ($W - $L - $Rm) * ($i + .5) / count($mesesG);
+    $y = fn(float $v) => $T + ($H - $T - $B) * (1 - $v / $mx);
+    $svg = '';
+    for ($k = 0; $k <= 4; $k++) { $yy = round($y($mx * $k / 4), 1); $svg .= "<line x1=\"$L\" x2=\"" . ($W - $Rm) . "\" y1=\"$yy\" y2=\"$yy\" stroke=\"var(--line)\"/><text x=\"" . ($L - 8) . '" y="' . ($yy + 4) . '" text-anchor="end">' . round($mx * $k / 4) . '</text>'; }
+    foreach ($mesesG as $i => $m) $svg .= '<text x="' . round($x($i), 1) . '" y="' . ($H - 10) . '" text-anchor="middle"' . ($m === $mesD ? ' class="on"' : '') . '>' . h(substr(MESES_PT[(int)substr($m, 5)], 0, 3) . '/' . substr($m, 2, 2)) . ($m === $mesHoje ? '*' : '') . '</text>';
+    if ($gv) {
+        foreach ($mesesG as $i => $m) {
+            $v = $val($de($num, $gv, $m)); $xx = round($x($i), 1); $yv = round($y($v), 1); $mv = $metaDe($gv, $m);
+            $svg .= '<rect x="' . ($xx - 22) . "\" y=\"$yv\" width=\"44\" height=\"" . round($y(0) - $y($v), 1) . '" rx="6" fill="' . $corV[$gv] . '"' . ($m === $mesD ? '' : ' opacity=".7"') . '><title>' . h(mes_nome($m)) . ": $v</title></rect>";
+            $svg .= "<text x=\"$xx\" y=\"" . ($yv - 6) . "\" text-anchor=\"middle\" class=\"on\">$v</text>";
+            if ($mv) { $ym = round($y($mv), 1); $svg .= '<line x1="' . ($xx - 32) . "\" x2=\"" . ($xx + 32) . "\" y1=\"$ym\" y2=\"$ym\" stroke=\"var(--ink)\" stroke-width=\"2.5\" stroke-dasharray=\"5 4\"><title>meta $mv</title></line>"; }
+        }
+    } else {
+        $nS = max(1, count($series));
+        $bw = min(26, ($W - $L - $Rm) / count($mesesG) / ($nS + 1));
+        foreach ($mesesG as $i => $m) { $j = 0; foreach ($series as $vid => $nome) {
+            $v = $val($de($num, $vid, $m)); $xx = round($x($i) - $bw * $nS / 2 + $j++ * $bw, 1);
+            $svg .= '<rect x="' . ($xx + 1) . '" y="' . round($y($v), 1) . '" width="' . round($bw - 2, 1) . '" height="' . round($y(0) - $y($v), 1) . '" rx="3" fill="' . $corV[$vid] . '"' . ($m === $mesD ? '' : ' opacity=".75"') . '><title>' . h($nome . ' · ' . mes_nome($m) . ": $v") . '</title></rect>';
+        } }
+    }
+  ?>
+  <section class="card dh-card">
+    <h2>Mês a mês
+      <span class="row">
+        <span class="dh-seg"><?php foreach (['v' => 'Vendas', 'u' => 'Upgrades', 't' => 'Total'] as $k => $tx): ?><a href="<?= $lnkD(['g' => $k]) ?>"<?= $g === $k ? ' aria-current="true"' : '' ?>><?= $tx ?></a><?php endforeach ?></span>
+        <form method="get" class="in"><input type="hidden" name="p" value="dash"><input type="hidden" name="mes" value="<?= h($mesD) ?>"><input type="hidden" name="g" value="<?= h($g) ?>">
+          <select name="gv" aria-label="Vendedor" data-auto><option value="">Equipe toda (por vendedor)</option><?php foreach ($vendD as $vid => $nome): ?><option value="<?= $vid ?>" <?= $gv === $vid ? 'selected' : '' ?>><?= h($nome) ?></option><?php endforeach ?></select>
+          <noscript><button>Ver</button></noscript></form>
+      </span>
+    </h2>
+    <?php if ($series): ?>
+    <svg class="dh-chart" viewBox="0 0 <?= $W ?> <?= $H ?>" role="img" aria-label="Gráfico mês a mês"><?= $svg ?></svg>
+    <div class="dh-leg"><?php foreach ($series as $vid => $nome): ?><span><i style="background:<?= $corV[$vid] ?>"></i><?= h($nome) ?></span><?php endforeach ?>
+      <?php if ($gv): ?><span><i style="background:none;border-top:2.5px dashed var(--ink);height:0;border-radius:0"></i>meta</span><?php endif ?>
+      <span class="small"><?= in_array($mesHoje, $mesesG, true) ? '* mês em andamento · ' : '' ?>passe o mouse nas barras para ver o número</span></div>
+    <?php else: ?><p class="small">Sem cadastros de <?= h(mes_nome($mesesG[0])) ?> a <?= h(mes_nome($mesD)) ?>.</p><?php endif ?>
+  </section>
+
+  <?php $ate = $corrente ? " 1-$diaHoje" : ''; $mc = fn(string $m) => substr(MESES_PT[(int)substr($m, 5)], 0, 3) . '/' . substr($m, 2, 2); ?>
+  <section class="card dh-card">
+    <h2>Comparativo com o mês anterior <small><?= h(mes_nome($mesD) . ' x ' . mes_nome($antD)) ?><?= $corrente ? " (mesmo período: dia 1 ao $diaHoje dos dois meses)" : '' ?></small></h2>
+    <div class="tw"><table>
+      <tr><th>Vendedor</th><th>Vendas <?= h($mc($antD) . $ate) ?></th><th>Vendas <?= h($mc($mesD) . $ate) ?></th><th>Variação</th><th>Upgrades <?= h($mc($antD) . $ate) ?></th><th>Upgrades <?= h($mc($mesD) . $ate) ?></th><th>Variação</th><th>Mensalidades <?= h($mc($mesD)) ?></th></tr>
+      <?php foreach ($vendD as $vid => $nome): $a = $de($num, $vid, $mesD); $b = $de($numAnt, $vid, $antD); if (!$a['v'] && !$a['u'] && !$b['v'] && !$b['u']) continue; ?>
+      <tr><td><b><?= h($nome) ?></b></td><td class="n"><?= $b['v'] ?></td><td class="n"><b><?= $a['v'] ?></b></td><td class="dlt"><?= dash_delta($a['v'], $b['v']) ?></td>
+        <td class="n"><?= $b['u'] ?></td><td class="n"><b><?= $a['u'] ?></b></td><td class="dlt"><?= dash_delta($a['u'], $b['u']) ?></td><td class="n"><?= $R($a['r']) ?></td></tr>
+      <?php endforeach ?>
+      <tr class="soma"><td>EQUIPE</td><td class="n"><?= $tB['v'] ?></td><td class="n"><?= $tA['v'] ?></td><td class="dlt"><?= dash_delta($tA['v'], $tB['v']) ?></td>
+        <td class="n"><?= $tB['u'] ?></td><td class="n"><?= $tA['u'] ?></td><td class="dlt"><?= dash_delta($tA['u'], $tB['u']) ?></td><td class="n"><?= $R($tA['r']) ?></td></tr>
+    </table></div>
+  </section>
+
+  <section class="card dh-card dh-metas">
+    <h2>Metas de <?= h(mes_nome($mesD)) ?>
+      <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="metas_copiar"><input type="hidden" name="mes" value="<?= h($mesD) ?>"><button>Copiar metas de <?= h(mes_nome($antD)) ?></button></form>
+    </h2>
+    <p class="small" style="margin:0 0 8px">Digite a meta de cada vendedor e clique em Salvar. Campo vazio = sem meta. A barra mostra quanto já foi feito<?= $corrente ? '; o tracinho preto marca onde ele deveria estar hoje, pelo dia do mês' : '' ?>.</p>
+    <form method="post"><?= csrf_campo() ?><input type="hidden" name="acao" value="metas_salvar"><input type="hidden" name="mes" value="<?= h($mesD) ?>">
+    <div class="tw"><table>
+      <tr><th>Vendedor</th><th>Meta vendas</th><th>Vendas feitas</th><th>Progresso vendas</th><th>Meta upgrades</th><th>Upgrades feitos</th><th>Progresso upgrades</th><th>Situação</th></tr>
+      <?php foreach ($vendD as $vid => $nome): $a = $de($num, $vid, $mesD); $mv = $metasD[$vid]['v'] ?? null; $mu = $metasD[$vid]['u'] ?? null;
+        if (!$mv && !$mu) $sit = '<span class="dh-chip q">definir meta</span>';
+        else {
+            $ok = (!$mv || $a['v'] >= $mv * $esperado) && (!$mu || $a['u'] >= $mu * $esperado);
+            if (!$corrente) $sit = $ok ? '<span class="dh-chip ok">bateu a meta</span>' : '<span class="dh-chip er">não bateu</span>';
+            elseif ($ok) $sit = '<span class="dh-chip ok">no ritmo</span>';
+            else {
+                $falta = implode(' e ', array_filter([$mv && $a['v'] < $mv ? ($mv - $a['v']) . ' vendas' : '', $mu && $a['u'] < $mu ? ($mu - $a['u']) . ' upgrades' : '']));
+                $sit = '<span class="dh-chip er">abaixo do ritmo</span><div class="small">faltam ' . h($falta) . ' em ' . ($diasMes - $diaHoje) . ' dias</div>';
+            }
+        } ?>
+      <tr><td><b><?= h($nome) ?></b></td>
+        <td><input type="number" min="0" inputmode="numeric" name="meta[<?= $vid ?>][v]" value="<?= $mv ?? '' ?>" aria-label="Meta de vendas de <?= h($nome) ?>"></td>
+        <td class="n"><b><?= $a['v'] ?></b></td><td><?= dash_barra($a['v'], $mv, $esperado) ?></td>
+        <td><input type="number" min="0" inputmode="numeric" name="meta[<?= $vid ?>][u]" value="<?= $mu ?? '' ?>" aria-label="Meta de upgrades de <?= h($nome) ?>"></td>
+        <td class="n"><b><?= $a['u'] ?></b></td><td><?= dash_barra($a['u'], $mu, $esperado) ?></td><td><?= $sit ?></td></tr>
+      <?php endforeach ?>
+      <tr class="soma"><td>EQUIPE</td><td class="n"><?= $metaTV ?: '—' ?></td><td class="n"><?= $tA['v'] ?></td><td><?= dash_barra($tA['v'], $metaTV ?: null, $esperado) ?></td>
+        <td class="n"><?= $metaTU ?: '—' ?></td><td class="n"><?= $tA['u'] ?></td><td><?= dash_barra($tA['u'], $metaTU ?: null, $esperado) ?></td><td></td></tr>
+    </table></div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="pri">Salvar metas</button></div>
+    </form>
+  </section>
 <?php elseif ($p === 'vendedores'): ?>
   <form method="post" class="card row">
     <?= csrf_campo() ?><input type="hidden" name="acao" value="vend_novo">
