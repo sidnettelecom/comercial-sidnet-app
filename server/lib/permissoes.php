@@ -10,10 +10,11 @@ require_once __DIR__ . '/base.php';
 const PERM_AREAS = [
     'dash' => 'Dashboard',
     'vendas' => 'Vendas e Vendas do mês',
-    'vendedores' => 'Vendedores',
+    'vendedores' => 'Usuários',
     'planos' => 'Planos',
     'comissoes' => 'Comissões',
     'gestores' => 'Gestores',
+    'recolhimentos' => 'Recolhimentos',
 ];
 /** o que um gestor novo já recebe ao ser criado */
 const PERM_PADRAO_NOVO = 'vendas';

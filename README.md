@@ -1,4 +1,6 @@
-# Comercial + Sidnet
+# Portal Sidnet (antes Comercial + Sidnet)
+
+O painel agora se chama **Portal Sidnet**, porque atende o comercial, o financeiro e o campo. O app dos vendedores continua com o nome antigo até o próximo APK.
 
 App dos vendedores para cadastrar **Nova venda**, **Upgrade** e **2º plano (mesmo cliente)**.
 Funciona sem internet: cada cadastro fica guardado no celular, entra numa fila e é enviado
@@ -46,6 +48,17 @@ Os nomes dos planos no app precisam ser iguais aos planos de venda do IXC.
 Upgrade no IXC (desligado até o ALEX liberar): no `config.php`, `'enviar_upgrade' => true`, `'assunto_upgrade' => 63`
 (ALTERAÇÃO DE PLANO DE VENDA) e `'setor_id'` do Comercial. O usuário do app no IXC precisa poder **alterar cliente** e incluir atendimento.
 Para abrir só o atendimento, sem mexer no cadastro: `'atualizar_contato' => false`.
+
+## Recolhimento de equipamentos (painel)
+
+Menu **Recolhimento** do painel, com duas telas:
+
+- **Recolhimentos**: o financeiro lança as O.S de recolhimento que já fez no IXC (cliente, contrato, nº da O.S opcional, MACs, abertura, fechamento, funcionando, técnico que recolheu, observação). **O sistema não abre nem fecha O.S e não grava nada no IXC**; "Buscar nome" só lê o nome do cliente pelo ID do contrato. O nº de equipamentos é contado pelos MACs e o mês da O.S é o do fechamento. Avisa se o MAC já está em outra O.S e recusa nº de O.S repetido. Liberada em Configurações → Permissões ("Recolhimentos").
+- **Comissão** (só o admin): valor padrão para quem lançou (financeiro) e para o técnico, por equipamento ou por O.S, com opção de não pagar o técnico em O.S sem funcionar. O admin ajusta linha por linha, marca ✔ e registra o mês do pagamento (paga uma vez só; O.S paga não muda mais).
+
+Os técnicos de campo são cadastrados em Configurações → Permissões, no fim da página. Tabelas `recolhimentos`, `rec_tecnicos` e `rec_regra` (criadas sozinhas).
+
+O menu ficou agrupado: Vendas (Vendas, Vendas do mês), Comissões, Recolhimento e Configurações (Permissões, Gestores, Usuários, Planos). "Usuários" é a antiga aba Vendedores.
 
 ## Dashboard comercial (painel)
 
