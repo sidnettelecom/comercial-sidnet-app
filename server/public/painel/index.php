@@ -299,6 +299,14 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             db()->prepare('UPDATE gestores SET admin = 1 - admin WHERE id = ?')->execute([$id]);
             registrar($quem, 'deu/tirou admin', '#' . $id);
             $msg = 'Permissão de admin alterada.';
+        } elseif ($a === 'supervisor_salvar') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin define o supervisor.');
+            $sid = (int)($_POST['supervisor'] ?? 0);
+            db()->exec('UPDATE vendedores SET supervisor = 0');
+            if ($sid) db()->prepare('UPDATE vendedores SET supervisor = 1 WHERE id = ?')->execute([$sid]);
+            $nomeS = $sid ? (string)db()->query('SELECT nome FROM vendedores WHERE id = ' . $sid)->fetchColumn() : '';
+            registrar($quem, 'definiu supervisor', $nomeS ?: 'nenhum');
+            $msg = $nomeS ? "$nomeS agora é o supervisor: a meta e o resultado dele são a soma dos outros vendedores." : 'Sem supervisor.';
         } elseif ($a === 'perm_salvar') {
             if (!$admin) throw new RuntimeException('Só o gestor admin mexe nas permissões.');
             $ids = array_map('intval', (array)($_POST['ids'] ?? []));
@@ -749,11 +757,16 @@ td.dlt{font-weight:800;white-space:nowrap}
     $vz = ['nova' => 0, 'seg' => 0, 'v' => 0, 'u' => 0, 'r' => 0.0];
     $de = fn(array $n, int $vid, string $m) => $n[$vid][$m] ?? $vz;
     // vendedores: ativos, mais quem teve movimento no período ou tem meta no mês
+    // o supervisor não entra como vendedor: a meta e o resultado dele são a soma dos outros
     $vendD = [];
-    foreach (db()->query('SELECT id, nome, ativo FROM vendedores ORDER BY nome') as $vd) {
+    $supNome = '';
+    foreach (db()->query('SELECT id, nome, ativo, supervisor FROM vendedores ORDER BY nome') as $vd) {
         $vid = (int)$vd['id'];
+        if ($vd['supervisor']) { $supNome = $supNome ?: (string)$vd['nome']; continue; }
         if ($vd['ativo'] || isset($num[$vid]) || isset($metasD[$vid])) $vendD[$vid] = $vd['nome'];
     }
+    $metasD = array_intersect_key($metasD, $vendD);
+    $rotEquipe = $supNome !== '' ? h($supNome) . ' <span class="small">supervisor · soma da equipe</span>' : 'EQUIPE';
     $CORES = ['#2563eb', '#db2777', '#059669', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#65a30d', '#c026d3', '#475569'];
     $corV = [];
     $iC = 0;
@@ -795,7 +808,7 @@ td.dlt{font-weight:800;white-space:nowrap}
     <div class="kpi forte"><span>Vendas no mês</span><b><?= $tA['v'] ?></b><small><?= dash_delta($tA['v'], $tB['v']) ?> <?= h($cmpTxt) ?></small></div>
     <div class="kpi"><span>Upgrades no mês</span><b style="color:#6d28d9"><?= $tA['u'] ?></b><small><?= dash_delta($tA['u'], $tB['u']) ?> <span class="small"><?= h($cmpTxt) ?></span></small></div>
     <div class="kpi"><span>Mensalidades novas</span><b class="dh-r"><?= $R($tA['r']) ?></b><small><?= dash_delta($tA['r'], $tB['r']) ?> <span class="small"><?= h($cmpTxt) ?></span></small></div>
-    <div class="kpi"><span>Meta da equipe (vendas)</span><b class="<?= $metaTV && $tA['v'] >= $metaTV * $esperado ? 'ok' : 'q' ?>"><?= $metaTV ? round($tA['v'] / $metaTV * 100) . '%' : '—' ?></b><small class="small"><?= $metaTV ? $tA['v'] . ' de ' . $metaTV : 'sem meta' ?> · upgrades <?= $metaTU ? $tA['u'] . ' de ' . $metaTU : 'sem meta' ?></small></div>
+    <div class="kpi"><span><?= $supNome !== '' ? 'Meta do supervisor ' . h($supNome) : 'Meta da equipe' ?> (vendas)</span><b class="<?= $metaTV && $tA['v'] >= $metaTV * $esperado ? 'ok' : 'q' ?>"><?= $metaTV ? round($tA['v'] / $metaTV * 100) . '%' : '—' ?></b><small class="small"><?= $metaTV ? $tA['v'] . ' de ' . $metaTV : 'sem meta' ?> · upgrades <?= $metaTU ? $tA['u'] . ' de ' . $metaTU : 'sem meta' ?></small></div>
     <?php if ($corrente): ?><div class="kpi"><span>Projeção do mês</span><b><?= $proj ?></b><small class="small">vendas no ritmo atual<?= $metaTV ? ($proj >= $metaTV ? ', bate a meta de ' : ', abaixo da meta de ') . $metaTV : '' ?></small></div><?php endif ?>
   </section>
 
@@ -874,7 +887,7 @@ td.dlt{font-weight:800;white-space:nowrap}
       <tr><td><b><?= h($nome) ?></b></td><td class="n"><?= $b['v'] ?></td><td class="n"><b><?= $a['v'] ?></b></td><td class="dlt"><?= dash_delta($a['v'], $b['v']) ?></td>
         <td class="n"><?= $b['u'] ?></td><td class="n"><b><?= $a['u'] ?></b></td><td class="dlt"><?= dash_delta($a['u'], $b['u']) ?></td><td class="n"><?= $R($a['r']) ?></td></tr>
       <?php endforeach ?>
-      <tr class="soma"><td>EQUIPE</td><td class="n"><?= $tB['v'] ?></td><td class="n"><?= $tA['v'] ?></td><td class="dlt"><?= dash_delta($tA['v'], $tB['v']) ?></td>
+      <tr class="soma"><td><?= $rotEquipe ?></td><td class="n"><?= $tB['v'] ?></td><td class="n"><?= $tA['v'] ?></td><td class="dlt"><?= dash_delta($tA['v'], $tB['v']) ?></td>
         <td class="n"><?= $tB['u'] ?></td><td class="n"><?= $tA['u'] ?></td><td class="dlt"><?= dash_delta($tA['u'], $tB['u']) ?></td><td class="n"><?= $R($tA['r']) ?></td></tr>
     </table></div>
   </section>
@@ -887,25 +900,23 @@ td.dlt{font-weight:800;white-space:nowrap}
     <?php if ($admin): ?><form method="post"><?= csrf_campo() ?><input type="hidden" name="acao" value="metas_salvar"><?php endif ?><input type="hidden" name="mes" value="<?= h($mesD) ?>">
     <div class="tw"><table>
       <tr><th>Vendedor</th><th>Meta vendas</th><th>Vendas feitas</th><th>Progresso vendas</th><th>Meta upgrades</th><th>Upgrades feitos</th><th>Progresso upgrades</th><th>Situação</th></tr>
-      <?php foreach ($vendD as $vid => $nome): $a = $de($num, $vid, $mesD); $mv = $metasD[$vid]['v'] ?? null; $mu = $metasD[$vid]['u'] ?? null;
-        if (!$mv && !$mu) $sit = '<span class="dh-chip q">' . ($admin ? 'definir meta' : 'sem meta') . '</span>';
-        else {
-            $ok = (!$mv || $a['v'] >= $mv * $esperado) && (!$mu || $a['u'] >= $mu * $esperado);
-            if (!$corrente) $sit = $ok ? '<span class="dh-chip ok">bateu a meta</span>' : '<span class="dh-chip er">não bateu</span>';
-            elseif ($ok) $sit = '<span class="dh-chip ok">no ritmo</span>';
-            else {
-                $falta = implode(' e ', array_filter([$mv && $a['v'] < $mv ? ($mv - $a['v']) . ' vendas' : '', $mu && $a['u'] < $mu ? ($mu - $a['u']) . ' upgrades' : '']));
-                $sit = '<span class="dh-chip er">abaixo do ritmo</span><div class="small">faltam ' . h($falta) . ' em ' . ($diasMes - $diaHoje) . ' dias</div>';
-            }
-        } ?>
+      <?php $situacao = function (array $a, ?int $mv, ?int $mu) use ($admin, $esperado, $corrente, $diasMes, $diaHoje): string {
+          if (!$mv && !$mu) return '<span class="dh-chip q">' . ($admin ? 'definir meta' : 'sem meta') . '</span>';
+          $ok = (!$mv || $a['v'] >= $mv * $esperado) && (!$mu || $a['u'] >= $mu * $esperado);
+          if (!$corrente) return $ok ? '<span class="dh-chip ok">bateu a meta</span>' : '<span class="dh-chip er">não bateu</span>';
+          if ($ok) return '<span class="dh-chip ok">no ritmo</span>';
+          $falta = implode(' e ', array_filter([$mv && $a['v'] < $mv ? ($mv - $a['v']) . ' vendas' : '', $mu && $a['u'] < $mu ? ($mu - $a['u']) . ' upgrades' : '']));
+          return '<span class="dh-chip er">abaixo do ritmo</span><div class="small">faltam ' . h($falta) . ' em ' . ($diasMes - $diaHoje) . ' dias</div>';
+      };
+      foreach ($vendD as $vid => $nome): $a = $de($num, $vid, $mesD); $mv = $metasD[$vid]['v'] ?? null; $mu = $metasD[$vid]['u'] ?? null; $sit = $situacao($a, $mv, $mu); ?>
       <tr><td><b><?= h($nome) ?></b></td>
         <td><?php if ($admin): ?><input type="number" min="0" inputmode="numeric" name="meta[<?= $vid ?>][v]" value="<?= $mv ?? '' ?>" aria-label="Meta de vendas de <?= h($nome) ?>"><?php else: ?><b><?= $mv ?? '—' ?></b><?php endif ?></td>
         <td class="n"><b><?= $a['v'] ?></b></td><td><?= dash_barra($a['v'], $mv, $esperado) ?></td>
         <td><?php if ($admin): ?><input type="number" min="0" inputmode="numeric" name="meta[<?= $vid ?>][u]" value="<?= $mu ?? '' ?>" aria-label="Meta de upgrades de <?= h($nome) ?>"><?php else: ?><b><?= $mu ?? '—' ?></b><?php endif ?></td>
         <td class="n"><b><?= $a['u'] ?></b></td><td><?= dash_barra($a['u'], $mu, $esperado) ?></td><td><?= $sit ?></td></tr>
       <?php endforeach ?>
-      <tr class="soma"><td>EQUIPE</td><td class="n"><?= $metaTV ?: '—' ?></td><td class="n"><?= $tA['v'] ?></td><td><?= dash_barra($tA['v'], $metaTV ?: null, $esperado) ?></td>
-        <td class="n"><?= $metaTU ?: '—' ?></td><td class="n"><?= $tA['u'] ?></td><td><?= dash_barra($tA['u'], $metaTU ?: null, $esperado) ?></td><td></td></tr>
+      <tr class="soma"><td><?= $rotEquipe ?></td><td class="n"><?= $metaTV ?: '—' ?></td><td class="n"><?= $tA['v'] ?></td><td><?= dash_barra($tA['v'], $metaTV ?: null, $esperado) ?></td>
+        <td class="n"><?= $metaTU ?: '—' ?></td><td class="n"><?= $tA['u'] ?></td><td><?= dash_barra($tA['u'], $metaTU ?: null, $esperado) ?></td><td><?= $supNome !== '' && ($metaTV || $metaTU) ? $situacao($tA, $metaTV ?: null, $metaTU ?: null) : '' ?></td></tr>
     </table></div>
     <?php if ($admin): ?><div class="row" style="justify-content:flex-end;margin-top:10px"><button class="pri">Salvar metas</button></div>
     </form><?php endif ?>
@@ -1232,6 +1243,14 @@ td.dlt{font-weight:800;white-space:nowrap}
     </table></div>
     <p class="small">Vendas inclui a aba Vendas do mês. Comissões inclui Comissões planilha. Gestores mostra a lista e as últimas ações; criar gestores, gerar senha, bloquear e dar admin continuam só com o admin.</p>
     <div class="row" style="justify-content:flex-end"><button class="pri">Salvar permissões</button></div>
+  </form>
+  <?php $vsC = db()->query('SELECT id, nome, supervisor FROM vendedores WHERE ativo = 1 OR supervisor = 1 ORDER BY nome')->fetchAll(); ?>
+  <form method="post" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="supervisor_salvar">
+    <h2>Supervisor da equipe</h2>
+    <p class="small" style="margin:0 0 8px">O supervisor não tem meta própria: na Dashboard, a meta e o resultado dele são a soma das vendas e upgrades de todos os outros vendedores. Ele sai do ranking e da lista de metas e aparece na linha de total.</p>
+    <div class="row"><select name="supervisor" aria-label="Supervisor"><option value="0">Nenhum</option><?php foreach ($vsC as $v): ?><option value="<?= (int)$v['id'] ?>" <?= $v['supervisor'] ? 'selected' : '' ?>><?= h($v['nome']) ?></option><?php endforeach ?></select>
+      <button class="pri">Salvar supervisor</button></div>
+    <p class="small">A lista é dos vendedores (aba Vendedores). Se o supervisor ainda não está lá, cadastre ele primeiro.</p>
   </form>
 
 <?php elseif ($p === 'gestores'): ?>

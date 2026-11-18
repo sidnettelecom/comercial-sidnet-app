@@ -24,6 +24,11 @@ function dash_tabela(): void
         PRIMARY KEY (vendedor_id, mes)
     )
     SQL);
+    // supervisor: vendedor cuja meta e resultado são a soma dos outros vendedores (definido em Configurações)
+    $colsV = array_column(db()->query('PRAGMA table_info(vendedores)')->fetchAll(), 'name');
+    if (!in_array('supervisor', $colsV, true)) {
+        db()->exec('ALTER TABLE vendedores ADD COLUMN supervisor INTEGER NOT NULL DEFAULT 0');
+    }
     // gestor que não é admin, mas vê a dashboard e mexe nas metas (sem ver comissões)
     $cols = array_column(db()->query('PRAGMA table_info(gestores)')->fetchAll(), 'name');
     if (!in_array('ver_dash', $cols, true)) {
