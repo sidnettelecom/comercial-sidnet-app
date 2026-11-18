@@ -58,6 +58,15 @@ Menu **Recolhimento** do painel, com duas telas:
 
 Os recolhedores (quem vai buscar o equipamento, hoje um vendedor; só aparece pelo nome, não entra no sistema) são cadastrados em Configurações → Permissões, no fim da página. Tabelas `recolhimentos`, `rec_tecnicos` e `rec_regra` (criadas sozinhas).
 
+## Instalações concluídas (painel)
+
+Menu **Instalação** do painel, com duas telas:
+
+- **Instalações concluídas**: o gestor lança as O.S de instalação já feitas no IXC. Digita o nº da O.S e clica **Buscar O.S**: vêm do IXC o cliente, o contrato, a abertura, o fechamento e o técnico (que entra sozinho na lista de técnicos). Se não vier, o gestor preenche à mão. Depois escolhe os técnicos que fizeram (**+ Adicionar técnico** para a dupla) e, se teve, os equipamentos recolhidos na instalação (MAC e modelo, **+ Adicionar equipamento**). **O sistema não abre nem fecha O.S e não grava nada no IXC.** O mês da O.S é o do fechamento; nº de O.S repetido é recusado. Liberada em Configurações → Permissões ("Instalações").
+- **Comissões** (só o admin): em cada O.S, um campo de valor para cada técnico (dupla: um valor para cada; sozinho: um valor), com valor padrão opcional (técnico sozinho / cada um em dupla). O admin marca ✔ e registra o mês do pagamento (paga uma vez só; O.S paga não muda mais). No fim, a tabela **Total de cada técnico** do mês, com o que falta pagar.
+
+Os técnicos são cadastrados em Configurações → Permissões, no fim da página. Tabelas `instalacoes`, `inst_tec`, `inst_tecnicos` e `inst_regra` (criadas sozinhas).
+
 O menu ficou agrupado: Vendas (Vendas, Vendas do mês), Comissões, Recolhimento e Configurações (Permissões, Gestores, Usuários, Planos). "Usuários" é a antiga aba Vendedores.
 
 ## Dashboard comercial (painel)

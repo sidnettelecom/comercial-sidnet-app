@@ -15,6 +15,7 @@ const PERM_AREAS = [
     'comissoes' => 'Comissões',
     'gestores' => 'Gestores',
     'recolhimentos' => 'Recolhimentos',
+    'instalacoes' => 'Instalações',
 ];
 /** o que um gestor novo já recebe ao ser criado */
 const PERM_PADRAO_NOVO = 'vendas';
