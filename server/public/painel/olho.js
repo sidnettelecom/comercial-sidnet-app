@@ -29,3 +29,8 @@
 document.querySelectorAll('select[data-auto]').forEach(function(s){
   s.addEventListener('change',function(){if(s.form)s.form.submit()});
 });
+
+/* Recibo do RH: botão Imprimir (o painel bloqueia onclick escrito no HTML). */
+document.querySelectorAll('[data-imprimir]').forEach(function(b){
+  b.addEventListener('click',function(){window.print()});
+});
