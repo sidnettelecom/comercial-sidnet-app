@@ -49,7 +49,7 @@ Para abrir só o atendimento, sem mexer no cadastro: `'atualizar_contato' => fal
 
 ## Dashboard comercial (painel)
 
-Aba **Dashboard** do painel, para o gestor admin e para os gestores que o admin liberar em **Gestores → Dashboard e metas** (eles veem a dashboard e mexem nas metas, mas não veem as comissões):
+Aba **Dashboard** do painel, para o gestor admin e para os gestores que o admin liberar em **Gestores → Dashboard e metas** (eles veem a dashboard e as metas, mas não editam metas nem veem as comissões; só o admin define as metas):
 
 - Resumo do mês: vendas (venda nova + 2º ponto), upgrades, mensalidades novas, % da meta da equipe e projeção do mês.
 - **Quem mais vendeu** e **quem mais fez upgrade**, com a variação contra o mês anterior.

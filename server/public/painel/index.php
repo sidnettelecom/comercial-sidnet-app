@@ -95,7 +95,7 @@ if ($gestor) {
 }
 $logado = (bool)$gestor;
 $admin = $logado && !empty($gestor['admin']); // só o admin vê e mexe nas comissões
-$verDash = $admin || ($logado && !empty($gestor['ver_dash'])); // dashboard e metas: admin ou gestor liberado
+$verDash = $admin || ($logado && !empty($gestor['ver_dash'])); // dashboard: admin ou gestor liberado (metas: só o admin edita)
 $quem = $gestor['usuario'] ?? '';
 
 // ---- ações ----
@@ -307,12 +307,12 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             db()->prepare('UPDATE gestores SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
             registrar($quem, 'bloqueou/liberou gestor', '#' . $id);
             $msg = 'Acesso do gestor alterado.';
-        } elseif ($a === 'metas_salvar' && $verDash) {
+        } elseif ($a === 'metas_salvar' && $admin) { // só o admin define as metas
             $mesMeta = (string)($_POST['mes'] ?? '');
             $n = dash_metas_salvar($mesMeta, (array)($_POST['meta'] ?? []), $quem);
             registrar($quem, 'salvou metas', mes_nome($mesMeta) . " ($n vendedores)");
             $msg = 'Metas de ' . mes_nome($mesMeta) . ' salvas.';
-        } elseif ($a === 'metas_copiar' && $verDash) {
+        } elseif ($a === 'metas_copiar' && $admin) {
             $mesMeta = (string)($_POST['mes'] ?? '');
             $n = dash_metas_copiar($mesMeta, $quem);
             if ($n) registrar($quem, 'copiou metas', mes_nome($mesMeta) . " ($n vendedores)");
@@ -859,14 +859,14 @@ td.dlt{font-weight:800;white-space:nowrap}
 
   <section class="card dh-card dh-metas">
     <h2>Metas de <?= h(mes_nome($mesD)) ?>
-      <form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="metas_copiar"><input type="hidden" name="mes" value="<?= h($mesD) ?>"><button>Copiar metas de <?= h(mes_nome($antD)) ?></button></form>
+      <?php if ($admin): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="metas_copiar"><input type="hidden" name="mes" value="<?= h($mesD) ?>"><button>Copiar metas de <?= h(mes_nome($antD)) ?></button></form><?php endif ?>
     </h2>
-    <p class="small" style="margin:0 0 8px">Digite a meta de cada vendedor e clique em Salvar. Campo vazio = sem meta. A barra mostra quanto já foi feito<?= $corrente ? '; o tracinho preto marca onde ele deveria estar hoje, pelo dia do mês' : '' ?>.</p>
-    <form method="post"><?= csrf_campo() ?><input type="hidden" name="acao" value="metas_salvar"><input type="hidden" name="mes" value="<?= h($mesD) ?>">
+    <p class="small" style="margin:0 0 8px"><?= $admin ? 'Digite a meta de cada vendedor e clique em Salvar. Campo vazio = sem meta.' : 'As metas são definidas pelo gestor admin.' ?> A barra mostra quanto já foi feito<?= $corrente ? '; o tracinho preto marca onde ele deveria estar hoje, pelo dia do mês' : '' ?>.</p>
+    <?php if ($admin): ?><form method="post"><?= csrf_campo() ?><input type="hidden" name="acao" value="metas_salvar"><?php endif ?><input type="hidden" name="mes" value="<?= h($mesD) ?>">
     <div class="tw"><table>
       <tr><th>Vendedor</th><th>Meta vendas</th><th>Vendas feitas</th><th>Progresso vendas</th><th>Meta upgrades</th><th>Upgrades feitos</th><th>Progresso upgrades</th><th>Situação</th></tr>
       <?php foreach ($vendD as $vid => $nome): $a = $de($num, $vid, $mesD); $mv = $metasD[$vid]['v'] ?? null; $mu = $metasD[$vid]['u'] ?? null;
-        if (!$mv && !$mu) $sit = '<span class="dh-chip q">definir meta</span>';
+        if (!$mv && !$mu) $sit = '<span class="dh-chip q">' . ($admin ? 'definir meta' : 'sem meta') . '</span>';
         else {
             $ok = (!$mv || $a['v'] >= $mv * $esperado) && (!$mu || $a['u'] >= $mu * $esperado);
             if (!$corrente) $sit = $ok ? '<span class="dh-chip ok">bateu a meta</span>' : '<span class="dh-chip er">não bateu</span>';
@@ -877,16 +877,16 @@ td.dlt{font-weight:800;white-space:nowrap}
             }
         } ?>
       <tr><td><b><?= h($nome) ?></b></td>
-        <td><input type="number" min="0" inputmode="numeric" name="meta[<?= $vid ?>][v]" value="<?= $mv ?? '' ?>" aria-label="Meta de vendas de <?= h($nome) ?>"></td>
+        <td><?php if ($admin): ?><input type="number" min="0" inputmode="numeric" name="meta[<?= $vid ?>][v]" value="<?= $mv ?? '' ?>" aria-label="Meta de vendas de <?= h($nome) ?>"><?php else: ?><b><?= $mv ?? '—' ?></b><?php endif ?></td>
         <td class="n"><b><?= $a['v'] ?></b></td><td><?= dash_barra($a['v'], $mv, $esperado) ?></td>
-        <td><input type="number" min="0" inputmode="numeric" name="meta[<?= $vid ?>][u]" value="<?= $mu ?? '' ?>" aria-label="Meta de upgrades de <?= h($nome) ?>"></td>
+        <td><?php if ($admin): ?><input type="number" min="0" inputmode="numeric" name="meta[<?= $vid ?>][u]" value="<?= $mu ?? '' ?>" aria-label="Meta de upgrades de <?= h($nome) ?>"><?php else: ?><b><?= $mu ?? '—' ?></b><?php endif ?></td>
         <td class="n"><b><?= $a['u'] ?></b></td><td><?= dash_barra($a['u'], $mu, $esperado) ?></td><td><?= $sit ?></td></tr>
       <?php endforeach ?>
       <tr class="soma"><td>EQUIPE</td><td class="n"><?= $metaTV ?: '—' ?></td><td class="n"><?= $tA['v'] ?></td><td><?= dash_barra($tA['v'], $metaTV ?: null, $esperado) ?></td>
         <td class="n"><?= $metaTU ?: '—' ?></td><td class="n"><?= $tA['u'] ?></td><td><?= dash_barra($tA['u'], $metaTU ?: null, $esperado) ?></td><td></td></tr>
     </table></div>
-    <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="pri">Salvar metas</button></div>
-    </form>
+    <?php if ($admin): ?><div class="row" style="justify-content:flex-end;margin-top:10px"><button class="pri">Salvar metas</button></div>
+    </form><?php endif ?>
   </section>
 <?php elseif ($p === 'vendedores'): ?>
   <form method="post" class="card row">
