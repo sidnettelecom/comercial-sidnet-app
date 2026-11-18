@@ -24,6 +24,11 @@ function dash_tabela(): void
         PRIMARY KEY (vendedor_id, mes)
     )
     SQL);
+    // gestor que não é admin, mas vê a dashboard e mexe nas metas (sem ver comissões)
+    $cols = array_column(db()->query('PRAGMA table_info(gestores)')->fetchAll(), 'name');
+    if (!in_array('ver_dash', $cols, true)) {
+        db()->exec('ALTER TABLE gestores ADD COLUMN ver_dash INTEGER NOT NULL DEFAULT 0');
+    }
 }
 
 /**
