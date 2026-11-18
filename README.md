@@ -58,6 +58,9 @@ Aba **Dashboard** do painel, para o gestor admin e para quem o admin liberar em 
 - **Metas**: meta de vendas e de upgrades por vendedor e por mês (tabela `metas`, criada sozinha), com barra de progresso
   e o ritmo esperado pelo dia do mês. "Copiar metas do mês anterior" preenche só quem ainda não tem meta.
 
+**Supervisor** (Configurações → Supervisor da equipe): um vendedor marcado como supervisor não tem meta própria.
+A meta e o resultado dele são a soma de todos os outros vendedores; ele sai do ranking e aparece na linha de total.
+
 Conta tudo o que os vendedores cadastraram no app (menos os descartados), pelo dia em que chegou ao servidor.
 
 ## Permissões do painel (Configurações)
