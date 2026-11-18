@@ -2,7 +2,7 @@
 /**
  * Recolhimento de equipamentos: o financeiro lança as O.S de recolhimento que já fez no IXC
  * (só para registro, o sistema não abre nem fecha O.S e não grava nada no IXC) e o admin
- * confere e paga a comissão de quem lançou (financeiro) e de quem recolheu (técnico de campo).
+ * confere e paga a comissão de quem lançou (financeiro) e de quem recolheu (recolhedor, ex.: vendedor; só aparece pelo nome).
  * Regra do ALEX: comissão paga uma vez só; quando paga, marca-se o mês do pagamento.
  * O mês de cada O.S é o mês da data de fechamento.
  */
@@ -176,7 +176,7 @@ function rec_validar(array $in): array
     if ($d['fechamento'] > date('Y-m-d')) throw new RuntimeException('A data de fechamento está no futuro.');
     $q = db()->prepare('SELECT 1 FROM rec_tecnicos WHERE id = ?');
     $q->execute([$d['tecnico_id']]);
-    if (!$q->fetchColumn()) throw new RuntimeException('Escolha o técnico que recolheu.');
+    if (!$q->fetchColumn()) throw new RuntimeException('Escolha quem recolheu.');
     return $d;
 }
 
@@ -312,7 +312,7 @@ function rec_por_pessoa(array $linhas): array
 {
     $out = [];
     foreach ($linhas as $r) {
-        foreach ([['Financeiro', $r['lancado_nome'], 'valor_fin'], ['Técnico de campo', $r['tecnico'], 'valor_tec']] as [$papel, $nome, $col]) {
+        foreach ([['Financeiro', $r['lancado_nome'], 'valor_fin'], ['Recolhedor', $r['tecnico'], 'valor_tec']] as [$papel, $nome, $col]) {
             $k = $papel . '|' . $nome;
             $o = &$out[$k];
             $o ??= ['papel' => $papel, 'nome' => $nome, 'os' => 0, 'eq' => 0, 'valor' => 0.0, 'falta' => 0.0];

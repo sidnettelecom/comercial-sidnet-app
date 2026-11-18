@@ -359,8 +359,8 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $avisos = [];
                 if ($o['tecnico'] !== '') {
                     if ($tid = rec_tecnico_por_nome($o['tecnico'])) $recForm['tecnico_id'] = $tid;
-                    else $avisos[] = "o técnico da O.S no IXC é {$o['tecnico']}, que não está na lista de técnicos: escolha à mão";
                 }
+                if (empty($recForm['tecnico_id']) && count($soAtivos = rec_tecnicos(true)) === 1) $recForm['tecnico_id'] = $soAtivos[0]['id']; // um recolhedor só: já vem escolhido
                 if (!$o['finalizada'] || $o['fechamento'] === '') $avisos[] = 'a O.S ainda não está finalizada no IXC, então o fechamento não veio';
                 $msg = 'O.S ' . so_digitos((string)$recForm['os']) . ($o['assunto'] !== '' ? " ({$o['assunto']})" : '') . ' carregada do IXC (só leitura, nada foi gravado lá). Confira e preencha MAC e modelo dos equipamentos.' . ($avisos ? ' Atenção: ' . implode('; ', $avisos) . '.' : '');
             } else {
@@ -384,17 +384,17 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($rr) registrar($quem, 'excluiu O.S de recolhimento', "#$id {$rr['cliente']} contrato {$rr['contrato']}");
             $msg = 'O.S excluída.';
         } elseif ($a === 'rec_tec_novo') {
-            if (!$admin) throw new RuntimeException('Só o gestor admin mexe na lista de técnicos.');
+            if (!$admin) throw new RuntimeException('Só o gestor admin mexe na lista de recolhedores.');
             $nt = up(preg_replace('/\s+/', ' ', trim((string)($_POST['nome'] ?? ''))) ?? '');
-            if ($nt === '') throw new RuntimeException('Digite o nome do técnico.');
+            if ($nt === '') throw new RuntimeException('Digite o nome do recolhedor.');
             db()->prepare('INSERT OR IGNORE INTO rec_tecnicos (nome) VALUES (?)')->execute([$nt]);
-            registrar($quem, 'cadastrou técnico de campo', $nt);
-            $msg = "Técnico $nt na lista.";
+            registrar($quem, 'cadastrou recolhedor', $nt);
+            $msg = "Recolhedor $nt na lista.";
         } elseif ($a === 'rec_tec_ativo') {
-            if (!$admin) throw new RuntimeException('Só o gestor admin mexe na lista de técnicos.');
+            if (!$admin) throw new RuntimeException('Só o gestor admin mexe na lista de recolhedores.');
             db()->prepare('UPDATE rec_tecnicos SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
-            registrar($quem, 'escondeu/mostrou técnico de campo', '#' . $id);
-            $msg = 'Técnico alterado. As O.S antigas dele não mudam.';
+            registrar($quem, 'escondeu/mostrou recolhedor', '#' . $id);
+            $msg = 'Recolhedor alterado. As O.S antigas dele não mudam.';
         } elseif ($a === 'rec_regra_salvar') {
             if (!$admin) throw new RuntimeException('Só o gestor admin mexe na comissão do recolhimento.');
             db()->prepare('UPDATE rec_regra SET valor_fin = ?, valor_tec = ?, base = ?, so_funcionando = ? WHERE id = 1')
@@ -1371,16 +1371,16 @@ td.dlt{font-weight:800;white-space:nowrap}
   <form method="post" action="<?= $linkMes ?>" class="card" id="form-rec"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$edit['id'] ?>">
     <button name="acao" value="rec_salvar" tabindex="-1" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px">Salvar</button><?php /* Enter salva (não busca o nome) */ ?>
     <h2><?= $edit['id'] ? 'Corrigir O.S de recolhimento' : 'Lançar O.S de recolhimento' ?></h2>
-    <?php if (!$tecsR): ?><div class="msg">Ainda não tem técnico de campo cadastrado. <?= $admin ? 'Cadastre em Configurações → Permissões, no fim da página.' : 'Peça ao admin para cadastrar em Configurações.' ?></div><?php endif ?>
+    <?php if (!$tecsR): ?><div class="msg">Ainda não tem recolhedor cadastrado. <?= $admin ? 'Cadastre em Configurações → Permissões, no fim da página.' : 'Peça ao admin para cadastrar em Configurações.' ?></div><?php endif ?>
     <div class="rec-form">
       <label>Nº da O.S no IXC<span class="comb"><input name="r[os]" value="<?= $vR('os') ?>" inputmode="numeric" placeholder="ex.: 104532">
-        <?php if (destino() === 'ixc'): ?><button name="acao" value="rec_buscar" formnovalidate title="Só lê a O.S no IXC: cliente, contrato, abertura, fechamento e técnico">Buscar O.S</button><?php endif ?></span></label>
+        <?php if (destino() === 'ixc'): ?><button name="acao" value="rec_buscar" formnovalidate title="Só lê a O.S no IXC: cliente, contrato, abertura e fechamento">Buscar O.S</button><?php endif ?></span></label>
       <label>ID do contrato<input name="r[contrato]" value="<?= $vR('contrato') ?>" inputmode="numeric" placeholder="vem da O.S" required></label>
       <label>Nome do cliente<input name="r[cliente]" value="<?= $vR('cliente') ?>" placeholder="vem da O.S" required></label>
       <label>Abertura da O.S<input type="date" name="r[abertura]" value="<?= $vR('abertura') ?>" max="<?= date('Y-m-d') ?>"></label>
       <label>Fechamento da O.S<input type="date" name="r[fechamento]" value="<?= $vR('fechamento') ?>" max="<?= date('Y-m-d') ?>" required></label>
       <label>Funcionando?<select name="r[funcionando]"><option>SIM</option><option <?= ($edit['funcionando'] ?? '') === 'NÃO' ? 'selected' : '' ?>>NÃO</option></select></label>
-      <label>Técnico que recolheu<select name="r[tecnico_id]" required><option value="">escolha</option><?php foreach ($tecsR as $tc): if (!$tc['ativo'] && (int)$tc['id'] !== (int)($edit['tecnico_id'] ?? 0)) continue; ?><option value="<?= (int)$tc['id'] ?>" <?= (int)$tc['id'] === (int)($edit['tecnico_id'] ?? 0) ? 'selected' : '' ?>><?= h($tc['nome']) ?></option><?php endforeach ?></select></label>
+      <label>Quem recolheu<select name="r[tecnico_id]" required><option value="">escolha</option><?php foreach ($tecsR as $tc): if (!$tc['ativo'] && (int)$tc['id'] !== (int)($edit['tecnico_id'] ?? 0)) continue; ?><option value="<?= (int)$tc['id'] ?>" <?= (int)$tc['id'] === (int)($edit['tecnico_id'] ?? 0) ? 'selected' : '' ?>><?= h($tc['nome']) ?></option><?php endforeach ?></select></label>
       <div class="larga"><b class="small" style="font-weight:700">Equipamentos recolhidos (o nº de equipamentos é contado sozinho; linha vazia é ignorada)</b>
         <div class="rec-eqs"><?php foreach ($eqForm as $n => $e): ?>
           <label>MAC <?= $n + 1 ?><input name="r[eq][<?= $n ?>][mac]" value="<?= h((string)($e['mac'] ?? '')) ?>" placeholder="CCB1822D48C7" autocapitalize="characters" <?= $n === 0 ? 'required' : '' ?>></label>
@@ -1395,7 +1395,7 @@ td.dlt{font-weight:800;white-space:nowrap}
   </form>
   <?php endif ?>
   <div class="card tw"><table class="rec">
-    <thead><tr><th>Cliente</th><th>Contrato</th><th>Nº equip.</th><th>MAC e modelo</th><th>Abertura O.S</th><th>Fechamento O.S</th><th>Funcionando</th><th>Técnico</th><th>Lançado por</th><th></th></tr></thead>
+    <thead><tr><th>Cliente</th><th>Contrato</th><th>Nº equip.</th><th>MAC e modelo</th><th>Abertura O.S</th><th>Fechamento O.S</th><th>Funcionando</th><th>Recolhedor</th><th>Lançado por</th><th></th></tr></thead>
     <?php foreach ($linR as $r): ?>
     <tr><td><b><?= h($r['cliente']) ?></b><?php if ($r['os'] !== ''): ?><br><span class="small">O.S <?= h($r['os']) ?></span><?php endif ?><?php if ($r['obs'] !== ''): ?><br><span class="small"><?= h($r['obs']) ?></span><?php endif ?></td>
       <td class="n"><?= h($r['contrato']) ?></td><td class="n"><?= (int)$r['qtd'] ?></td>
@@ -1433,9 +1433,9 @@ td.dlt{font-weight:800;white-space:nowrap}
     <p class="small" style="margin:0 0 8px">Sugestão que já vem preenchida nas linhas sem valor. Você muda o que precisar linha por linha.</p>
     <div class="row">
       <label>Financeiro (lançou a O.S) R$ <input name="valor_fin" value="<?= h(brl($regraR['valor_fin'])) ?>" size="7" inputmode="decimal"></label>
-      <label>Técnico (recolheu) R$ <input name="valor_tec" value="<?= h(brl($regraR['valor_tec'])) ?>" size="7" inputmode="decimal"></label>
+      <label>Recolhedor R$ <input name="valor_tec" value="<?= h(brl($regraR['valor_tec'])) ?>" size="7" inputmode="decimal"></label>
       <select name="base" aria-label="Como conta"><option value="eq">por equipamento</option><option value="os" <?= $regraR['base'] === 'os' ? 'selected' : '' ?>>por O.S</option></select>
-      <label><input type="checkbox" name="so_funcionando" value="1" <?= $regraR['so_funcionando'] ? 'checked' : '' ?>> técnico não recebe O.S sem funcionar</label>
+      <label><input type="checkbox" name="so_funcionando" value="1" <?= $regraR['so_funcionando'] ? 'checked' : '' ?>> recolhedor não recebe O.S sem funcionar</label>
       <label><input type="checkbox" name="sobrescrever" value="1"> trocar também os valores já digitados (não conferidos)</label>
       <button class="pri">Salvar e preencher <?= h(mes_nome($mesR)) ?></button></div>
   </form>
@@ -1452,7 +1452,7 @@ td.dlt{font-weight:800;white-space:nowrap}
   <form method="post" action="<?= $linkMes ?>" class="card"><?= csrf_campo() ?><input type="hidden" name="mes" value="<?= h($mesR) ?>">
     <h2>Conferência linha por linha</h2>
     <div class="tw"><table class="rec">
-      <thead><tr><th>✔</th><th>Cliente</th><th>Equipamentos (modelo)</th><th>Fechou</th><th>Func.</th><th>Quem lançou</th><th>R$ quem lançou</th><th>Técnico</th><th>R$ técnico</th><th>Pago em</th></tr></thead>
+      <thead><tr><th>✔</th><th>Cliente</th><th>Equipamentos (modelo)</th><th>Fechou</th><th>Func.</th><th>Quem lançou</th><th>R$ quem lançou</th><th>Recolhedor</th><th>R$ recolhedor</th><th>Pago em</th></tr></thead>
       <?php foreach ($linR as $r): $i = (int)$r['id']; $dis = $r['pago_em'] !== '' ? 'disabled' : '';
           [$sf, $st] = rec_sugestao($r, $regraR); ?>
       <tr><td class="ck"><?php if (!$dis): ?><input type="hidden" name="c[<?= $i ?>][ok]" value="0"><?php endif ?><input type="checkbox" name="c[<?= $i ?>][ok]" value="1" <?= $r['conferido'] ? 'checked' : '' ?> <?= $dis ?> aria-label="Conferido <?= h($r['cliente']) ?>"></td>
@@ -1462,7 +1462,7 @@ td.dlt{font-weight:800;white-space:nowrap}
         <td class="small"><?= h($r['lancado_nome']) ?></td>
         <td><input class="val" name="c[<?= $i ?>][vf]" value="<?= h(brl($r['valor_fin'])) ?>" placeholder="<?= h(brl($sf)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor do financeiro"></td>
         <td class="small"><?= h($r['tecnico']) ?></td>
-        <td><input class="val" name="c[<?= $i ?>][vt]" value="<?= h(brl($r['valor_tec'])) ?>" placeholder="<?= h(brl($st)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor do técnico"></td>
+        <td><input class="val" name="c[<?= $i ?>][vt]" value="<?= h(brl($r['valor_tec'])) ?>" placeholder="<?= h(brl($st)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor do recolhedor"></td>
         <td><?= $r['pago_em'] !== '' ? '<span class="tp pago">' . h(mes_nome($r['pago_em'])) . '</span>' : '<span class="small">—</span>' ?></td></tr>
       <?php endforeach ?>
       <?php if (!$linR): ?><tr><td colspan="10" class="small">Nenhuma O.S fechada em <?= h(mes_nome($mesR)) ?>.</td></tr><?php endif ?>
@@ -1472,7 +1472,7 @@ td.dlt{font-weight:800;white-space:nowrap}
       <span class="row"><button class="pri" name="acao" value="rec_pagar">Salvar e marcar conferidas como pagas em</button>
         <select name="pago_em" aria-label="Mês do pagamento"><?php for ($k = -1; $k <= 2; $k++): $om = mes_soma(date('Y-m'), $k); ?><option value="<?= $om ?>" <?= $k === 0 ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endfor ?></select></span>
     </div>
-    <p class="small">Valor em cinza é a sugestão do valor padrão: só vale depois de salvo (use "Salvar e preencher" acima). Linha corrigida pelo financeiro depois de conferida volta sem ✔ se mudar equipamentos, técnico ou funcionando.</p>
+    <p class="small">Valor em cinza é a sugestão do valor padrão: só vale depois de salvo (use "Salvar e preencher" acima). Linha corrigida pelo financeiro depois de conferida volta sem ✔ se mudar equipamentos, recolhedor ou funcionando.</p>
   </form>
 
 <?php elseif ($p === 'sem'): ?>
@@ -1512,10 +1512,10 @@ td.dlt{font-weight:800;white-space:nowrap}
       <button class="pri">Salvar supervisor</button></div>
     <p class="small">A lista é dos vendedores (aba Usuários). Se o supervisor ainda não está lá, cadastre ele primeiro.</p>
   </form>
-  <div class="card"><h2>Técnicos de campo</h2>
-    <p class="small" style="margin:0 0 8px">Quem recolhe os equipamentos. É a lista do campo "Técnico que recolheu" nas O.S de recolhimento. Esconder tira da lista, mas as O.S antigas continuam com o nome.</p>
+  <div class="card"><h2>Recolhedores</h2>
+    <p class="small" style="margin:0 0 8px">Quem vai buscar os equipamentos (ex.: vendedor). Só aparece como recolhedor nas O.S e na comissão: não entra no sistema. É a lista do campo "Quem recolheu". Esconder tira da lista, mas as O.S antigas continuam com o nome.</p>
     <div class="row"><?php foreach (rec_tecnicos() as $tc): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="rec_tec_ativo"><input type="hidden" name="id" value="<?= (int)$tc['id'] ?>"><span class="pill <?= $tc['ativo'] ? 'mu' : 'er' ?>"><?= h($tc['nome']) ?><?= $tc['ativo'] ? '' : ' · escondido' ?></span> <button title="<?= $tc['ativo'] ? 'Esconder da lista' : 'Mostrar de novo' ?>"><?= $tc['ativo'] ? 'Esconder' : 'Mostrar' ?></button></form><?php endforeach ?></div>
-    <form method="post" class="row" style="margin-top:10px"><?= csrf_campo() ?><input type="hidden" name="acao" value="rec_tec_novo"><input name="nome" placeholder="NOME DO TÉCNICO" required aria-label="Nome do técnico"><button class="pri">Adicionar técnico</button></form>
+    <form method="post" class="row" style="margin-top:10px"><?= csrf_campo() ?><input type="hidden" name="acao" value="rec_tec_novo"><input name="nome" placeholder="NOME DO RECOLHEDOR" required aria-label="Nome do recolhedor"><button class="pri">Adicionar recolhedor</button></form>
   </div>
 
 <?php elseif ($p === 'gestores'): ?>
