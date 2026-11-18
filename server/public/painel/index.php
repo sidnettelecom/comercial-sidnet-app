@@ -1,7 +1,7 @@
 <?php
 /**
  * Portal Sidnet (antes "Comercial + Sidnet"): vendas recebidas dos celulares, situação no CRM, usuários (vendedores),
- * gestores e recolhimento de equipamentos.
+ * gestores, recolhimento de equipamentos e instalações concluídas.
  * Entrada com usuário e senha do gestor; 5 senhas erradas travam o usuário por 15 minutos.
  */
 declare(strict_types=1);
@@ -13,9 +13,11 @@ require_once __DIR__ . '/../../lib/comissoes_planilha.php'; // PLANILHA-TEMP
 require_once __DIR__ . '/../../lib/dashboard.php';
 require_once __DIR__ . '/../../lib/permissoes.php';
 require_once __DIR__ . '/../../lib/recolhimento.php';
+require_once __DIR__ . '/../../lib/instalacao.php';
 dash_tabela();
 perm_tabela();
 rec_tabela();
+inst_tabela();
 
 const PAINEL_INATIVO_MAX = 8 * 3600; // sai sozinho depois de 8 horas sem uso
 
@@ -108,8 +110,10 @@ const PERM_ACOES = [
     'plano_salvar' => 'planos', 'plano_novo' => 'planos', 'plano_ativo' => 'planos', 'plano_excluir' => 'planos', 'plano_mover' => 'planos', 'planos_ixc' => 'planos',
     'comissoes_salvar' => 'comissoes', 'comissoes_ixc' => 'comissoes', 'planilha_importar' => 'comissoes', 'planilha_salvar' => 'comissoes',
     'rec_salvar' => 'recolhimentos', 'rec_excluir' => 'recolhimentos', 'rec_buscar' => 'recolhimentos', 'rec_mais' => 'recolhimentos',
+    'inst_salvar' => 'instalacoes', 'inst_excluir' => 'instalacoes', 'inst_buscar' => 'instalacoes', 'inst_mais' => 'instalacoes', 'inst_mais_tec' => 'instalacoes',
 ];
 $recForm = null; // formulário de O.S de recolhimento para mostrar de novo (erro ou "Buscar nome")
+$instForm = null; // o mesmo para a O.S de instalação
 $quem = $gestor['usuario'] ?? '';
 
 // ---- ações ----
@@ -415,6 +419,91 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 registrar($quem, 'pagou comissão do recolhimento', mes_nome($mesR) . " ($n O.S, pago em " . mes_nome($pg) . ')');
                 $msg = $n ? "$n O.S conferidas marcadas como pagas em " . mes_nome($pg) . '.' : 'Nenhuma O.S conferida (✔) e ainda não paga neste mês.';
             }
+        } elseif ($a === 'inst_mais' || $a === 'inst_mais_tec') { // + Adicionar equipamento / técnico: mostra o formulário de novo com uma linha a mais
+            $instForm = (array)($_POST['r'] ?? []);
+            $instForm['id'] = $id;
+            if ($a === 'inst_mais') $instForm['linhas_eq'] = count((array)($instForm['eq'] ?? [])) + 1;
+            else $instForm['linhas_tec'] = min(INST_MAX_TEC, count((array)($instForm['tec'] ?? [])) + 1);
+            $instForm['linhas_eq'] ??= count((array)($instForm['eq'] ?? []));
+            $instForm['linhas_tec'] ??= count((array)($instForm['tec'] ?? []));
+        } elseif ($a === 'inst_buscar') {
+            $instForm = (array)($_POST['r'] ?? []);
+            $instForm['id'] = $id;
+            $instForm['linhas_eq'] = count((array)($instForm['eq'] ?? []));
+            $instForm['linhas_tec'] = count((array)($instForm['tec'] ?? []));
+            if (destino() !== 'ixc') throw new RuntimeException('A busca só funciona com o IXC. Preencha à mão.');
+            if (so_digitos((string)($instForm['os'] ?? '')) !== '') {
+                $o = rec_os_ixc((string)$instForm['os']);
+                if (!$o) throw new RuntimeException('Não achei a O.S nº ' . so_digitos((string)$instForm['os']) . ' no IXC. Confira o número.');
+                foreach (['cliente', 'contrato', 'abertura', 'fechamento', 'assunto'] as $k) if ($o[$k] !== '') $instForm[$k] = $o[$k];
+                $avisos = [];
+                if ($o['tecnico'] !== '') {
+                    // técnico da O.S no IXC: entra como o primeiro (e vai para a lista de técnicos se ainda não estiver)
+                    $tid = inst_tecnico_por_nome($o['tecnico'], true);
+                    $ja = array_values(array_filter(array_map('intval', (array)($instForm['tec'] ?? []))));
+                    if ($tid && !in_array($tid, $ja, true)) array_unshift($ja, $tid);
+                    $instForm['tec'] = $ja;
+                    $instForm['linhas_tec'] = count($ja);
+                } else {
+                    $avisos[] = 'a O.S não tem técnico no IXC, escolha quem fez';
+                }
+                if (!$o['finalizada'] || $o['fechamento'] === '') $avisos[] = 'a O.S ainda não está finalizada no IXC, então o fechamento não veio';
+                $msg = 'O.S ' . so_digitos((string)$instForm['os']) . ($o['assunto'] !== '' ? " ({$o['assunto']})" : '') . ' carregada do IXC (só leitura, nada foi gravado lá). Confira, acrescente o outro técnico se foram dois e os equipamentos recolhidos, se teve.' . ($avisos ? ' Atenção: ' . implode('; ', $avisos) . '.' : '');
+            } else {
+                $nomeIxc = rec_nome_ixc((string)($instForm['contrato'] ?? ''));
+                if ($nomeIxc === '') throw new RuntimeException('Não achei esse contrato no IXC. Confira o número ou digite o nome do cliente.');
+                $instForm['cliente'] = $nomeIxc;
+                $msg = 'Nome do cliente preenchido pelo IXC (só leitura, nada foi gravado lá).';
+            }
+        } elseif ($a === 'inst_salvar') {
+            $instForm = (array)($_POST['r'] ?? []);
+            $instForm['id'] = $id;
+            $instForm['linhas_eq'] = count((array)($instForm['eq'] ?? []));
+            $instForm['linhas_tec'] = count((array)($instForm['tec'] ?? []));
+            [$iid, $aviso] = inst_salvar($instForm, $id, $quem);
+            $ii = inst_um($iid);
+            $nomesT = implode(' e ', array_column($ii['tecs'], 'nome'));
+            registrar($quem, $id ? 'corrigiu O.S de instalação' : 'lançou O.S de instalação', "#$iid {$ii['cliente']} contrato {$ii['contrato']} ($nomesT)");
+            $msg = ($id ? 'O.S corrigida.' : "Instalação de {$ii['cliente']} lançada ($nomesT).") . ($aviso ? ' ' . $aviso : '');
+            $instForm = null;
+            $_GET['mes'] = substr($ii['fechamento'], 0, 7);
+        } elseif ($a === 'inst_excluir') {
+            $ii = inst_um($id);
+            inst_excluir($id);
+            if ($ii) registrar($quem, 'excluiu O.S de instalação', "#$id {$ii['cliente']} contrato {$ii['contrato']}");
+            $msg = 'O.S excluída.';
+        } elseif ($a === 'inst_tec_novo') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin mexe na lista de técnicos.');
+            $nt = up(preg_replace('/\s+/', ' ', trim((string)($_POST['nome'] ?? ''))) ?? '');
+            if ($nt === '') throw new RuntimeException('Digite o nome do técnico.');
+            inst_tecnico_por_nome($nt, true);
+            registrar($quem, 'cadastrou técnico de instalação', $nt);
+            $msg = "Técnico $nt na lista.";
+        } elseif ($a === 'inst_tec_ativo') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin mexe na lista de técnicos.');
+            db()->prepare('UPDATE inst_tecnicos SET ativo = 1 - ativo WHERE id = ?')->execute([$id]);
+            registrar($quem, 'escondeu/mostrou técnico de instalação', '#' . $id);
+            $msg = 'Técnico alterado. As O.S antigas dele não mudam.';
+        } elseif ($a === 'inst_regra_salvar') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin mexe na comissão da instalação.');
+            db()->prepare('UPDATE inst_regra SET valor_um = ?, valor_dupla = ? WHERE id = 1')
+                ->execute([dinheiro((string)($_POST['valor_um'] ?? '')), dinheiro((string)($_POST['valor_dupla'] ?? ''))]);
+            $mesI = preg_match('/^\d{4}-\d{2}$/', (string)($_POST['mes'] ?? '')) ? (string)$_POST['mes'] : date('Y-m');
+            $n = inst_aplicar_regra($mesI, !empty($_POST['sobrescrever']));
+            registrar($quem, 'salvou valor padrão da instalação', mes_nome($mesI) . " ($n O.S preenchidas)");
+            $msg = 'Valor padrão salvo.' . ($n ? " $n O.S de " . mes_nome($mesI) . ' preenchidas com ele.' : '');
+        } elseif ($a === 'inst_com_salvar' || $a === 'inst_pagar') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin mexe na comissão da instalação.');
+            $n = inst_comissao_salvar((array)($_POST['c'] ?? []), $quem);
+            if ($n) registrar($quem, 'salvou comissão da instalação', "$n O.S");
+            $msg = $n ? "Comissão salva ($n O.S alterada" . ($n === 1 ? '' : 's') . ').' : 'Nada mudou.';
+            if ($a === 'inst_pagar') {
+                $mesI = (string)($_POST['mes'] ?? '');
+                $pg = (string)($_POST['pago_em'] ?? '');
+                $n = inst_pagar($mesI, $pg, $quem);
+                registrar($quem, 'pagou comissão da instalação', mes_nome($mesI) . " ($n O.S, pago em " . mes_nome($pg) . ')');
+                $msg = $n ? "$n O.S conferidas marcadas como pagas em " . mes_nome($pg) . '.' : 'Nenhuma O.S conferida (✔) e ainda não paga neste mês.';
+            }
         } elseif ($a === 'minha_senha') {
             $q = db()->prepare('SELECT senha_hash FROM gestores WHERE id = ?');
             $q->execute([$gestor['id']]);
@@ -436,7 +525,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
 $p = !empty($gestor['trocar']) ? 'trocar' : ($_GET['p'] ?? '');
 $AREA_PAG = ['vendas' => 'vendas', 'excluir' => 'vendas', 'mes' => 'vendas', 'dash' => 'dash', 'vendedores' => 'vendedores', 'planos' => 'planos',
     'comissoes' => 'comissoes', 'planilha' => 'comissoes', 'gestores' => 'gestores', 'config' => 'admin', 'senha' => '', 'trocar' => '',
-    'recolhimentos' => 'recolhimentos', 'rec_comissao' => 'admin'];
+    'recolhimentos' => 'recolhimentos', 'rec_comissao' => 'admin', 'instalacoes' => 'instalacoes', 'inst_comissao' => 'admin'];
 if (!isset($AREA_PAG[$p])) $p = 'vendas';
 if ($logado && $p !== 'trocar' && ($_GET['p'] ?? '') === '' && !$pode('vendas')) {
     // tela inicial: a primeira área liberada
@@ -479,6 +568,7 @@ $ICONES = [
     'recolhimento' => '<path d="M3 7l9-4 9 4-9 4z"/><path d="M3 7v10l9 4 9-4V7M12 11v10"/>',
     'recolhimentos' => '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
     'rec_comissao' => '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.8 0-3 .9-3 2.1 0 2.9 6 1.6 6 4.6 0 1.3-1.3 2.3-3 2.3-1.5 0-2.7-.6-3.2-1.7M12 6.5V8m0 9v1.5"/>',
+    'instalacao' => '<path d="M3 10l9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
     'permissoes' => '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
 ];
 $svg = fn(string $k) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $ICONES[$k] . '</svg>';
@@ -690,6 +780,7 @@ td.dlt{font-weight:800;white-space:nowrap}
 .mac{display:inline-block;font:600 12px/1.2 var(--mono);background:var(--bg);border-radius:6px;padding:3px 6px;margin:1px 2px 1px 0;white-space:nowrap}
 .rec tfoot td{font-weight:800;border-bottom:0}.rec td{vertical-align:middle}
 .rec input.val{width:96px;text-align:right;font-weight:700}.rec .ck input{width:18px;height:18px}
+.inst-tecs{display:grid;gap:6px}.inst-tecs label{display:flex;align-items:center;justify-content:space-between;gap:10px;font-weight:600}
 .rec-pes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr));gap:12px}
 .rec-pes .card{display:grid;gap:4px}.rec-pes .papel{font-size:12.5px;color:var(--muted);font-weight:700}.rec-pes .tot{font-size:26px;font-weight:800}
 .tp.pago{background:#ede9fe;color:#5b21b6}
@@ -707,6 +798,7 @@ td.dlt{font-weight:800;white-space:nowrap}
     . $grupo('vendas', 'Vendas', [['vendas', 'Vendas', $pode('vendas'), ['vendas', 'excluir']], ['mes', 'Vendas do mês', $pode('vendas')]])
     . $grupo('comissoes', 'Comissões', [['comissoes', 'Comissões', $pode('comissoes')], ['planilha', 'Comissões planilha', $pode('comissoes')] /* PLANILHA-TEMP */])
     . $grupo('recolhimento', 'Recolhimento', [['recolhimentos', 'Recolhimentos', $pode('recolhimentos')], ['rec_comissao', 'Comissão', $admin]])
+    . $grupo('instalacao', 'Instalação', [['instalacoes', 'Instalações concluídas', $pode('instalacoes')], ['inst_comissao', 'Comissões', $admin]])
     . $grupo('config', 'Configurações', [['config', 'Permissões', $admin], ['gestores', 'Gestores', $pode('gestores')], ['vendedores', 'Usuários', $pode('vendedores')], ['planos', 'Planos', $pode('planos')]]) ?></nav>
   <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?p=senha">Trocar minha senha</a><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
@@ -1475,6 +1567,160 @@ td.dlt{font-weight:800;white-space:nowrap}
     <p class="small">Valor em cinza é a sugestão do valor padrão: só vale depois de salvo (use "Salvar e preencher" acima). Linha corrigida pelo financeiro depois de conferida volta sem ✔ se mudar equipamentos, recolhedor ou funcionando.</p>
   </form>
 
+<?php elseif ($p === 'instalacoes'):
+    $mesesI = inst_meses();
+    $mesI = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) ? (string)$_GET['mes'] : date('Y-m');
+    if (!in_array($mesI, $mesesI, true)) { $mesesI[] = $mesI; rsort($mesesI); }
+    $buscaI = trim((string)($_GET['q'] ?? ''));
+    $linI = inst_do_mes($mesI, $buscaI);
+    $tecsI = inst_tecnicos();
+    $edit = $instForm;
+    if ($edit === null && ($eid = (int)($_GET['editar'] ?? 0)) && ($er = inst_um($eid)) && $er['pago_em'] === '') {
+        $edit = $er + ['id' => $eid];
+        $edit['eq'] = array_map(fn($e) => ['mac' => $e['mac'], 'modelo' => $e['modelo']], rec_equipamentos($er));
+        $edit['tec'] = array_column($er['tecs'], 'id');
+    }
+    $abrirForm = $edit !== null || isset($_GET['novo']);
+    $edit ??= ['id' => 0];
+    // equipamentos recolhidos: começa com 1 linha (pode ficar vazia); "+ Adicionar equipamento" põe mais uma
+    $eqForm = array_values((array)($edit['eq'] ?? []));
+    if (!isset($edit['linhas_eq'])) $eqForm = array_values(array_filter($eqForm, fn($e) => trim((string)($e['mac'] ?? '')) !== '' || trim((string)($e['modelo'] ?? '')) !== ''));
+    $nLinhasEq = max(1, count($eqForm), min(50, (int)($edit['linhas_eq'] ?? 0)));
+    while (count($eqForm) < $nLinhasEq) $eqForm[] = ['mac' => '', 'modelo' => ''];
+    // técnicos: começa com 1; "+ Adicionar técnico" põe mais um
+    $tecForm = array_values(array_map('intval', (array)($edit['tec'] ?? [])));
+    if (!$tecForm && count($soAtivosI = inst_tecnicos(true)) === 1) $tecForm = [(int)$soAtivosI[0]['id']]; // um técnico só: já vem escolhido
+    $nLinhasTec = max(1, count($tecForm), min(INST_MAX_TEC, (int)($edit['linhas_tec'] ?? 0)));
+    while (count($tecForm) < $nLinhasTec) $tecForm[] = 0;
+    $modelosUsados = rec_modelos_usados();
+    $eqI = array_sum(array_map(fn($r) => (int)$r['qtd'], $linI));
+    $duplaI = count(array_filter($linI, fn($r) => count($r['tecs']) > 1));
+    $vI = fn(string $k) => h((string)($edit[$k] ?? ''));
+    $linkMes = '?p=instalacoes&amp;mes=' . h($mesI);
+?>
+  <div class="topo"><div><h1>Instalações concluídas</h1><p class="small">Lance aqui as O.S de instalação que já foram feitas no IXC, com os técnicos que fizeram e os equipamentos recolhidos na instalação. O sistema não abre nem fecha O.S e não grava nada no IXC: serve só para a comissão.</p></div>
+    <a class="bt" href="<?= $linkMes ?>&amp;novo=1#form-inst" style="background:var(--g-cta);border:0;color:#1c1203;height:46px;display:inline-flex;align-items:center;padding:0 18px;border-radius:14px;font-weight:800">+ Lançar O.S de instalação</a></div>
+  <form method="get" class="row"><input type="hidden" name="p" value="instalacoes">
+    <select name="mes" aria-label="Mês do fechamento" data-auto><?php foreach ($mesesI as $om): ?><option value="<?= h($om) ?>" <?= $om === $mesI ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select>
+    <input name="q" value="<?= h($buscaI) ?>" placeholder="Buscar nome, contrato, O.S, técnico ou MAC" aria-label="Buscar"><button>Buscar</button>
+    <?php if ($buscaI !== ''): ?><a href="<?= $linkMes ?>">limpar</a><?php endif ?></form>
+  <div class="kpis">
+    <div class="kpi forte"><span>Instalações em <?= h(mes_nome($mesI)) ?></span><b><?= count($linI) ?></b><small><?= $buscaI !== '' ? 'na busca' : 'pela data de fechamento da O.S' ?></small></div>
+    <div class="kpi"><span>Feitas em dupla</span><b><?= $duplaI ?></b><small>2 ou mais técnicos</small></div>
+    <div class="kpi"><span>Equipamentos recolhidos</span><b><?= $eqI ?></b><small>nas instalações</small></div>
+  </div>
+  <?php if ($abrirForm): ?>
+  <form method="post" action="<?= $linkMes ?>" class="card" id="form-inst"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$edit['id'] ?>">
+    <button name="acao" value="inst_salvar" tabindex="-1" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px">Salvar</button><?php /* Enter salva (não busca) */ ?>
+    <input type="hidden" name="r[assunto]" value="<?= $vI('assunto') ?>">
+    <h2><?= $edit['id'] ? 'Corrigir O.S de instalação' : 'Lançar O.S de instalação' ?></h2>
+    <?php if (!$tecsI): ?><div class="msg">Ainda não tem técnico na lista. Clique em Buscar O.S que o técnico do IXC entra sozinho<?= $admin ? ', ou cadastre em Configurações → Permissões, no fim da página' : ', ou peça ao admin para cadastrar em Configurações' ?>.</div><?php endif ?>
+    <div class="rec-form">
+      <label>Nº da O.S no IXC<span class="comb"><input name="r[os]" value="<?= $vI('os') ?>" inputmode="numeric" placeholder="ex.: 104532">
+        <?php if (destino() === 'ixc'): ?><button name="acao" value="inst_buscar" formnovalidate title="Só lê a O.S no IXC: cliente, contrato, abertura, fechamento e técnico">Buscar O.S</button><?php endif ?></span></label>
+      <label>ID do contrato<input name="r[contrato]" value="<?= $vI('contrato') ?>" inputmode="numeric" placeholder="vem da O.S" required></label>
+      <label>Nome do cliente<input name="r[cliente]" value="<?= $vI('cliente') ?>" placeholder="vem da O.S" required></label>
+      <label>Abertura da O.S<input type="date" name="r[abertura]" value="<?= $vI('abertura') ?>" max="<?= date('Y-m-d') ?>"></label>
+      <label>Fechamento da O.S<input type="date" name="r[fechamento]" value="<?= $vI('fechamento') ?>" max="<?= date('Y-m-d') ?>" required></label>
+      <div class="larga"><b class="small" style="font-weight:700">Técnicos que fizeram a instalação<?= ($edit['assunto'] ?? '') !== '' ? ' · ' . $vI('assunto') : '' ?></b>
+        <div class="rec-eqs"><?php foreach ($tecForm as $n => $tsel): ?>
+          <label>Técnico <?= $n + 1 ?><select name="r[tec][<?= $n ?>]" <?= $n === 0 ? 'required' : '' ?>><option value=""><?= $n === 0 ? 'escolha' : 'nenhum' ?></option><?php foreach ($tecsI as $tc): if (!$tc['ativo'] && (int)$tc['id'] !== $tsel) continue; ?><option value="<?= (int)$tc['id'] ?>" <?= (int)$tc['id'] === $tsel ? 'selected' : '' ?>><?= h($tc['nome']) ?></option><?php endforeach ?></select></label>
+        <?php endforeach ?></div>
+        <?php if (count($tecForm) < INST_MAX_TEC): ?><button id="tec-fim" name="acao" value="inst_mais_tec" formnovalidate formaction="<?= $linkMes ?>#tec-fim">+ Adicionar técnico</button><?php endif ?></div>
+      <div class="larga"><b class="small" style="font-weight:700">Equipamentos recolhidos na instalação (se não teve, deixe em branco)</b>
+        <div class="rec-eqs"><?php foreach ($eqForm as $n => $e): ?>
+          <label>MAC <?= $n + 1 ?><input name="r[eq][<?= $n ?>][mac]" value="<?= h((string)($e['mac'] ?? '')) ?>" placeholder="CCB1822D48C7" autocapitalize="characters"></label>
+          <label>Modelo <?= $n + 1 ?><input name="r[eq][<?= $n ?>][modelo]" value="<?= h((string)($e['modelo'] ?? '')) ?>" list="rec-modelos" placeholder="ex.: ONU ZTE F670L"></label>
+        <?php endforeach ?></div>
+        <datalist id="rec-modelos"><?php foreach ($modelosUsados as $mu): ?><option value="<?= h($mu) ?>"><?php endforeach ?></datalist>
+        <button id="eq-fim" name="acao" value="inst_mais" formnovalidate formaction="<?= $linkMes ?>#eq-fim">+ Adicionar equipamento</button></div>
+      <label class="larga">Observação<input name="r[obs]" value="<?= $vI('obs') ?>" maxlength="300"></label>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="pri" name="acao" value="inst_salvar"><?= $edit['id'] ? 'Salvar correção' : 'Salvar O.S' ?></button><a href="<?= $linkMes ?>">Cancelar</a>
+      <span class="small">Quem lançou fica gravado. Depois que a comissão é paga, a O.S não muda mais.</span></div>
+  </form>
+  <?php endif ?>
+  <div class="card tw"><table class="rec">
+    <thead><tr><th>Cliente</th><th>Contrato</th><th>Abertura O.S</th><th>Fechamento O.S</th><th>Técnicos</th><th>Equipamentos recolhidos</th><th>Lançado por</th><th></th></tr></thead>
+    <?php foreach ($linI as $r): ?>
+    <tr><td><b><?= h($r['cliente']) ?></b><?php if ($r['os'] !== ''): ?><br><span class="small">O.S <?= h($r['os']) ?><?= $r['assunto'] !== '' ? ' · ' . h($r['assunto']) : '' ?></span><?php endif ?><?php if ($r['obs'] !== ''): ?><br><span class="small"><?= h($r['obs']) ?></span><?php endif ?></td>
+      <td class="n"><?= h($r['contrato']) ?></td>
+      <td class="n"><?= h(rec_dt($r['abertura']) ?: '—') ?></td><td class="n"><?= h(rec_dt($r['fechamento'])) ?></td>
+      <td><?= implode('<br>', array_map(fn($t) => h($t['nome']), $r['tecs'])) ?></td>
+      <td><?php foreach (rec_equipamentos($r) as $e): ?><span class="mac"><?= h($e['mac']) ?></span> <span class="small"><?= h($e['modelo'] ?: 'sem modelo') ?></span><br><?php endforeach ?><?= $r['qtd'] ? '' : '<span class="small">—</span>' ?></td>
+      <td class="small"><?= h($r['lancado_nome']) ?></td>
+      <td><div class="acoes"><?php if ($r['pago_em'] !== ''): ?><span class="tp pago">pago</span>
+        <?php else: ?><a class="bt" href="<?= $linkMes ?>&amp;editar=<?= (int)$r['id'] ?>#form-inst">Corrigir</a>
+        <form method="post" action="<?= $linkMes ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$r['id'] ?>"><button class="del" name="acao" value="inst_excluir" title="Excluir esta O.S">Excluir</button></form><?php endif ?></div></td></tr>
+    <?php endforeach ?>
+    <?php if (!$linI): ?><tr><td colspan="8" class="small">Nenhuma O.S de instalação <?= $buscaI !== '' ? 'nessa busca' : 'fechada em ' . h(mes_nome($mesI)) ?>.</td></tr><?php endif ?>
+    <tfoot><tr><td colspan="4">TOTAL</td><td class="n"><?= count($linI) ?> O.S</td><td class="n"><?= $eqI ?> equip.</td><td colspan="2"></td></tr></tfoot>
+  </table></div>
+
+<?php elseif ($p === 'inst_comissao'):
+    $mesesI = inst_meses();
+    $mesI = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) ? (string)$_GET['mes'] : date('Y-m');
+    if (!in_array($mesI, $mesesI, true)) { $mesesI[] = $mesI; rsort($mesesI); }
+    $linI = inst_do_mes($mesI);
+    $regraI = inst_regra();
+    $porTec = inst_por_tecnico($linI);
+    $somaV = fn(array $r) => array_sum(array_map(fn($t) => (float)($t['valor'] ?: 0), $r['tecs']));
+    $totI = array_sum(array_map($somaV, $linI));
+    $faltaI = array_sum(array_map(fn($r) => $r['pago_em'] === '' ? $somaV($r) : 0, $linI));
+    $confI = count(array_filter($linI, fn($r) => $r['conferido']));
+    $semValorI = count(array_filter($linI, fn($r) => $r['pago_em'] === '' && in_array('', array_column($r['tecs'], 'valor'), true)));
+    $Rr = fn(float $v) => 'R$ ' . brl(number_format($v, 2, '.', ''));
+    $linkMes = '?p=inst_comissao&amp;mes=' . h($mesI);
+?>
+  <div class="topo"><div><h1>Comissão da instalação</h1><p class="small">Só o admin. Coloque o valor de cada técnico em cada O.S (feita em dupla: um valor para cada um), marque ✔ e registre o mês em que pagou. No fim, o total de cada técnico. Paga uma vez só.</p></div>
+    <form method="get" class="in"><input type="hidden" name="p" value="inst_comissao"><select name="mes" aria-label="Mês do fechamento" data-auto><?php foreach ($mesesI as $om): ?><option value="<?= h($om) ?>" <?= $om === $mesI ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select><noscript><button>Ver</button></noscript></form></div>
+  <form method="post" action="<?= $linkMes ?>" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_regra_salvar"><input type="hidden" name="mes" value="<?= h($mesI) ?>">
+    <h2>Valor padrão (opcional)</h2>
+    <p class="small" style="margin:0 0 8px">Sugestão que já vem preenchida para os técnicos sem valor. Você muda o que precisar O.S por O.S.</p>
+    <div class="row">
+      <label>Técnico sozinho R$ <input name="valor_um" value="<?= h(brl($regraI['valor_um'])) ?>" size="7" inputmode="decimal"></label>
+      <label>Cada técnico, quando em dupla R$ <input name="valor_dupla" value="<?= h(brl($regraI['valor_dupla'])) ?>" size="7" inputmode="decimal"></label>
+      <label><input type="checkbox" name="sobrescrever" value="1"> trocar também os valores já digitados (não conferidos)</label>
+      <button class="pri">Salvar e preencher <?= h(mes_nome($mesI)) ?></button></div>
+  </form>
+  <div class="kpis">
+    <div class="kpi forte"><span>Total de <?= h(mes_nome($mesI)) ?></span><b><?= $Rr($totI) ?></b><small><?= count($linI) ?> instalações</small></div>
+    <div class="kpi"><span>Conferidas</span><b class="ok"><?= $confI ?> de <?= count($linI) ?></b><small>marcadas com ✔</small></div>
+    <div class="kpi"><span>Falta pagar</span><b class="q"><?= $Rr($faltaI) ?></b><small><?= $semValorI ? "$semValorI O.S com técnico sem valor" : 'sem mês de pagamento' ?></small></div>
+  </div>
+  <form method="post" action="<?= $linkMes ?>" class="card"><?= csrf_campo() ?><input type="hidden" name="mes" value="<?= h($mesI) ?>">
+    <h2>Valor por O.S e por técnico</h2>
+    <div class="tw"><table class="rec">
+      <thead><tr><th>✔</th><th>Cliente</th><th>Fechou</th><th>Técnicos e valor de cada um</th><th>Total da O.S</th><th>Pago em</th></tr></thead>
+      <?php foreach ($linI as $r): $i = (int)$r['id']; $dis = $r['pago_em'] !== '' ? 'disabled' : ''; $sug = inst_sugestao(count($r['tecs']), $regraI); ?>
+      <tr><td class="ck"><?php if (!$dis): ?><input type="hidden" name="c[<?= $i ?>][ok]" value="0"><?php endif ?><input type="checkbox" name="c[<?= $i ?>][ok]" value="1" <?= $r['conferido'] ? 'checked' : '' ?> <?= $dis ?> aria-label="Conferido <?= h($r['cliente']) ?>"></td>
+        <td><b><?= h($r['cliente']) ?></b><br><span class="small">contrato <?= h($r['contrato']) ?><?= $r['os'] !== '' ? ' · O.S ' . h($r['os']) : '' ?><?= $r['qtd'] ? ' · ' . (int)$r['qtd'] . ' equip. recolhido' . ($r['qtd'] == 1 ? '' : 's') : '' ?></span></td>
+        <td class="n"><?= h(rec_dt($r['fechamento'])) ?></td>
+        <td><div class="inst-tecs"><?php foreach ($r['tecs'] as $t): ?><label><span><?= h($t['nome']) ?></span><input class="val" name="c[<?= $i ?>][v][<?= (int)$t['id'] ?>]" value="<?= h(brl($t['valor'])) ?>" placeholder="<?= h(brl($sug)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor de <?= h($t['nome']) ?>"></label><?php endforeach ?></div></td>
+        <td class="n"><b><?= $Rr($somaV($r)) ?></b></td>
+        <td><?= $r['pago_em'] !== '' ? '<span class="tp pago">' . h(mes_nome($r['pago_em'])) . '</span>' : '<span class="small">—</span>' ?></td></tr>
+      <?php endforeach ?>
+      <?php if (!$linI): ?><tr><td colspan="6" class="small">Nenhuma instalação fechada em <?= h(mes_nome($mesI)) ?>.</td></tr><?php endif ?>
+    </table></div>
+    <div class="row" style="margin-top:10px;justify-content:space-between">
+      <button name="acao" value="inst_com_salvar">Salvar valores e conferência</button>
+      <span class="row"><button class="pri" name="acao" value="inst_pagar">Salvar e marcar conferidas como pagas em</button>
+        <select name="pago_em" aria-label="Mês do pagamento"><?php for ($k = -1; $k <= 2; $k++): $om = mes_soma(date('Y-m'), $k); ?><option value="<?= $om ?>" <?= $k === 0 ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endfor ?></select></span>
+    </div>
+    <p class="small">Valor em cinza é a sugestão do valor padrão: só vale depois de salvo (use "Salvar e preencher" acima). Se a O.S for corrigida e mudar os técnicos, ela volta sem ✔.</p>
+  </form>
+  <div class="card"><h2>Total de cada técnico em <?= h(mes_nome($mesI)) ?></h2>
+    <div class="tw"><table class="rec">
+      <thead><tr><th>Técnico</th><th>Instalações</th><th>Sozinho</th><th>Em dupla</th><th>Total</th><th>Falta pagar</th></tr></thead>
+      <?php foreach ($porTec as $pt): ?>
+      <tr><td><b><?= h($pt['nome']) ?></b><?= $pt['sem_valor'] ? '<br><span class="small er">' . $pt['sem_valor'] . ' O.S sem valor</span>' : '' ?></td><td class="n"><?= $pt['os'] ?></td><td class="n"><?= $pt['sozinho'] ?></td><td class="n"><?= $pt['os'] - $pt['sozinho'] ?></td>
+        <td class="n"><b><?= $Rr($pt['valor']) ?></b></td><td class="n"><?= $pt['falta'] > 0 ? $Rr($pt['falta']) : ($pt['valor'] > 0 ? '<span class="tp pago">pago</span>' : '—') ?></td></tr>
+      <?php endforeach ?>
+      <?php if (!$porTec): ?><tr><td colspan="6" class="small">Nenhuma instalação fechada em <?= h(mes_nome($mesI)) ?>.</td></tr><?php endif ?>
+      <tfoot><tr><td>TOTAL</td><td class="n"><?= count($linI) ?> O.S</td><td colspan="2"></td><td class="n"><?= $Rr($totI) ?></td><td class="n"><?= $Rr($faltaI) ?></td></tr></tfoot>
+    </table></div>
+  </div>
+
 <?php elseif ($p === 'sem'): ?>
   <div class="msg">Você não tem acesso a esta área. Peça ao gestor admin para liberar em Configurações.</div>
 
@@ -1501,7 +1747,7 @@ td.dlt{font-weight:800;white-space:nowrap}
         <?php endif ?></tr>
       <?php endforeach ?>
     </table></div>
-    <p class="small">Vendas inclui a aba Vendas do mês. Comissões inclui Comissões planilha. Recolhimentos libera lançar e corrigir as O.S de recolhimento; a Comissão do recolhimento é só do admin. Gestores mostra a lista e as últimas ações; criar gestores, gerar senha, bloquear e dar admin continuam só com o admin.</p>
+    <p class="small">Vendas inclui a aba Vendas do mês. Comissões inclui Comissões planilha. Recolhimentos libera lançar e corrigir as O.S de recolhimento; a Comissão do recolhimento é só do admin. Instalações libera lançar e corrigir as O.S de instalação; a Comissão da instalação é só do admin. Gestores mostra a lista e as últimas ações; criar gestores, gerar senha, bloquear e dar admin continuam só com o admin.</p>
     <div class="row" style="justify-content:flex-end"><button class="pri">Salvar permissões</button></div>
   </form>
   <?php $vsC = db()->query('SELECT id, nome, supervisor FROM vendedores WHERE ativo = 1 OR supervisor = 1 ORDER BY nome')->fetchAll(); ?>
@@ -1516,6 +1762,11 @@ td.dlt{font-weight:800;white-space:nowrap}
     <p class="small" style="margin:0 0 8px">Quem vai buscar os equipamentos (ex.: vendedor). Só aparece como recolhedor nas O.S e na comissão: não entra no sistema. É a lista do campo "Quem recolheu". Esconder tira da lista, mas as O.S antigas continuam com o nome.</p>
     <div class="row"><?php foreach (rec_tecnicos() as $tc): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="rec_tec_ativo"><input type="hidden" name="id" value="<?= (int)$tc['id'] ?>"><span class="pill <?= $tc['ativo'] ? 'mu' : 'er' ?>"><?= h($tc['nome']) ?><?= $tc['ativo'] ? '' : ' · escondido' ?></span> <button title="<?= $tc['ativo'] ? 'Esconder da lista' : 'Mostrar de novo' ?>"><?= $tc['ativo'] ? 'Esconder' : 'Mostrar' ?></button></form><?php endforeach ?></div>
     <form method="post" class="row" style="margin-top:10px"><?= csrf_campo() ?><input type="hidden" name="acao" value="rec_tec_novo"><input name="nome" placeholder="NOME DO RECOLHEDOR" required aria-label="Nome do recolhedor"><button class="pri">Adicionar recolhedor</button></form>
+  </div>
+  <div class="card"><h2>Técnicos de instalação</h2>
+    <p class="small" style="margin:0 0 8px">Quem faz as instalações. É a lista do campo "Técnico" das Instalações concluídas; o técnico que vem na O.S do IXC entra aqui sozinho ao clicar em Buscar O.S. Só aparece pelo nome, não entra no sistema. Esconder tira da lista, mas as O.S antigas continuam com o nome.</p>
+    <div class="row"><?php foreach (inst_tecnicos() as $tc): ?><form method="post" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_tec_ativo"><input type="hidden" name="id" value="<?= (int)$tc['id'] ?>"><span class="pill <?= $tc['ativo'] ? 'mu' : 'er' ?>"><?= h($tc['nome']) ?><?= $tc['ativo'] ? '' : ' · escondido' ?></span> <button title="<?= $tc['ativo'] ? 'Esconder da lista' : 'Mostrar de novo' ?>"><?= $tc['ativo'] ? 'Esconder' : 'Mostrar' ?></button></form><?php endforeach ?></div>
+    <form method="post" class="row" style="margin-top:10px"><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_tec_novo"><input name="nome" placeholder="NOME DO TÉCNICO" required aria-label="Nome do técnico"><button class="pri">Adicionar técnico</button></form>
   </div>
 
 <?php elseif ($p === 'gestores'): ?>
