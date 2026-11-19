@@ -34,3 +34,13 @@ document.querySelectorAll('select[data-auto]').forEach(function(s){
 document.querySelectorAll('[data-imprimir]').forEach(function(b){
   b.addEventListener('click',function(){window.print()});
 });
+
+/* Permissões: marcar o grupo marca tudo dentro dele; o grupo fica "meio marcado" quando só parte está. */
+(function(){
+  var cx=[].slice.call(document.querySelectorAll('.perm-arvore input[data-k]'));if(!cx.length)return;
+  function dentro(k){return cx.filter(function(i){return i.dataset.k.indexOf(k+'.')===0})}
+  function atualiza(){cx.forEach(function(i){var f=dentro(i.dataset.k).filter(function(x){return x.name});if(!f.length)return;
+    var on=f.filter(function(x){return x.checked}).length;i.checked=on===f.length;i.indeterminate=on>0&&on<f.length})}
+  cx.forEach(function(i){i.addEventListener('change',function(){dentro(i.dataset.k).forEach(function(x){x.checked=i.checked});atualiza()})});
+  atualiza();
+})();

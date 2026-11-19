@@ -215,8 +215,8 @@ function rh_lanc_excluir(int $id): ?array
     return $l;
 }
 
-/** Lançamentos do mês, com nome do funcionário, quem lançou e se já foi pago. */
-function rh_do_mes(string $mes, int $fid = 0, string $tipo = ''): array
+/** Lançamentos do mês, com nome do funcionário, quem lançou e se já foi pago. $tipos: só esses tipos ([] = todos). */
+function rh_do_mes(string $mes, int $fid = 0, string $tipo = '', array $tipos = []): array
 {
     $sql = "SELECT l.*, f.nome, f.cpf, f.funcao, COALESCE(g.nome, l.lancado_por) AS lancado_nome, COALESCE(p.pago_em, '') AS pago_em
         FROM rh_lancamentos l JOIN rh_funcionarios f ON f.id = l.funcionario_id
@@ -226,6 +226,7 @@ function rh_do_mes(string $mes, int $fid = 0, string $tipo = ''): array
     $par = [$mes];
     if ($fid) { $sql .= ' AND l.funcionario_id = ?'; $par[] = $fid; }
     if (isset(RH_TIPOS[$tipo])) { $sql .= ' AND l.tipo = ?'; $par[] = $tipo; }
+    if ($tipos) { $sql .= ' AND l.tipo IN (' . implode(',', array_fill(0, count($tipos), '?')) . ')'; array_push($par, ...array_values($tipos)); }
     $q = db()->prepare($sql . ' ORDER BY l.data, f.nome, l.id');
     $q->execute($par);
     return $q->fetchAll();
@@ -244,10 +245,10 @@ function rh_meses(): array
  * Total de cada funcionário no mês:
  * [fid => ['f' => funcionário, 'ls' => lançamentos, 'horas' => R$, 'h' => horas, 'sobre' => R$, 'dias' => n, 'compl' => R$, 'pag' => R$, 'tot' => R$, 'pago_em' => '']]
  */
-function rh_totais(string $mes, array $soIds = []): array
+function rh_totais(string $mes, array $soIds = [], array $tipos = []): array
 {
     $out = [];
-    foreach (rh_do_mes($mes) as $l) {
+    foreach (rh_do_mes($mes, 0, '', $tipos) as $l) {
         $fid = (int)$l['funcionario_id'];
         if ($soIds && !in_array($fid, $soIds, true)) continue;
         $o = &$out[$fid];
