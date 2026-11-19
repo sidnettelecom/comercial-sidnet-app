@@ -25,6 +25,7 @@ inst_tabela();
 rh_tabela();
 serv_tabela();
 recibos_tabela();
+rh_compl_auto(date('Y-m')); // complemento fixo do mês entra sozinho
 colab_tabela();
 
 const PAINEL_INATIVO_MAX = 8 * 3600; // sai sozinho depois de 8 horas sem uso
@@ -125,7 +126,7 @@ const PERM_ACOES = [
     'rec_regra_salvar' => 'rec.com', 'rec_com_salvar' => 'rec.com', 'rec_pagar' => 'rec.com',
     'inst_salvar' => 'inst.lista', 'inst_excluir' => 'inst.lista', 'inst_buscar' => 'inst.lista', 'inst_mais' => 'inst.lista', 'inst_mais_tec' => 'inst.lista',
     'inst_servicos_salvar' => 'inst.com', 'inst_com_salvar' => 'inst.com', 'inst_pagar' => 'inst.com',
-    'rh_lanc_salvar' => 'rh.lanc', 'rh_lanc_excluir' => 'rh.lanc', 'rh_func_salvar' => 'rh.func', 'rh_func_ativo' => 'rh.func', 'rh_pagar' => 'rh.fecha',
+    'rh_lanc_salvar' => 'rh.lanc', 'rh_lanc_excluir' => 'rh.lanc', 'rh_func_salvar' => 'rh.func', 'rh_func_ativo' => 'rh.func', 'rh_pagar' => 'rh.fecha', 'rh_sobre_salvar' => 'rh.lanc',
     'recibos_cpf' => 'recibos',
     'colab_buscar' => 'cfg.colab', 'colab_salvar' => 'cfg.colab', 'colab_mostrar' => 'cfg.colab',
     'serv_servico' => 'serv.lanc', 'serv_pagamento' => 'serv.pag', 'serv_excluir' => 'serv',
@@ -533,6 +534,28 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             registrar($quem, 'lançou no RH', "#$lid {$ll['nome']} " . RH_TIPOS[$ll['tipo']] . ' ' . mes_nome($ll['mes']) . ' R$ ' . brl($ll['valor']));
             $msg = 'Lançado: ' . mb_strtolower(RH_TIPOS[$ll['tipo']]) . " de {$ll['nome']}, R$ " . brl($ll['valor']) . ' (' . mes_nome($ll['mes']) . ').';
             $rhForm = ['funcionario_id' => $ll['funcionario_id'], 'tipo' => $ll['tipo'], 'mes' => $ll['mes'], 'data' => $ll['data']]; // próximo lançamento já vem com o mesmo funcionário
+        } elseif ($a === 'rh_sobre_salvar') {
+            if (!in_array('sobre', $rhTipos, true)) throw new RuntimeException('Você não tem permissão para lançar sobreaviso.');
+            $mesP = (string)($_POST['mes'] ?? '');
+            $r = rh_sobre_salvar($id, $mesP, (array)($_POST['d'] ?? []), (array)($_POST['h'] ?? []), $quem, in_array('horas', $rhTipos, true));
+            registrar($quem, 'salvou sobreaviso no RH', "{$r['nome']} " . mes_nome($mesP) . ": {$r['dias']} dia(s), " . rh_hm($r['h']) . ' h');
+            $msg = "Sobreaviso de {$r['nome']} em " . mes_nome($mesP) . " salvo: {$r['dias']} dia(s)" . ($r['h'] ? ', ' . rh_hm($r['h']) . ' h trabalhadas' : '') . '.';
+        } elseif ($a === 'rh_cfg_salvar') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin muda os valores do RH.');
+            rh_config_salvar((array)($_POST['c'] ?? []));
+            $c = rh_config();
+            registrar($quem, 'alterou valores do RH', "sobreaviso R$ {$c['sobre_dia']}, jornada {$c['jornada']} h, adicional {$c['adic_util']}%/{$c['adic_desc']}%, DSR " . ($c['dsr'] ? 'sim' : 'não'));
+            $msg = 'Valores do RH salvos. Valem para os próximos lançamentos.';
+        } elseif ($a === 'rh_feriado_salvar') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin muda os feriados.');
+            rh_feriado_salvar((string)($_POST['data'] ?? ''), (string)($_POST['nome'] ?? ''));
+            registrar($quem, 'salvou feriado', rh_dt((string)$_POST['data']) . ' ' . (string)($_POST['nome'] ?? ''));
+            $msg = 'Feriado salvo.';
+        } elseif ($a === 'rh_feriado_excluir') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin muda os feriados.');
+            rh_feriado_excluir((string)($_POST['data'] ?? ''));
+            registrar($quem, 'excluiu feriado', rh_dt((string)($_POST['data'] ?? '')));
+            $msg = 'Feriado excluído.';
         } elseif ($a === 'rh_lanc_excluir') {
             if (($lx = rh_lanc_um($id)) && !in_array($lx['tipo'], $rhTipos, true)) throw new RuntimeException('Você não tem permissão para esse tipo de lançamento.');
             if ($ll = rh_lanc_excluir($id)) {
@@ -540,7 +563,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = 'Lançamento excluído.';
             }
         } elseif ($a === 'rh_func_salvar') {
-            $fid = rh_func_salvar((array)($_POST['f'] ?? []), $id);
+            $fid = rh_func_salvar((array)($_POST['f'] ?? []), $id, $pode('rh.lanc.compl'));
             $ff = rh_funcionario($fid);
             registrar($quem, $id ? 'corrigiu funcionário do RH' : 'cadastrou funcionário do RH', "#$fid {$ff['nome']}");
             $msg = $id ? "Cadastro de {$ff['nome']} salvo." : "{$ff['nome']} cadastrado.";
@@ -659,7 +682,7 @@ $p = !empty($gestor['trocar']) ? 'trocar' : ($_GET['p'] ?? '');
 $AREA_PAG = ['vendas' => 'vendas.lista', 'excluir' => 'vendas.lista', 'mes' => 'vendas.mes', 'dash' => 'dash', 'vendedores' => 'cfg.users', 'planos' => 'cfg.planos',
     'comissoes' => 'com.lista', 'planilha' => 'com.planilha', 'gestores' => 'cfg.gest', 'config' => 'admin', 'senha' => '', 'trocar' => '',
     'recolhimentos' => 'rec.lista', 'rec_comissao' => 'rec.com', 'instalacoes' => 'inst.lista', 'inst_comissao' => 'inst.com',
-    'rh_lancar' => 'rh.lanc', 'rh_fecha' => 'rh.fecha', 'rh_func' => 'rh.func', 'recibos' => 'recibos',
+    'rh_lancar' => 'rh.lanc', 'rh_fecha' => 'rh.fecha', 'rh_func' => 'rh.func', 'rh_cfg' => 'admin', 'recibos' => 'recibos',
     'serv' => 'serv.saldo', 'serv_extrato' => 'serv.saldo', 'serv_lista' => 'serv.saldo', 'serv_lancar' => 'serv', 'serv_cad' => 'serv.cad', 'colab' => 'cfg.colab'];
 if (!isset($AREA_PAG[$p])) $p = 'vendas';
 if ($logado && $p !== 'trocar' && ($_GET['p'] ?? '') === '' && !$pode('vendas.lista')) {
@@ -932,6 +955,18 @@ td.dlt{font-weight:800;white-space:nowrap}
 .rh-tipos a[aria-current]{background:var(--g-btn);color:#fff;border-color:transparent}
 .tp-horas{background:#dbeafe;color:#1e40af}.tp-sobre{background:#ede9fe;color:#5b21b6}.tp-compl{background:#d1fae5;color:#065f46}.tp-pag{background:#fef3c7;color:#92400e}
 td.r,th.r{text-align:right}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;margin-top:12px;max-width:820px}
+.cal-s{font-size:11.5px;font-weight:800;color:var(--muted);text-align:center}
+.cal-d{min-height:72px;border:1px solid var(--line);border-radius:12px;padding:6px;display:grid;align-content:start;gap:4px;font-size:12px;background:var(--surface)}
+.cal-d.util{color:var(--muted)}.cal-d.fds{background:var(--bg)}.cal-d.fer{background:#fff7ed;border-color:#fdba74}
+.cal-d label{display:grid;gap:2px;cursor:pointer}.cal-d label input{position:absolute;opacity:0;pointer-events:none}.cal-d label span{font-size:11px;color:#9a3412;font-weight:700}.cal-d.fds label span{visibility:hidden;color:#5b21b6}
+.cal-d:has(label input:checked){background:#ede9fe;border-color:#7c3aed;box-shadow:inset 0 0 0 1px #7c3aed}.cal-d:has(label input:checked) label span{visibility:visible;color:#5b21b6}
+.cal-d:has(label input:focus-visible){outline:2px solid #2563eb;outline-offset:2px}
+.cal-d input[name^="h["]{width:100%;box-sizing:border-box;padding:4px 6px;font-size:12px;border-radius:8px}
+.cal-leg{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px}.cal-leg span::before{content:"";display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px;border:1px solid var(--line);background:var(--bg)}
+.cal-leg .fer::before{background:#fff7ed;border-color:#fdba74}.cal-leg .on::before{background:#ede9fe;border-color:#7c3aed}
+.cal-tot{background:var(--bg);border-radius:12px;padding:10px 14px;margin-top:12px;display:grid;gap:4px;font-size:13px;max-width:820px;box-sizing:border-box}.cal-tot div{display:flex;justify-content:space-between;gap:10px}.cal-tot .t{border-top:1px solid var(--line);padding-top:6px;font-weight:800}
+@media (max-width:560px){.cal{gap:3px}.cal-d{min-height:58px;padding:4px;font-size:11px}.cal-d label span{font-size:9.5px}.cal-d input[name^="h["]{font-size:11px;padding:3px}}
 .rcb-filtro{display:grid;gap:12px}.rcb-filtro .row{align-items:center}
 .og{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:12px;border:1px solid var(--line);background:var(--surface);font-weight:700;font-size:13px;cursor:pointer}.og input{width:16px;height:16px}
 .op{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:13px}
@@ -973,7 +1008,7 @@ th.c,td.c{text-align:center}
     . $grupo('comissoes', 'Comissões', [['comissoes', 'Comissões', $pode('com.lista')], ['planilha', 'Comissões planilha', $pode('com.planilha')] /* PLANILHA-TEMP */])
     . $grupo('recolhimento', 'Recolhimento', [['recolhimentos', 'Recolhimentos', $pode('rec.lista')], ['rec_comissao', 'Comissão', $pode('rec.com')]])
     . $grupo('instalacao', 'Instalação', [['instalacoes', 'Instalações concluídas', $pode('inst.lista')], ['inst_comissao', 'Comissões', $pode('inst.com')]])
-    . $grupo('rh', 'RH', [['rh_lancar', 'Lançamentos', $pode('rh.lanc')], ['rh_fecha', 'Fechamento do mês', $pode('rh.fecha')], ['rh_func', 'Funcionários', $pode('rh.func')]])
+    . $grupo('rh', 'RH', [['rh_lancar', 'Lançamentos', $pode('rh.lanc')], ['rh_fecha', 'Fechamento do mês', $pode('rh.fecha')], ['rh_func', 'Funcionários', $pode('rh.func')], ['rh_cfg', 'Feriados e valores', $admin]])
     . $grupo('serv', 'Serviços em execução', [['serv', 'Saldos', $pode('serv.saldo'), ['serv', 'serv_extrato']], ['serv_lancar', 'Lançar', $pode('serv.lanc') || $pode('serv.pag')], ['serv_lista', 'Serviços lançados', $pode('serv.saldo')], ['serv_cad', 'Equipes, obras e preços', $pode('serv.cad')]])
     . ($pode('recibos') ? $aba('recibos', 'Recibos') : '')
     . $grupo('config', 'Configurações', [['config', 'Permissões', $admin], ['gestores', 'Gestores', $pode('cfg.gest')], ['vendedores', 'Usuários', $pode('cfg.users')], ['planos', 'Planos', $pode('cfg.planos')], ['colab', 'Colaboradores do IXC', $pode('cfg.colab')]]) ?></nav>
@@ -1944,17 +1979,62 @@ th.c,td.c{text-align:center}
   </div>
   <?php if (!$funcsH): ?><div class="msg">Ainda não tem funcionário cadastrado. Cadastre primeiro em <a href="?p=rh_func">RH → Funcionários</a>.</div>
   <?php else: ?>
+  <?php if ($tipoF === 'sobre'):
+    $cfgH = rh_config();
+    $sf = (int)($_GET['sf'] ?? ($rhForm['funcionario_id'] ?? 0));
+    if (!array_filter($funcsH, fn($fu) => (int)$fu['id'] === $sf)) $sf = (int)$funcsH[0]['id'];
+    $fS = rh_funcionario($sf);
+    $marc = rh_sobre_mes($sf, $mesH);
+    $ferH = rh_feriados(substr($mesH, 0, 4));
+    $pagoS = rh_pago_em($sf, $mesH);
+    $podeHoras = in_array('horas', $rhTipos, true);
+    $ini = new DateTimeImmutable($mesH . '-01');
+    $sabdom = ['sab' => 'sábado', 'dom' => 'domingo'];
+?>
+  <div class="card" id="form-rh">
+    <h2>Novo lançamento</h2>
+    <nav class="rh-tipos" aria-label="Tipo do lançamento"><?php foreach ($tiposV as $tk => $tt): ?><a href="<?= $linkH ?>&amp;tipo=<?= $tk ?>#form-rh"<?= $tk === $tipoF ? ' aria-current="page"' : '' ?>><?= h($tt) ?></a><?php endforeach ?></nav>
+    <form method="get" class="row" style="margin-top:12px"><input type="hidden" name="p" value="rh_lancar"><input type="hidden" name="mes" value="<?= h($mesH) ?>"><input type="hidden" name="tipo" value="sobre">
+      <label class="op">Funcionário <select name="sf" data-auto><?php foreach ($funcsH as $fu): ?><option value="<?= (int)$fu['id'] ?>" <?= (int)$fu['id'] === $sf ? 'selected' : '' ?>><?= h($fu['nome']) ?></option><?php endforeach ?></select></label><noscript><button>Ver</button></noscript>
+      <span class="small">Calendário de <b><?= h(mes_nome($mesH)) ?></b> (mês de referência lá em cima). Marque os dias de sobreaviso: <?= rh_rs((float)$cfgH['sobre_dia']) ?> por dia, só sábado, domingo e feriado.<?= $podeHoras ? ' Se ele trabalhou no dia, escreva as horas: entram como hora informal, além do sobreaviso.' : '' ?></span></form>
+    <form method="post" action="<?= $linkH ?>&amp;tipo=sobre&amp;sf=<?= $sf ?>#form-rh"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= $sf ?>"><input type="hidden" name="mes" value="<?= h($mesH) ?>">
+      <div class="cal" role="group" aria-label="Dias de <?= h(mes_nome($mesH)) ?>">
+        <?php foreach (['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'] as $ds): ?><div class="cal-s"><?= $ds ?></div><?php endforeach ?>
+        <?= str_repeat('<div></div>', (int)$ini->format('w')) ?>
+        <?php for ($x = $ini; $x->format('Y-m') === $mesH; $x = $x->modify('+1 day')):
+          $d = $x->format('Y-m-d'); $tp = rh_dia_tipo($d); $m = $marc[$d] ?? null; ?>
+          <?php if ($tp === 'util'): ?><div class="cal-d util"><b><?= (int)$x->format('j') ?></b></div>
+          <?php else: ?><div class="cal-d <?= $tp === 'fer' ? 'fer' : 'fds' ?>">
+            <label><input type="checkbox" name="d[<?= $d ?>]" value="1" <?= $m && $m['sobre'] ? 'checked' : '' ?> <?= $pagoS ? 'disabled' : '' ?>><b><?= (int)$x->format('j') ?></b><span><?= h($tp === 'fer' ? $ferH[$d] : 'sobreaviso') ?></span></label>
+            <?php if ($podeHoras): ?><input name="h[<?= $d ?>]" value="<?= $m && $m['h'] ? h(rh_hm($m['h'])) : '' ?>" placeholder="trabalhou? h" aria-label="Horas trabalhadas em <?= h(rh_dt($d)) ?>" inputmode="decimal" <?= $pagoS ? 'disabled' : '' ?>><?php endif ?>
+          </div><?php endif ?>
+        <?php endfor ?>
+      </div>
+      <div class="cal-leg small"><span class="fds">sábado / domingo</span><span class="fer">feriado</span><span class="on">de sobreaviso</span></div>
+      <?php $diasS = array_keys(array_filter($marc, fn($m) => $m['sobre'])); $hsS = array_filter($marc, fn($m) => $m['h'] > 0);
+        $valS = array_sum(array_map(fn($l) => (float)$l['valor'], array_filter(rh_do_mes($mesH, $sf), fn($l) => $l['origem'] === 'cal' && in_array($l['tipo'], $rhTipos, true)))); ?>
+      <div class="cal-tot">
+        <div><span>Dias de sobreaviso de <?= h($fS['nome']) ?></span><b><?= $diasS ? h(implode(', ', array_map(fn($d) => substr($d, 8), $diasS))) : 'nenhum' ?></b></div>
+        <?php foreach ($hsS as $d => $m): ?><div><span>+ trabalhou <?= h(rh_dt($d)) ?>: <?= h(rh_hm($m['h'])) ?> h</span></div><?php endforeach ?>
+        <div class="t"><span>Total salvo no calendário</span><b><?= rh_rs($valS) ?></b></div>
+      </div>
+      <?php if ($pagoS): ?><div class="msg"><?= h($fS['nome']) ?> já foi pago em <?= h(mes_nome($mesH)) ?>: o calendário está travado.</div>
+      <?php else: ?><div class="row" style="margin-top:10px;justify-content:flex-end"><button class="pri" name="acao" value="rh_sobre_salvar">Salvar sobreaviso do mês</button></div><?php endif ?>
+    </form>
+    <p class="small">Cada dia marcado vira um lançamento de sobreaviso; as horas viram hora informal calculada pelo salário (<?= $cfgH['adic_desc'] == $cfgH['adic_util'] ? 'hora extra de ' . (int)$cfgH['adic_util'] . '%' : (int)$cfgH['adic_desc'] . '% em domingo e feriado, ' . (int)$cfgH['adic_util'] . '% no sábado' ?>). Salvar de novo troca o que estava marcado neste mês. Feriados: <?= $admin ? '<a href="?p=rh_cfg">RH → Feriados e valores</a>' : 'o admin cadastra' ?>.</p>
+  </div>
+  <?php else: ?>
   <form method="post" action="<?= $linkH ?>&amp;tipo=<?= h($tipoF) ?>" class="card" id="form-rh"><?= csrf_campo() ?><input type="hidden" name="l[tipo]" value="<?= h($tipoF) ?>">
     <h2>Novo lançamento</h2>
     <nav class="rh-tipos" aria-label="Tipo do lançamento"><?php foreach ($tiposV as $tk => $tt): ?><a href="<?= $linkH ?>&amp;tipo=<?= $tk ?>#form-rh"<?= $tk === $tipoF ? ' aria-current="page"' : '' ?>><?= h($tt) ?></a><?php endforeach ?></nav>
     <div class="rec-form" style="margin-top:12px">
       <label>Funcionário<select name="l[funcionario_id]" required><option value="">escolha</option><?php foreach ($funcsH as $fu):
-        $ref = $tipoF === 'horas' ? $fu['valor_hora'] : ($tipoF === 'sobre' ? $fu['valor_sobreaviso'] : ''); ?><option value="<?= (int)$fu['id'] ?>" <?= (int)$fu['id'] === (int)($rhForm['funcionario_id'] ?? 0) ? 'selected' : '' ?>><?= h($fu['nome']) ?><?= $ref !== '' ? ' · R$ ' . h(brl($ref)) . ($tipoF === 'horas' ? '/h' : '/dia') : '' ?></option><?php endforeach ?></select></label>
+        $hn = rh_hora_normal($fu); $ref = $tipoF === 'horas' && $hn > 0 ? number_format($hn, 2, '.', '') : ''; ?><option value="<?= (int)$fu['id'] ?>" <?= (int)$fu['id'] === (int)($rhForm['funcionario_id'] ?? 0) ? 'selected' : '' ?>><?= h($fu['nome']) ?><?= $ref !== '' ? ' · hora normal R$ ' . h(brl($ref)) : ($tipoF === 'horas' ? ' · sem salário' : '') ?></option><?php endforeach ?></select></label>
       <label>Mês de referência<select name="l[mes]"><?php foreach ($mesesForm as $om): ?><option value="<?= h($om) ?>" <?= $om === ($rhForm['mes'] ?? $mesH) ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select></label>
       <label>Data<input type="date" name="l[data]" value="<?= $vF('data', date('Y-m-d')) ?>" required></label>
       <?php if ($tipoF === 'horas'): ?>
       <label>Horas<input name="l[qtd]" value="<?= $vF('qtd') ?>" placeholder="ex.: 2:30" inputmode="decimal" required></label>
-      <label>Valor da hora R$<input name="l[unitario]" value="<?= $vF('unitario') ?>" placeholder="do cadastro" inputmode="decimal"></label>
+      <label>Valor da hora extra R$<input name="l[unitario]" value="<?= $vF('unitario') ?>" placeholder="pelo salário" inputmode="decimal"></label>
       <?php elseif ($tipoF === 'sobre'): ?>
       <label>Dias de sobreaviso<input name="l[qtd]" value="<?= $vF('qtd', '1') ?>" placeholder="ex.: 2" inputmode="decimal" required></label>
       <label>Valor por dia R$<input name="l[unitario]" value="<?= $vF('unitario') ?>" placeholder="do cadastro" inputmode="decimal"></label>
@@ -1964,8 +2044,9 @@ th.c,td.c{text-align:center}
       <label class="larga">Descrição / motivo (vai no recibo)<input name="l[descricao]" value="<?= $vF('descricao') ?>" maxlength="200" placeholder="<?= h(['horas' => 'ex.: rompimento de fibra na rua 7, após o expediente', 'sobre' => 'ex.: escala do fim de semana', 'compl' => 'ex.: complemento de salário de ' . mb_strtolower(mes_nome($mesH)), 'pag' => 'ex.: ajuda de combustível'][$tipoF]) ?>" <?= in_array($tipoF, ['compl', 'pag'], true) ? 'required' : '' ?>></label>
     </div>
     <div class="row" style="margin-top:10px"><button class="pri" name="acao" value="rh_lanc_salvar">Lançar <?= h(mb_strtolower(RH_TIPOS[$tipoF])) ?></button>
-      <span class="small"><?= $tipoF === 'horas' ? 'Valor = horas × valor da hora. Em branco, usa o valor da hora do cadastro do funcionário.' : ($tipoF === 'sobre' ? 'Valor = dias × valor por dia. Em branco, usa o valor do sobreaviso do cadastro do funcionário.' : 'Valor livre, digitado pelo RH.') ?></span></div>
+      <span class="small"><?php $cfgH = rh_config(); ?><?= $tipoF === 'horas' ? 'Valor = horas × hora extra. Hora extra = salário ÷ jornada (' . h($cfgH['jornada']) . ' h) + ' . (int)$cfgH['adic_util'] . '%' . ($cfgH['adic_util'] != $cfgH['adic_desc'] ? ' (' . (int)$cfgH['adic_desc'] . '% em domingo e feriado)' : '') . ', pela data. Só digite o valor da hora para usar outro.' : ($tipoF === 'compl' ? 'Quem tem complemento fixo no cadastro já recebe sozinho todo mês. Aqui é só para um valor diferente ou a mais.' : 'Valor livre, digitado pelo RH.') ?></span></div>
   </form>
+  <?php endif ?>
   <?php endif ?>
   <div class="card">
     <form method="get" class="row" style="justify-content:space-between"><input type="hidden" name="p" value="rh_lancar"><input type="hidden" name="mes" value="<?= h($mesH) ?>">
@@ -2008,7 +2089,7 @@ th.c,td.c{text-align:center}
     <thead><tr><th>Funcionário</th><?php foreach ($colsH as $ck => $ct): ?><th class="r"><?= h($ct) ?></th><?php endforeach ?><th class="r">Total</th><th>Situação</th><th></th></tr></thead>
     <?php foreach ($totH as $fid => $r): ?>
     <tr><td><b><?= h($r['f']['nome']) ?></b><br><span class="small"><?= h($r['f']['funcao'] ?: '—') ?></span></td>
-      <?php foreach ($colsH as $ck => $ct): ?><td class="n r"><?= rh_rs($r[$ck]) ?><?= $ck === 'horas' && $r['h'] ? '<br><span class="small">' . rh_hm($r['h']) . ' h</span>' : '' ?><?= $ck === 'sobre' && $r['dias'] ? '<br><span class="small">' . rtrim(rtrim(number_format($r['dias'], 1, ',', ''), '0'), ',') . ' dia(s)</span>' : '' ?></td><?php endforeach ?>
+      <?php foreach ($colsH as $ck => $ct): ?><td class="n r"><?= rh_rs($r[$ck]) ?><?= $ck === 'horas' && $r['h'] ? '<br><span class="small">' . rh_hm($r['h']) . ' h' . ($r['dsr'] > 0 ? ' + DSR ' . rh_rs($r['dsr']) : '') . '</span>' : '' ?><?= $ck === 'sobre' && $r['dias'] ? '<br><span class="small">' . rtrim(rtrim(number_format($r['dias'], 1, ',', ''), '0'), ',') . ' dia(s)</span>' : '' ?></td><?php endforeach ?>
       <td class="n r"><b><?= rh_rs($r['tot']) ?></b></td>
       <td><?= $r['pago_em'] !== '' ? '<span class="tp pago">pago ' . h(rh_dt($r['pago_em'])) . '</span>' : '<span class="pill q">a pagar</span>' ?></td>
       <td><div class="acoes"><?php if ($pode('recibos.rh')): ?><a class="bt" href="?p=recibos&amp;mes=<?= h($mesH) ?>&amp;g=1&amp;s[]=<?= h(urlencode(recibo_chave((string)$r['f']['nome']))) ?>">Recibo</a><?php endif ?>
@@ -2085,22 +2166,59 @@ th.c,td.c{text-align:center}
   </form>
   <?php endif ?>
 
+<?php elseif ($p === 'rh_cfg'):
+    $cfgH = rh_config();
+    $anoF = preg_match('/^\d{4}$/', (string)($_GET['ano'] ?? '')) ? (string)$_GET['ano'] : date('Y');
+    $ferF = rh_feriados($anoF);
+?>
+  <div class="topo"><div><h1>RH · Feriados e valores</h1><p class="small">Só o admin. Vale para todos os funcionários e para os próximos lançamentos (o que já foi lançado não muda).</p></div></div>
+  <form method="post" action="?p=rh_cfg" class="card"><?= csrf_campo() ?>
+    <h2>Valores</h2>
+    <div class="rec-form">
+      <label>Sobreaviso por dia R$<input name="c[sobre_dia]" value="<?= h(brl((string)$cfgH['sobre_dia'])) ?>" inputmode="decimal" required></label>
+      <label>Jornada padrão (horas por mês)<input name="c[jornada]" value="<?= h($cfgH['jornada']) ?>" inputmode="numeric" required></label>
+      <label>Adicional da hora extra em dia útil e sábado (%)<input name="c[adic_util]" value="<?= (int)$cfgH['adic_util'] ?>" inputmode="numeric" required></label>
+      <label>Adicional da hora extra em domingo e feriado (%)<input name="c[adic_desc]" value="<?= (int)$cfgH['adic_desc'] ?>" inputmode="numeric" required></label>
+      <label class="larga op"><input type="checkbox" name="c[dsr]" value="1" <?= $cfgH['dsr'] ? 'checked' : '' ?> style="width:18px;height:18px">Somar o DSR (descanso semanal) sobre as horas informais no fechamento</label>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="pri" name="acao" value="rh_cfg_salvar">Salvar valores</button></div>
+    <p class="small">Hora normal = salário ÷ jornada. Hora extra = hora normal + adicional (100% = o dobro). DSR, se marcado: valor das horas do mês ÷ dias úteis × (domingos + feriados).</p>
+  </form>
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">Feriados de <?= h($anoF) ?></h2>
+      <form method="get" class="in"><input type="hidden" name="p" value="rh_cfg"><select name="ano" aria-label="Ano" data-auto><?php foreach ([date('Y') - 1, date('Y'), date('Y') + 1] as $an): ?><option <?= (string)$an === $anoF ? 'selected' : '' ?>><?= $an ?></option><?php endforeach ?></select><noscript><button>Ver</button></noscript></form></div>
+    <div class="tw" style="margin-top:10px"><table class="rec">
+      <thead><tr><th>Data</th><th>Dia</th><th>Feriado</th><th></th></tr></thead>
+      <?php $sem = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+      foreach ($ferF as $d => $n): ?><tr><td class="n"><?= h(rh_dt($d)) ?></td><td class="small"><?= $sem[(int)date('w', strtotime($d))] ?></td><td><b><?= h($n) ?></b></td>
+        <td><form method="post" action="?p=rh_cfg&amp;ano=<?= h($anoF) ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="data" value="<?= h($d) ?>"><button class="del" name="acao" value="rh_feriado_excluir">Excluir</button></form></td></tr><?php endforeach ?>
+    </table></div>
+    <form method="post" action="?p=rh_cfg&amp;ano=<?= h($anoF) ?>" class="row" style="margin-top:12px"><?= csrf_campo() ?>
+      <input type="date" name="data" aria-label="Data do feriado" required><input name="nome" placeholder="ex.: Aniversário da cidade" aria-label="Nome do feriado" maxlength="60" required>
+      <button class="pri" name="acao" value="rh_feriado_salvar">Adicionar feriado</button></form>
+    <p class="small">Os feriados nacionais já vêm. Acrescente os da cidade. Feriado entra no calendário do sobreaviso e a hora extra nele usa o adicional de domingo e feriado.</p>
+  </div>
+
 <?php elseif ($p === 'rh_func'):
     $funcsH = rh_funcionarios();
     $editF = ($eid = (int)($_GET['editar'] ?? 0)) ? rh_funcionario($eid) : null;
     $vE = fn(string $k) => h((string)($editF[$k] ?? ''));
     $emp = rh_empresa();
+    $verSal = $pode('rh.lanc.compl'); // salário e complemento fixo: só quem vê complemento de salário
+    $cfgH = rh_config();
 ?>
-  <div class="topo"><div><h1>RH · Funcionários</h1><p class="small">Cadastro de quem recebe horas informais, sobreaviso, complemento e pagamentos extras. É só a ficha do RH: o funcionário não precisa ter usuário no portal. Os valores do cadastro só preenchem o lançamento sozinhos; o RH pode trocar em cada lançamento.</p></div></div>
+  <div class="topo"><div><h1>RH · Funcionários</h1><p class="small">Cadastro de quem recebe horas informais, sobreaviso, complemento e pagamentos extras. É só a ficha do RH: o funcionário não precisa ter usuário no portal. <?= $verSal ? 'Pelo salário o sistema calcula a hora: salário ÷ jornada (' . h($cfgH['jornada']) . ' h por mês, se ficar em branco), e a hora extra soma ' . (int)$cfgH['adic_util'] . '%. O complemento fixo entra sozinho todo mês.' : '' ?></p></div></div>
   <div class="card"><div class="tw"><table class="rec">
-    <thead><tr><th>Nome</th><th>CPF</th><th>Função</th><th class="r">Valor da hora informal</th><th class="r">Sobreaviso por dia</th><th>Situação</th><th></th></tr></thead>
+    <thead><tr><th>Nome</th><th>CPF</th><th>Função</th><?php if ($verSal): ?><th class="r">Salário</th><th class="r">Hora normal</th><th class="r">Hora extra</th><th class="r">Complemento fixo</th><?php endif ?><th>Situação</th><th></th></tr></thead>
     <?php foreach ($funcsH as $fu): ?>
     <tr><td><b><?= h($fu['nome']) ?></b></td><td class="n"><?= h(rh_cpf($fu['cpf']) ?: '—') ?></td><td><?= h($fu['funcao'] ?: '—') ?></td>
-      <td class="n r"><?= $fu['valor_hora'] !== '' ? 'R$ ' . h(brl($fu['valor_hora'])) : '—' ?></td><td class="n r"><?= $fu['valor_sobreaviso'] !== '' ? 'R$ ' . h(brl($fu['valor_sobreaviso'])) : '—' ?></td>
+      <?php if ($verSal): $hn = rh_hora_normal($fu); ?><td class="n r"><?= $fu['salario'] !== '' ? 'R$ ' . h(brl($fu['salario'])) . '<br><span class="small">' . h($fu['jornada'] ?: $cfgH['jornada']) . ' h/mês</span>' : ($hn > 0 ? '<span class="small">sem salário (hora antiga)</span>' : '—') ?></td>
+      <td class="n r"><?= $hn > 0 ? rh_rs($hn) : '—' ?></td><td class="n r"><?= $hn > 0 ? rh_rs($hn * (1 + $cfgH['adic_util'] / 100)) . ($cfgH['adic_util'] != $cfgH['adic_desc'] ? '<br><span class="small">dom/feriado ' . rh_rs($hn * (1 + $cfgH['adic_desc'] / 100)) . '</span>' : '') : '—' ?></td>
+      <td class="n r"><?= (float)$fu['compl_fixo'] > 0 ? 'R$ ' . h(brl($fu['compl_fixo'])) : '—' ?></td><?php endif ?>
       <td><?= $fu['ativo'] ? '<span class="pill ok">ativo</span>' : '<span class="pill er">inativo</span>' ?></td>
       <td><div class="acoes"><a class="bt" href="?p=rh_func&amp;editar=<?= (int)$fu['id'] ?>#form-func">Corrigir</a><form method="post" action="?p=rh_func" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$fu['id'] ?>"><button name="acao" value="rh_func_ativo" title="<?= $fu['ativo'] ? 'Tirar da lista de lançamentos (o histórico continua)' : 'Voltar para a lista de lançamentos' ?>"><?= $fu['ativo'] ? 'Desativar' : 'Reativar' ?></button></form></div></td></tr>
     <?php endforeach ?>
-    <?php if (!$funcsH): ?><tr><td colspan="7" class="small">Nenhum funcionário cadastrado ainda.</td></tr><?php endif ?>
+    <?php if (!$funcsH): ?><tr><td colspan="9" class="small">Nenhum funcionário cadastrado ainda.</td></tr><?php endif ?>
   </table></div></div>
   <form method="post" action="?p=rh_func" class="card" id="form-func"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)($editF['id'] ?? 0) ?>">
     <h2><?= $editF ? 'Corrigir ' . h($editF['nome']) : 'Cadastrar funcionário' ?></h2>
@@ -2108,8 +2226,11 @@ th.c,td.c{text-align:center}
       <label>Nome<input name="f[nome]" value="<?= $vE('nome') ?>" required maxlength="80"></label>
       <label>CPF<input name="f[cpf]" value="<?= h(rh_cpf((string)($editF['cpf'] ?? ''))) ?>" inputmode="numeric" placeholder="000.000.000-00"></label>
       <label>Função<input name="f[funcao]" value="<?= $vE('funcao') ?>" maxlength="60" placeholder="ex.: Técnico de campo"></label>
-      <label>Valor da hora informal R$<input name="f[valor_hora]" value="<?= h(brl((string)($editF['valor_hora'] ?? ''))) ?>" inputmode="decimal" placeholder="25,00"></label>
-      <label>Sobreaviso por dia R$<input name="f[valor_sobreaviso]" value="<?= h(brl((string)($editF['valor_sobreaviso'] ?? ''))) ?>" inputmode="decimal" placeholder="60,00"></label>
+      <?php if ($verSal): ?>
+      <label>Salário R$<input name="f[salario]" value="<?= h(brl((string)($editF['salario'] ?? ''))) ?>" inputmode="decimal" placeholder="2.200,00"></label>
+      <label>Jornada (horas por mês)<input name="f[jornada]" value="<?= $vE('jornada') ?>" inputmode="numeric" placeholder="<?= h($cfgH['jornada']) ?> (padrão)"></label>
+      <label>Complemento fixo por mês R$<input name="f[compl_fixo]" value="<?= h(brl((string)($editF['compl_fixo'] ?? ''))) ?>" inputmode="decimal" placeholder="em branco: não tem"></label>
+      <?php endif ?>
     </div>
     <div class="row" style="margin-top:10px"><button class="pri" name="acao" value="rh_func_salvar"><?= $editF ? 'Salvar correção' : 'Cadastrar' ?></button><?php if ($editF): ?><a href="?p=rh_func">Cancelar</a><?php endif ?></div>
   </form>

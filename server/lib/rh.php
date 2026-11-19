@@ -58,7 +58,138 @@ function rh_tabela(): void
         cidade TEXT NOT NULL DEFAULT ''
     );
     INSERT OR IGNORE INTO rh_empresa (id) VALUES (1);
+    CREATE TABLE IF NOT EXISTS rh_config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        sobre_dia TEXT NOT NULL DEFAULT '50.00',
+        jornada TEXT NOT NULL DEFAULT '220',
+        adic_util INTEGER NOT NULL DEFAULT 100,
+        adic_desc INTEGER NOT NULL DEFAULT 100,
+        dsr INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT OR IGNORE INTO rh_config (id) VALUES (1);
+    CREATE TABLE IF NOT EXISTS rh_feriados (data TEXT PRIMARY KEY, nome TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS rh_feriados_anos (ano TEXT PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS rh_compl_feito (
+        funcionario_id INTEGER NOT NULL,
+        mes TEXT NOT NULL,
+        PRIMARY KEY (funcionario_id, mes)
+    );
     SQL);
+    $cols = array_column(db()->query('PRAGMA table_info(rh_funcionarios)')->fetchAll(), 'name');
+    foreach (['salario', 'jornada', 'compl_fixo'] as $c)
+        if (!in_array($c, $cols, true)) db()->exec("ALTER TABLE rh_funcionarios ADD COLUMN $c TEXT NOT NULL DEFAULT ''");
+    $cols = array_column(db()->query('PRAGMA table_info(rh_lancamentos)')->fetchAll(), 'name');
+    // adicional da hora extra (100 = 100%) e de onde veio: '' digitado, 'cal' calendário do sobreaviso, 'auto' complemento fixo
+    if (!in_array('adicional', $cols, true)) db()->exec('ALTER TABLE rh_lancamentos ADD COLUMN adicional INTEGER NOT NULL DEFAULT 0');
+    if (!in_array('origem', $cols, true)) db()->exec("ALTER TABLE rh_lancamentos ADD COLUMN origem TEXT NOT NULL DEFAULT ''");
+}
+
+// ---------- valores e feriados (só o admin muda) ----------
+
+/** sobre_dia (R$ por dia), jornada (h/mês), adic_util e adic_desc (% da hora extra), dsr (0/1) */
+function rh_config(): array
+{
+    return db()->query('SELECT * FROM rh_config WHERE id = 1')->fetch() ?: ['sobre_dia' => '50.00', 'jornada' => '220', 'adic_util' => 100, 'adic_desc' => 100, 'dsr' => 0];
+}
+
+function rh_config_salvar(array $in): void
+{
+    $sd = dinheiro((string)($in['sobre_dia'] ?? ''));
+    if ($sd === '' || (float)$sd <= 0) throw new RuntimeException('Preencha o valor do sobreaviso por dia.');
+    $j = (int)preg_replace('/\D/', '', (string)($in['jornada'] ?? ''));
+    if ($j < 1 || $j > 400) throw new RuntimeException('A jornada precisa ser em horas por mês (ex.: 220).');
+    $au = (int)($in['adic_util'] ?? 100);
+    $ad = (int)($in['adic_desc'] ?? 100);
+    if ($au < 0 || $au > 300 || $ad < 0 || $ad > 300) throw new RuntimeException('Adicional da hora extra entre 0% e 300%.');
+    db()->prepare('UPDATE rh_config SET sobre_dia = ?, jornada = ?, adic_util = ?, adic_desc = ?, dsr = ? WHERE id = 1')
+        ->execute([$sd, (string)$j, $au, $ad, !empty($in['dsr']) ? 1 : 0]);
+}
+
+/** Domingo de Páscoa (algoritmo de Meeus) */
+function rh_pascoa(int $a): string
+{
+    $b = intdiv($a, 100); $c = $a % 100; $d = intdiv($b, 4); $e = $b % 4; $f = intdiv($b + 8, 25); $g = intdiv($b - $f + 1, 3);
+    $h = (19 * ($a % 19) + $b - $d - $g + 15) % 30; $i = intdiv($c, 4); $k = $c % 4; $l = (32 + 2 * $e + 2 * $i - $h - $k) % 7;
+    $m = intdiv(($a % 19) + 11 * $h + 22 * $l, 451); $mes = intdiv($h + $l - 7 * $m + 114, 31); $dia = (($h + $l - 7 * $m + 114) % 31) + 1;
+    return sprintf('%04d-%02d-%02d', $a, $mes, $dia);
+}
+
+/** Feriados do ano [data => nome]. Na primeira vez que o ano aparece, já entram os nacionais. */
+function rh_feriados(string $ano): array
+{
+    if (!preg_match('/^\d{4}$/', $ano)) return [];
+    $q = db()->prepare('INSERT OR IGNORE INTO rh_feriados_anos (ano) VALUES (?)');
+    $q->execute([$ano]);
+    if ($q->rowCount()) {
+        $sexta = (new DateTimeImmutable(rh_pascoa((int)$ano)))->modify('-2 day')->format('Y-m-d');
+        $ins = db()->prepare('INSERT OR IGNORE INTO rh_feriados (data, nome) VALUES (?,?)');
+        foreach (['01-01' => 'Confraternização Universal', '04-21' => 'Tiradentes', '05-01' => 'Dia do Trabalho', '09-07' => 'Independência',
+            '10-12' => 'Nossa Senhora Aparecida', '11-02' => 'Finados', '11-15' => 'Proclamação da República', '11-20' => 'Consciência Negra', '12-25' => 'Natal'] as $md => $n)
+            $ins->execute(["$ano-$md", $n]);
+        $ins->execute([$sexta, 'Sexta-feira Santa']);
+    }
+    $q = db()->prepare('SELECT data, nome FROM rh_feriados WHERE substr(data, 1, 4) = ? ORDER BY data');
+    $q->execute([$ano]);
+    return $q->fetchAll(PDO::FETCH_KEY_PAIR);
+}
+
+function rh_feriado_salvar(string $data, string $nome): void
+{
+    if (!rh_data_ok($data)) throw new RuntimeException('Escolha a data do feriado.');
+    $nome = mb_substr(trim($nome), 0, 60);
+    if ($nome === '') throw new RuntimeException('Escreva o nome do feriado.');
+    rh_feriados(substr($data, 0, 4)); // garante os nacionais do ano antes
+    db()->prepare('INSERT INTO rh_feriados (data, nome) VALUES (?,?) ON CONFLICT(data) DO UPDATE SET nome = excluded.nome')->execute([$data, $nome]);
+}
+
+function rh_feriado_excluir(string $data): void
+{
+    db()->prepare('DELETE FROM rh_feriados WHERE data = ?')->execute([$data]);
+}
+
+/** 'fer' (feriado), 'dom', 'sab' ou 'util' */
+function rh_dia_tipo(string $data): string
+{
+    if (isset(rh_feriados(substr($data, 0, 4))[$data])) return 'fer';
+    $w = (int)date('w', strtotime($data));
+    return $w === 0 ? 'dom' : ($w === 6 ? 'sab' : 'util');
+}
+
+/** % da hora extra no dia: domingo e feriado usam um, os outros dias outro (os dois começam em 100%) */
+function rh_adicional(string $data): int
+{
+    $c = rh_config();
+    return (int)(in_array(rh_dia_tipo($data), ['dom', 'fer'], true) ? $c['adic_desc'] : $c['adic_util']);
+}
+
+/** Hora normal do funcionário: salário ÷ jornada (a dele ou a padrão). Sem salário, usa o valor da hora antigo do cadastro. */
+function rh_hora_normal(array $f): float
+{
+    $sal = (float)($f['salario'] ?? 0);
+    if ($sal > 0) {
+        $j = (float)(($f['jornada'] ?? '') !== '' ? $f['jornada'] : rh_config()['jornada']);
+        return $j > 0 ? $sal / $j : 0.0;
+    }
+    return (float)($f['valor_hora'] ?? 0);
+}
+
+/** Valor da hora extra num dia: hora normal × (1 + adicional) */
+function rh_hora_extra(array $f, string $data): array
+{
+    $ad = rh_adicional($data);
+    return [round(rh_hora_normal($f) * (1 + $ad / 100), 2), $ad];
+}
+
+/** DSR sobre as horas informais do mês (só se ligado na configuração): valor ÷ dias úteis × (domingos + feriados). */
+function rh_dsr(string $mes, float $valorHoras): float
+{
+    if ($valorHoras <= 0 || !rh_config()['dsr']) return 0.0;
+    $uteis = $desc = 0;
+    $d = new DateTimeImmutable("$mes-01");
+    for ($x = $d; $x->format('Y-m') === $mes; $x = $x->modify('+1 day')) {
+        in_array(rh_dia_tipo($x->format('Y-m-d')), ['dom', 'fer'], true) ? $desc++ : $uteis++;
+    }
+    return $uteis ? round($valorHoras / $uteis * $desc, 2) : 0.0;
 }
 
 /** "2:30", "2h30", "2,5" -> 2.5 (horas); 0 se não entender */
@@ -89,7 +220,7 @@ function rh_rs(float $v): string
 /** Texto do detalhe de um lançamento: "2:30 h × R$ 25,00" */
 function rh_detalhe(array $l): string
 {
-    if ($l['tipo'] === 'horas') return rh_hm((float)$l['qtd']) . ' h × ' . rh_rs((float)$l['unitario']);
+    if ($l['tipo'] === 'horas') return rh_hm((float)$l['qtd']) . ' h × ' . rh_rs((float)$l['unitario']) . (!empty($l['adicional']) ? ' (' . (int)$l['adicional'] . '%)' : '');
     if ($l['tipo'] === 'sobre') {
         $q = (float)$l['qtd'];
         return rtrim(rtrim(number_format($q, 1, ',', ''), '0'), ',') . ($q == 1 ? ' dia' : ' dias') . ' × ' . rh_rs((float)$l['unitario']);
@@ -129,24 +260,31 @@ function rh_cpf(string $s): string
 }
 
 /** Cadastra ($id = 0) ou corrige um funcionário. Devolve o id. */
-function rh_func_salvar(array $in, int $id): int
+function rh_func_salvar(array $in, int $id, bool $sal = true): int
 {
     $nome = up((string)($in['nome'] ?? ''));
     $cpf = so_digitos((string)($in['cpf'] ?? ''));
     if ($nome === '') throw new RuntimeException('Preencha o nome do funcionário.');
     if ($cpf !== '' && strlen($cpf) !== 11) throw new RuntimeException('O CPF precisa ter 11 números.');
-    $d = [mb_substr($nome, 0, 80), $cpf, mb_substr(trim((string)($in['funcao'] ?? '')), 0, 60),
-        dinheiro((string)($in['valor_hora'] ?? '')), dinheiro((string)($in['valor_sobreaviso'] ?? ''))];
+    $d = [mb_substr($nome, 0, 80), $cpf, mb_substr(trim((string)($in['funcao'] ?? '')), 0, 60)];
     $q = db()->prepare('SELECT id FROM rh_funcionarios WHERE nome = ? AND id <> ?');
     $q->execute([$d[0], $id]);
     if ($q->fetchColumn()) throw new RuntimeException("Já tem um funcionário chamado {$d[0]}.");
     if ($id) {
         if (!rh_funcionario($id)) throw new RuntimeException('Esse funcionário não existe mais.');
-        db()->prepare('UPDATE rh_funcionarios SET nome = ?, cpf = ?, funcao = ?, valor_hora = ?, valor_sobreaviso = ? WHERE id = ?')->execute([...$d, $id]);
-        return $id;
+        db()->prepare('UPDATE rh_funcionarios SET nome = ?, cpf = ?, funcao = ? WHERE id = ?')->execute([...$d, $id]);
+    } else {
+        db()->prepare('INSERT INTO rh_funcionarios (nome, cpf, funcao) VALUES (?,?,?)')->execute($d);
+        $id = (int)db()->lastInsertId();
     }
-    db()->prepare('INSERT INTO rh_funcionarios (nome, cpf, funcao, valor_hora, valor_sobreaviso) VALUES (?,?,?,?,?)')->execute($d);
-    return (int)db()->lastInsertId();
+    // salário, jornada e complemento fixo: só vêm no formulário de quem pode ver
+    if ($sal) {
+        $j = preg_replace('/\D/', '', (string)($in['jornada'] ?? ''));
+        if ($j !== '' && ((int)$j < 1 || (int)$j > 400)) throw new RuntimeException('A jornada é em horas por mês (ex.: 220).');
+        db()->prepare('UPDATE rh_funcionarios SET salario = ?, jornada = ?, compl_fixo = ? WHERE id = ?')
+            ->execute([dinheiro((string)($in['salario'] ?? '')), $j, dinheiro((string)($in['compl_fixo'] ?? '')), $id]);
+    }
+    return $id;
 }
 
 // ---------- lançamentos ----------
@@ -179,8 +317,16 @@ function rh_lanc_salvar(array $in, string $quem): int
         if ($qtd <= 0) throw new RuntimeException($tipo === 'horas' ? 'Preencha as horas (ex.: 2:30).' : 'Preencha quantos dias de sobreaviso.');
         if ($qtd > ($tipo === 'horas' ? 300 : 31)) throw new RuntimeException('Quantidade grande demais. Confira o que foi digitado.');
         $unit = dinheiro((string)($in['unitario'] ?? ''));
-        if ($unit === '') $unit = $tipo === 'horas' ? $f['valor_hora'] : $f['valor_sobreaviso'];
-        if ($unit === '' || (float)$unit <= 0) throw new RuntimeException('Preencha o valor ' . ($tipo === 'horas' ? 'da hora' : 'por dia') . ' (ou cadastre no funcionário).');
+        $adic = 0;
+        if ($unit === '') {
+            if ($tipo === 'horas') {
+                [$u, $adic] = rh_hora_extra($f, $data);
+                $unit = $u > 0 ? number_format($u, 2, '.', '') : '';
+            } else {
+                $unit = (string)rh_config()['sobre_dia'];
+            }
+        }
+        if ($unit === '' || (float)$unit <= 0) throw new RuntimeException($tipo === 'horas' ? 'Cadastre o salário do funcionário (RH → Funcionários) ou digite o valor da hora.' : 'Preencha o valor por dia.');
         $valor = number_format(round($qtd * (float)$unit, 2), 2, '.', '');
     } else {
         $qtd = 1.0;
@@ -189,8 +335,8 @@ function rh_lanc_salvar(array $in, string $quem): int
         if ($valor === '' || (float)$valor <= 0) throw new RuntimeException('Preencha o valor.');
         if ($desc === '') throw new RuntimeException('Escreva a descrição (vai no recibo).');
     }
-    db()->prepare('INSERT INTO rh_lancamentos (funcionario_id, mes, data, tipo, qtd, unitario, valor, descricao, lancado_por) VALUES (?,?,?,?,?,?,?,?,?)')
-        ->execute([$f['id'], $mes, $data, $tipo, $qtd, $unit, $valor, $desc, $quem]);
+    db()->prepare('INSERT INTO rh_lancamentos (funcionario_id, mes, data, tipo, qtd, unitario, valor, descricao, lancado_por, adicional) VALUES (?,?,?,?,?,?,?,?,?,?)')
+        ->execute([$f['id'], $mes, $data, $tipo, $qtd, $unit, $valor, $desc, $quem, $adic ?? 0]);
     return (int)db()->lastInsertId();
 }
 
@@ -261,6 +407,12 @@ function rh_totais(string $mes, array $soIds = [], array $tipos = []): array
         if ($l['tipo'] === 'sobre') $o['dias'] += (float)$l['qtd'];
         unset($o);
     }
+    foreach ($out as &$o) {
+        $o['dsr'] = rh_dsr($mes, $o['horas']);
+        $o['horas'] += $o['dsr'];
+        $o['tot'] += $o['dsr'];
+    }
+    unset($o);
     uasort($out, fn($a, $b) => strcmp($a['f']['nome'], $b['f']['nome']));
     return $out;
 }
@@ -319,4 +471,94 @@ function rh_extenso(float $v): string
     }
     if ($cs) $s .= ($s !== '' ? ' e ' : '') . $ate999($cs) . ($cs === 1 ? ' centavo' : ' centavos');
     return $s !== '' ? $s : 'zero real';
+}
+
+// ---------- sobreaviso no calendário ----------
+
+/** O que já está marcado no calendário do mês: [data => ['sobre' => bool, 'h' => horas trabalhadas]] */
+function rh_sobre_mes(int $fid, string $mes): array
+{
+    $q = db()->prepare("SELECT data, tipo, qtd FROM rh_lancamentos WHERE funcionario_id = ? AND mes = ? AND origem = 'cal'");
+    $q->execute([$fid, $mes]);
+    $out = [];
+    foreach ($q as $l) {
+        $o = &$out[$l['data']];
+        $o ??= ['sobre' => false, 'h' => 0.0];
+        if ($l['tipo'] === 'sobre') $o['sobre'] = true; else $o['h'] += (float)$l['qtd'];
+        unset($o);
+    }
+    return $out;
+}
+
+/**
+ * Grava o calendário do sobreaviso do funcionário no mês (troca o que estava).
+ * $dias = [data => '1'], $horas = [data => '3:00']. Só sábado, domingo e feriado.
+ * Cada dia vira um lançamento de sobreaviso; as horas trabalhadas viram horas informais desse dia.
+ */
+function rh_sobre_salvar(int $fid, string $mes, array $dias, array $horas, string $quem, bool $podeHoras): array
+{
+    $f = rh_funcionario($fid);
+    if (!$f || !$f['ativo']) throw new RuntimeException('Escolha o funcionário.');
+    if (!rh_mes_ok($mes)) throw new RuntimeException('Mês inválido.');
+    if ($pg = rh_pago_em($fid, $mes)) throw new RuntimeException("{$f['nome']} já foi pago em " . mes_nome($mes) . ' (' . rh_dt($pg) . '). Peça ao admin para desfazer o pagamento.');
+    $c = rh_config();
+    $novos = [];
+    foreach (array_unique(array_merge(array_keys(array_filter($dias)), array_keys(array_filter($horas, fn($v) => trim((string)$v) !== '')))) as $d) {
+        $d = (string)$d;
+        if (!rh_data_ok($d) || substr($d, 0, 7) !== $mes) continue;
+        $tp = rh_dia_tipo($d);
+        if ($tp === 'util') throw new RuntimeException(rh_dt($d) . ' é dia útil: sobreaviso só em sábado, domingo e feriado.');
+        $h = rh_horas((string)($horas[$d] ?? ''));
+        if (trim((string)($horas[$d] ?? '')) !== '' && $h <= 0) throw new RuntimeException('Horas de ' . rh_dt($d) . ' não entendidas. Use 3:00 ou 2:30.');
+        if ($h > 24) throw new RuntimeException('Mais de 24 horas em ' . rh_dt($d) . '. Confira.');
+        if ($h > 0 && !$podeHoras) throw new RuntimeException('Você não tem permissão para lançar horas informais.');
+        $novos[$d] = [$tp, $h];
+    }
+    ksort($novos);
+    $nomeDia = ['sab' => 'sábado', 'dom' => 'domingo', 'fer' => 'feriado'];
+    $fer = rh_feriados(substr($mes, 0, 4));
+    $db = db();
+    $db->beginTransaction();
+    try {
+        $db->prepare("DELETE FROM rh_lancamentos WHERE funcionario_id = ? AND mes = ? AND origem = 'cal'" . ($podeHoras ? '' : " AND tipo = 'sobre'"))->execute([$fid, $mes]);
+        $ins = $db->prepare("INSERT INTO rh_lancamentos (funcionario_id, mes, data, tipo, qtd, unitario, valor, descricao, lancado_por, adicional, origem) VALUES (?,?,?,?,?,?,?,?,?,?,'cal')");
+        $nh = 0.0;
+        foreach ($novos as $d => [$tp, $h]) {
+            $qual = $tp === 'fer' ? ($fer[$d] ?? 'feriado') : $nomeDia[$tp];
+            $ins->execute([$fid, $mes, $d, 'sobre', 1, $c['sobre_dia'], $c['sobre_dia'], 'Sobreaviso ' . rh_dt($d) . " ($qual)", $quem, 0]);
+            if ($h > 0) {
+                [$u, $ad] = rh_hora_extra($f, $d);
+                if ($u <= 0) throw new RuntimeException("Cadastre o salário de {$f['nome']} (RH → Funcionários) para calcular as horas.");
+                $ins->execute([$fid, $mes, $d, 'horas', $h, number_format($u, 2, '.', ''), number_format(round($h * $u, 2), 2, '.', ''), 'Trabalhou no sobreaviso ' . rh_dt($d) . " ($qual)", $quem, $ad]);
+                $nh += $h;
+            }
+        }
+        $db->commit();
+    } catch (Throwable $e) {
+        $db->rollBack();
+        throw $e;
+    }
+    return ['nome' => $f['nome'], 'dias' => count($novos), 'h' => $nh];
+}
+
+// ---------- complemento fixo ----------
+
+/**
+ * Lança sozinho o complemento fixo do mês de quem tem valor no cadastro (uma vez por mês e funcionário:
+ * se o RH excluir a linha, ela não volta). Roda ao abrir o painel, para o mês atual.
+ */
+function rh_compl_auto(string $mes): int
+{
+    $q = db()->prepare("SELECT f.* FROM rh_funcionarios f WHERE f.ativo = 1 AND CAST(f.compl_fixo AS REAL) > 0
+        AND NOT EXISTS (SELECT 1 FROM rh_compl_feito c WHERE c.funcionario_id = f.id AND c.mes = ?)
+        AND NOT EXISTS (SELECT 1 FROM rh_pagamentos p WHERE p.funcionario_id = f.id AND p.mes = ?)");
+    $q->execute([$mes, $mes]);
+    $n = 0;
+    foreach ($q->fetchAll() as $f) {
+        db()->prepare('INSERT OR IGNORE INTO rh_compl_feito (funcionario_id, mes) VALUES (?,?)')->execute([$f['id'], $mes]);
+        db()->prepare("INSERT INTO rh_lancamentos (funcionario_id, mes, data, tipo, qtd, unitario, valor, descricao, lancado_por, origem) VALUES (?,?,?,'compl',1,'',?,?,'automático','auto')")
+            ->execute([$f['id'], $mes, "$mes-01", $f['compl_fixo'], 'Complemento fixo de ' . mb_strtolower(mes_nome($mes))]);
+        $n++;
+    }
+    return $n;
 }
