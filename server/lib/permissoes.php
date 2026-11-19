@@ -39,7 +39,7 @@ const PERM_ARVORE = [
         'recibos.rh' => ['RH (com todos os tipos, até complemento de salário)', []],
         'recibos.serv' => ['Pagamentos de serviços em execução', []],
     ]],
-    'cfg' => ['Configurações', ['cfg.gest' => ['Gestores', []], 'cfg.users' => ['Usuários', []], 'cfg.planos' => ['Planos', []]]],
+    'cfg' => ['Configurações', ['cfg.gest' => ['Gestores', []], 'cfg.users' => ['Usuários', []], 'cfg.planos' => ['Planos', []], 'cfg.colab' => ['Colaboradores do IXC (cadastrar nas áreas)', []]]],
 ];
 
 /** Chaves antigas (uma por área, até 2026-11-19) -> chaves novas. Quem já tinha acesso continua vendo o mesmo. */
