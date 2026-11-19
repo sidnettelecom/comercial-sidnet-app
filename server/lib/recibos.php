@@ -12,10 +12,11 @@ require_once __DIR__ . '/comissoes.php';
 require_once __DIR__ . '/recolhimento.php';
 require_once __DIR__ . '/instalacao.php';
 require_once __DIR__ . '/rh.php';
+require_once __DIR__ . '/servicos.php';
 
-const RECIBO_ORIGENS = ['vendas' => 'Comissão de vendas', 'rec' => 'Recolhimento', 'inst' => 'Instalação', 'rh' => 'RH'];
+const RECIBO_ORIGENS = ['vendas' => 'Comissão de vendas', 'rec' => 'Recolhimento', 'inst' => 'Instalação', 'rh' => 'RH', 'serv' => 'Serviços em execução'];
 /** como cada origem aparece no texto "referente a ..." do recibo */
-const RECIBO_REFERENTE = ['vendas' => 'comissão de vendas', 'rec' => 'comissão de recolhimento', 'inst' => 'comissão de instalação', 'rh' => 'lançamentos do RH'];
+const RECIBO_REFERENTE = ['vendas' => 'comissão de vendas', 'rec' => 'comissão de recolhimento', 'inst' => 'comissão de instalação', 'rh' => 'lançamentos do RH', 'serv' => 'pagamento de serviços de rede'];
 
 /** CPF de quem recebe (vendedor, técnico, recolhedor, financeiro), pelo nome. Funcionário do RH usa o CPF do cadastro do RH. */
 function recibos_tabela(): void
@@ -62,6 +63,7 @@ function recibos_cpf_salvar(array $lista): int
  * [['chave', 'nome', 'o' => origem, 'pago' => bool, 'ls' => [[texto, valor], ...], 'tot' => float], ...]
  * Vendas: comissões com valor, já pagas ou com o cliente tendo pago o 1º boleto.
  * Recolhimento e instalação: O.S conferidas (ou pagas). RH: todos os lançamentos do mês.
+ * Serviços em execução: os pagamentos feitos à equipe no mês (cada um numa linha, já pagos).
  */
 function recibos_partes(string $mes, array $origens): array
 {
@@ -102,6 +104,11 @@ function recibos_partes(string $mes, array $origens): array
             foreach ($r['ls'] as $l) $add((string)$r['f']['nome'], 'rh', $r['pago_em'] !== '', RH_TIPOS[$l['tipo']], (float)$l['valor']);
         }
     }
+    if (in_array('serv', $origens, true)) {
+        foreach (serv_pagamentos_do_mes($mes) as $r) {
+            $add((string)$r['nome'], 'serv', true, 'Pagamento de ' . rh_dt($r['data']) . ' (' . $r['forma'] . ')' . ($r['descricao'] !== '' ? ' · ' . $r['descricao'] : '') . '#' . $r['id'], (float)$r['valor']);
+        }
+    }
     // texto final de cada linha: "Venda (14)", "Horas informais 5:30 h", "Sobreaviso 2 dias"
     $horas = $dias = [];
     if (in_array('rh', $origens, true)) {
@@ -110,7 +117,9 @@ function recibos_partes(string $mes, array $origens): array
     foreach ($p as &$x) {
         $ls = [];
         foreach ($x['ls'] as $t => [$n, $v]) {
-            if ($x['o'] === 'rh') {
+            if ($x['o'] === 'serv') {
+                $t = 'Serviços: ' . preg_replace('/#\d+$/', '', $t); // o #id só separa dois pagamentos iguais no mesmo dia
+            } elseif ($x['o'] === 'rh') {
                 $t .= $t === RH_TIPOS['horas'] && !empty($horas[$x['chave']]) ? ' ' . rh_hm($horas[$x['chave']]) . ' h'
                     : ($t === RH_TIPOS['sobre'] && !empty($dias[$x['chave']]) ? ' ' . rtrim(rtrim(number_format($dias[$x['chave']], 1, ',', ''), '0'), ',') . ($dias[$x['chave']] == 1 ? ' dia' : ' dias') : '');
             } else {
