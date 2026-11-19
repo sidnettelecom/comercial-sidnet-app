@@ -23,8 +23,14 @@ const PERM_ARVORE = [
             'rh.lanc.compl' => ['Complemento de salário', []],
             'rh.lanc.pag' => ['Pagamento extra', []],
         ]],
-        'rh.fecha' => ['Fechamento e recibos', []],
+        'rh.fecha' => ['Fechamento do mês', []],
         'rh.func' => ['Funcionários', []],
+    ]],
+    'recibos' => ['Recibos', [
+        'recibos.vendas' => ['Comissão de vendas', []],
+        'recibos.rec' => ['Recolhimento', []],
+        'recibos.inst' => ['Instalação', []],
+        'recibos.rh' => ['RH (com todos os tipos, até complemento de salário)', []],
     ]],
     'cfg' => ['Configurações', ['cfg.gest' => ['Gestores', []], 'cfg.users' => ['Usuários', []], 'cfg.planos' => ['Planos', []]]],
 ];
