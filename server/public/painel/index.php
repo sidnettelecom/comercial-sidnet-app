@@ -17,6 +17,7 @@ require_once __DIR__ . '/../../lib/instalacao.php';
 require_once __DIR__ . '/../../lib/rh.php';
 require_once __DIR__ . '/../../lib/recibos.php';
 require_once __DIR__ . '/../../lib/servicos.php';
+require_once __DIR__ . '/../../lib/colaboradores.php';
 dash_tabela();
 perm_tabela();
 rec_tabela();
@@ -24,6 +25,7 @@ inst_tabela();
 rh_tabela();
 serv_tabela();
 recibos_tabela();
+colab_tabela();
 
 const PAINEL_INATIVO_MAX = 8 * 3600; // sai sozinho depois de 8 horas sem uso
 
@@ -125,6 +127,7 @@ const PERM_ACOES = [
     'inst_servicos_salvar' => 'inst.com', 'inst_com_salvar' => 'inst.com', 'inst_pagar' => 'inst.com',
     'rh_lanc_salvar' => 'rh.lanc', 'rh_lanc_excluir' => 'rh.lanc', 'rh_func_salvar' => 'rh.func', 'rh_func_ativo' => 'rh.func', 'rh_pagar' => 'rh.fecha',
     'recibos_cpf' => 'recibos',
+    'colab_buscar' => 'cfg.colab', 'colab_salvar' => 'cfg.colab', 'colab_mostrar' => 'cfg.colab',
     'serv_servico' => 'serv.lanc', 'serv_pagamento' => 'serv.pag', 'serv_excluir' => 'serv',
     'serv_equipe_salvar' => 'serv.cad', 'serv_equipe_ativo' => 'serv.cad', 'serv_obra_salvar' => 'serv.cad', 'serv_obra_concluir' => 'serv.cad', 'serv_precos_salvar' => 'serv.cad',
 ];
@@ -614,6 +617,18 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $n = serv_precos_salvar((array)($_POST['pr'] ?? []), (array)($_POST['novo'] ?? []));
             registrar($quem, 'salvou tabela de preços de serviços', "$n linha(s)");
             $msg = 'Tabela de preços salva.';
+        } elseif ($a === 'colab_buscar') {
+            if (destino() !== 'ixc') throw new RuntimeException('O portal não está ligado ao IXC (destino no config.php).');
+            $nc = colab_buscar_ixc();
+            registrar($quem, 'leu colaboradores do IXC', "$nc");
+            $msg = "$nc colaboradores lidos do IXC. Nada foi gravado no IXC.";
+        } elseif ($a === 'colab_salvar') {
+            $rc = colab_salvar((array)($_POST['c'] ?? []));
+            registrar($quem, 'cadastrou colaboradores do IXC', "{$rc['novos']} cadastro(s), {$rc['escondidos']} escondido(s), {$rc['cpf']} CPF(s), {$rc['ign']} não colaborador(es)");
+            $msg = "Pronto: {$rc['novos']} cadastro(s) nas áreas" . ($rc['escondidos'] ? ", {$rc['escondidos']} tirado(s) da lista da área" : '') . ($rc['cpf'] ? ", {$rc['cpf']} CPF(s) gravado(s)" : '') . ($rc['ign'] ? ", {$rc['ign']} marcado(s) como não colaborador" : '') . '.';
+        } elseif ($a === 'colab_mostrar') {
+            colab_mostrar((string)($_POST['ixc_id'] ?? ''));
+            $msg = 'Voltou para a lista.';
         } elseif ($a === 'rh_empresa_salvar') {
             if (!$admin) throw new RuntimeException('Só o gestor admin muda os dados do recibo.');
             $cn = so_digitos((string)($_POST['cnpj'] ?? ''));
@@ -645,11 +660,11 @@ $AREA_PAG = ['vendas' => 'vendas.lista', 'excluir' => 'vendas.lista', 'mes' => '
     'comissoes' => 'com.lista', 'planilha' => 'com.planilha', 'gestores' => 'cfg.gest', 'config' => 'admin', 'senha' => '', 'trocar' => '',
     'recolhimentos' => 'rec.lista', 'rec_comissao' => 'rec.com', 'instalacoes' => 'inst.lista', 'inst_comissao' => 'inst.com',
     'rh_lancar' => 'rh.lanc', 'rh_fecha' => 'rh.fecha', 'rh_func' => 'rh.func', 'recibos' => 'recibos',
-    'serv' => 'serv.saldo', 'serv_extrato' => 'serv.saldo', 'serv_lista' => 'serv.saldo', 'serv_lancar' => 'serv', 'serv_cad' => 'serv.cad'];
+    'serv' => 'serv.saldo', 'serv_extrato' => 'serv.saldo', 'serv_lista' => 'serv.saldo', 'serv_lancar' => 'serv', 'serv_cad' => 'serv.cad', 'colab' => 'cfg.colab'];
 if (!isset($AREA_PAG[$p])) $p = 'vendas';
 if ($logado && $p !== 'trocar' && ($_GET['p'] ?? '') === '' && !$pode('vendas.lista')) {
     // tela inicial: a primeira opção liberada, na ordem do menu
-    foreach (['dash', 'mes', 'comissoes', 'planilha', 'recolhimentos', 'rec_comissao', 'instalacoes', 'inst_comissao', 'rh_lancar', 'rh_fecha', 'rh_func', 'serv', 'serv_lancar', 'serv_cad', 'recibos', 'gestores', 'vendedores', 'planos'] as $pg)
+    foreach (['dash', 'mes', 'comissoes', 'planilha', 'recolhimentos', 'rec_comissao', 'instalacoes', 'inst_comissao', 'rh_lancar', 'rh_fecha', 'rh_func', 'serv', 'serv_lancar', 'serv_cad', 'recibos', 'gestores', 'vendedores', 'planos', 'colab'] as $pg)
         if ($pode($AREA_PAG[$pg])) { $p = $pg; break; }
 }
 if ($logado && $AREA_PAG[$p] !== '' && !($AREA_PAG[$p] === 'admin' ? $admin : $pode($AREA_PAG[$p]))) $p = 'sem';
@@ -942,6 +957,7 @@ td.ok{color:var(--ok)}a.bt.pri{background:var(--g-btn);color:#fff;border:0}a.bt.
 .o-serv{background:#ffedd5;color:#9a3412}
 .rec-form [hidden]{display:none}
 input.val{width:96px;text-align:right}
+th.c,td.c{text-align:center}
 @media print{.lado,.noprint{display:none!important}}
 </style>
 <style>.senha-box{position:relative;display:block}.senha-box input{width:100%;box-sizing:border-box;padding-right:48px}.olho{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:40px;height:40px;border:0!important;background:transparent!important;box-shadow:none!important;color:#475569;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;padding:0}.olho:hover{background:#eef2ff}.olho .risco{display:none}.olho[aria-pressed="true"] .risco{display:inline}</style>
@@ -960,7 +976,7 @@ input.val{width:96px;text-align:right}
     . $grupo('rh', 'RH', [['rh_lancar', 'Lançamentos', $pode('rh.lanc')], ['rh_fecha', 'Fechamento do mês', $pode('rh.fecha')], ['rh_func', 'Funcionários', $pode('rh.func')]])
     . $grupo('serv', 'Serviços em execução', [['serv', 'Saldos', $pode('serv.saldo'), ['serv', 'serv_extrato']], ['serv_lancar', 'Lançar', $pode('serv.lanc') || $pode('serv.pag')], ['serv_lista', 'Serviços lançados', $pode('serv.saldo')], ['serv_cad', 'Equipes, obras e preços', $pode('serv.cad')]])
     . ($pode('recibos') ? $aba('recibos', 'Recibos') : '')
-    . $grupo('config', 'Configurações', [['config', 'Permissões', $admin], ['gestores', 'Gestores', $pode('cfg.gest')], ['vendedores', 'Usuários', $pode('cfg.users')], ['planos', 'Planos', $pode('cfg.planos')]]) ?></nav>
+    . $grupo('config', 'Configurações', [['config', 'Permissões', $admin], ['gestores', 'Gestores', $pode('cfg.gest')], ['vendedores', 'Usuários', $pode('cfg.users')], ['planos', 'Planos', $pode('cfg.planos')], ['colab', 'Colaboradores do IXC', $pode('cfg.colab')]]) ?></nav>
   <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?p=senha">Trocar minha senha</a><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
 <?php endif ?>
@@ -2107,6 +2123,60 @@ input.val{width:96px;text-align:right}
     </div>
     <div class="row" style="margin-top:10px"><button class="pri">Salvar cabeçalho</button></div>
   </form>
+  <?php endif ?>
+
+<?php elseif ($p === 'colab'):
+    $lstC = colab_lista_ixc();
+    $cadC = colab_cadastrados();
+    [$vendNome, $vendId] = colab_vendedores();
+    $ignC = colab_ignorados();
+    $cpfC = recibos_cpfs();
+    $verC = in_array($_GET['ver'] ?? '', ['todos', 'escondidos'], true) ? $_GET['ver'] : 'ativos';
+    $linhasC = array_values(array_filter($lstC['lista'], fn($o) => $verC === 'escondidos' ? isset($ignC[$o['id']]) : (!isset($ignC[$o['id']]) && ($verC === 'todos' || $o['ativo']))));
+    usort($linhasC, fn($x, $y) => strcmp($x['nome'], $y['nome']));
+    $jaC = fn($o) => !empty(array_filter($cadC[recibo_chave($o['nome'])] ?? []));
+?>
+  <div class="topo"><div><h1>Colaboradores do IXC</h1><p class="small">Busca a lista de funcionários do IXC (só leitura, nada é gravado lá). Marque em que área cada colaborador recebe e salve: o portal cadastra nas listas de Instalação, Recolhimento e RH, e grava o CPF para os recibos. Desmarcar tira da lista da área, sem apagar o histórico. Quem não é colaborador de verdade, marque "Não é colaborador" para sumir desta tela.</p></div></div>
+  <form method="post" action="?p=colab&amp;ver=<?= h($verC) ?>" class="card row"><?= csrf_campo() ?><input type="hidden" name="acao" value="colab_buscar">
+    <button class="pri"><?= $lstC['em'] ? 'Buscar de novo no IXC' : 'Buscar colaboradores no IXC' ?></button>
+    <span class="small"><?= $lstC['em'] ? 'Última busca: ' . h($lstC['em']) . ' · ' . count($lstC['lista']) . ' no IXC' : 'Ainda não buscou.' ?></span>
+  </form>
+  <?php if ($lstC['em']): ?>
+  <div class="row noprint" style="margin:0 0 10px">
+    <?php foreach (['ativos' => 'Ativos no IXC', 'todos' => 'Todos (com inativos)', 'escondidos' => 'Não colaboradores (' . count($ignC) . ')'] as $kv => $tv): ?><a class="bt<?= $verC === $kv ? ' pri' : '' ?>" href="?p=colab&amp;ver=<?= $kv ?>"><?= h($tv) ?></a><?php endforeach ?>
+  </div>
+  <?php if ($verC === 'escondidos'): ?>
+  <div class="card"><div class="tw"><table class="rec"><thead><tr><th>Nome no IXC</th><th></th></tr></thead>
+    <?php foreach ($linhasC as $o): ?><tr><td><?= h($o['nome']) ?></td><td><form method="post" action="?p=colab&amp;ver=escondidos" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="colab_mostrar"><input type="hidden" name="ixc_id" value="<?= h($o['id']) ?>"><button>Voltar para a lista</button></form></td></tr><?php endforeach ?>
+    <?php if (!$linhasC): ?><tr><td colspan="2" class="small">Ninguém marcado como não colaborador.</td></tr><?php endif ?>
+  </table></div></div>
+  <?php else: ?>
+  <form method="post" action="?p=colab&amp;ver=<?= h($verC) ?>" class="card" id="colab-form"><?= csrf_campo() ?><input type="hidden" name="acao" value="colab_salvar">
+    <p class="small"><?= count($linhasC) ?> na lista · <?= count(array_filter($linhasC, $jaC)) ?> já cadastrados em alguma área. Vendedor não é criado aqui (precisa de usuário e senha do app, em Configurações → Usuários): a coluna só mostra quem já é.</p>
+    <div class="tw"><table class="rec">
+      <thead><tr><th>Nome no IXC</th><th>CPF</th><?php foreach (COLAB_PAPEIS as [, $tp]): ?><th class="c"><?= h($tp) ?></th><?php endforeach ?><th>Vendedor</th><th class="c">Não é colaborador</th></tr></thead>
+      <?php foreach ($linhasC as $o): $kC = recibo_chave($o['nome']); $iC = h($o['id']); $vd = $vendId[$o['id']] ?? ($vendNome[$kC] ?? ''); ?>
+      <tr data-colab><td><b><?= h($o['nome']) ?></b><?= $o['ativo'] ? '' : ' <span class="pill er">inativo no IXC</span>' ?><input type="hidden" name="c[<?= $iC ?>][x]" value="1"></td>
+        <td><input name="c[<?= $iC ?>][cpf]" value="<?= h(rh_cpf($cpfC[$kC] ?? $o['cpf'])) ?>" inputmode="numeric" placeholder="000.000.000-00" size="14" aria-label="CPF de <?= h($o['nome']) ?>"></td>
+        <?php foreach (COLAB_PAPEIS as $pp => [, $tp]): ?><td class="c"><input type="checkbox" name="c[<?= $iC ?>][p][<?= $pp ?>]" value="1" <?= !empty($cadC[$kC][$pp]) ? 'checked' : '' ?> aria-label="<?= h($tp) ?>: <?= h($o['nome']) ?>"></td><?php endforeach ?>
+        <td><?= $vd !== '' ? '<span class="pill ok">' . h($vd) . '</span>' : '<span class="small">—</span>' ?></td>
+        <td class="c"><input type="checkbox" name="c[<?= $iC ?>][ign]" value="1" aria-label="Não é colaborador: <?= h($o['nome']) ?>"></td></tr>
+      <?php endforeach ?>
+      <?php if (!$linhasC): ?><tr><td colspan="<?= 4 + count(COLAB_PAPEIS) ?>" class="small">Ninguém nesta lista.</td></tr><?php endif ?>
+    </table></div>
+    <div class="row" style="margin-top:10px"><button class="pri">Salvar o que marquei</button><span class="small">Só as linhas que você mexeu são gravadas.</span></div>
+  </form>
+  <script>
+  // manda só as linhas mexidas (lista grande passaria do limite de campos do PHP)
+  (function () {
+    var f = document.getElementById('colab-form');
+    f.addEventListener('change', function (e) { var tr = e.target.closest('tr[data-colab]'); if (tr) tr.dataset.mudou = '1'; });
+    f.addEventListener('submit', function () {
+      f.querySelectorAll('tr[data-colab]').forEach(function (tr) { if (!tr.dataset.mudou) tr.querySelectorAll('input').forEach(function (i) { i.disabled = true; }); });
+    });
+  })();
+  </script>
+  <?php endif ?>
   <?php endif ?>
 
 <?php elseif ($p === 'serv'):
