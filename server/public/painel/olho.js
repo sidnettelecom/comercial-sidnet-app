@@ -44,3 +44,22 @@ document.querySelectorAll('[data-imprimir]').forEach(function(b){
   cx.forEach(function(i){i.addEventListener('change',function(){dentro(i.dataset.k).forEach(function(x){x.checked=i.checked});atualiza()})});
   atualiza();
 })();
+
+/* Serviços em execução: mostra quantidade e valor por unidade, ou o valor fechado, e calcula o total na hora. */
+(function(){
+  var f=document.querySelector('[data-serv]');if(!f)return;
+  var sel=f.querySelector('select[name="l[preco_id]"]'),q=f.querySelector('input[name="l[qtd]"]'),u=f.querySelector('input[name="l[unitario]"]'),
+      v=f.querySelector('input[name="l[valor]"]'),tot=document.querySelector('[data-serv-total]');
+  function num(s){s=String(s||'').replace(/[^\d,.]/g,'');if(s.indexOf(',')>=0)s=s.replace(/\./g,'').replace(',','.');else if(/^\d{1,3}(\.\d{3})+$/.test(s))s=s.replace(/\./g,'');return parseFloat(s)||0}
+  function brl(n){return n.toLocaleString('pt-BR',{style:'currency',currency:'BRL'})}
+  function atualiza(){
+    var o=sel.options[sel.selectedIndex],fechado=sel.value==='0',un=o.getAttribute('data-un')||'',pv=parseFloat(o.getAttribute('data-valor')||'')||0;
+    f.querySelectorAll('.so-qtd').forEach(function(l){l.hidden=fechado});
+    f.querySelectorAll('.so-fechado').forEach(function(l){l.hidden=!fechado});
+    q.required=!fechado;v.required=fechado;
+    if(!fechado){f.querySelector('.so-qtd span').textContent='Valor por '+un+' R$';q.placeholder='quantos ('+un+')';u.placeholder=pv?pv.toFixed(2).replace('.',','):'0,00'}
+    var t=fechado?num(v.value):num(q.value)*(num(u.value)||pv);
+    if(tot)tot.innerHTML='Total: <b style="font-size:18px">'+brl(t)+'</b>';
+  }
+  f.addEventListener('input',atualiza);f.addEventListener('change',atualiza);atualiza();
+})();

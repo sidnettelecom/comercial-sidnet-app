@@ -26,11 +26,18 @@ const PERM_ARVORE = [
         'rh.fecha' => ['Fechamento do mês', []],
         'rh.func' => ['Funcionários', []],
     ]],
+    'serv' => ['Serviços em execução', [
+        'serv.saldo' => ['Saldos, extrato e serviços lançados', []],
+        'serv.lanc' => ['Lançar serviço feito', []],
+        'serv.pag' => ['Lançar pagamento', []],
+        'serv.cad' => ['Equipes, obras e preços', []],
+    ]],
     'recibos' => ['Recibos', [
         'recibos.vendas' => ['Comissão de vendas', []],
         'recibos.rec' => ['Recolhimento', []],
         'recibos.inst' => ['Instalação', []],
         'recibos.rh' => ['RH (com todos os tipos, até complemento de salário)', []],
+        'recibos.serv' => ['Pagamentos de serviços em execução', []],
     ]],
     'cfg' => ['Configurações', ['cfg.gest' => ['Gestores', []], 'cfg.users' => ['Usuários', []], 'cfg.planos' => ['Planos', []]]],
 ];

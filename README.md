@@ -69,6 +69,17 @@ Os técnicos e quem agenda são cadastrados em Configurações → Permissões, 
 
 O menu ficou agrupado: Vendas (Vendas, Vendas do mês), Comissões, Recolhimento e Configurações (Permissões, Gestores, Usuários, Planos). "Usuários" é a antiga aba Vendedores.
 
+## Serviços em execução (painel)
+
+Menu **Serviços em execução**, só do admin até ele liberar em Configurações → Permissões. Serve para não esquecer serviços de rede feitos por equipes (lançamento de fibra em área rural, rede em poste da CEMIG, rede em postes de eucalipto próprios) e ir acertando aos poucos:
+
+- **Saldos**: um cartão por equipe com o que falta pagar, o total geral e o saldo por obra. **Ver extrato** mostra tudo da equipe como extrato de banco (serviço soma, pagamento desconta, saldo do dia), com botão de imprimir e de recibo.
+- **Lançar**: serviço feito (equipe, data, obra opcional, serviço da tabela × quantidade, ou valor fechado com descrição) e pagamento (parcial ou não; acima do saldo vira crédito da equipe).
+- **Serviços lançados**: todos os serviços com a situação. O pagamento abate primeiro o serviço mais antigo da equipe: em aberto, pago em parte ou quitado.
+- **Equipes, obras e preços**: cadastro das equipes (terceirizada ou própria, contato/PIX), das obras (tipo de rede, concluir) e da tabela de preços sugeridos (o valor pode ser trocado em cada lançamento).
+
+Os pagamentos do mês entram na tela **Recibos** (origem "Serviços em execução") para a equipe assinar. Permissões: `serv.saldo`, `serv.lanc`, `serv.pag`, `serv.cad` e `recibos.serv`. Tabelas `serv_equipes`, `serv_obras`, `serv_precos` e `serv_lanc` (criadas sozinhas).
+
 ## Dashboard comercial (painel)
 
 Aba **Dashboard** do painel, para o gestor admin e para quem o admin liberar em **Configurações** (quem não é admin vê as metas, mas só o admin define):
