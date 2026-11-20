@@ -5,8 +5,9 @@
  *   php server/bin/ixc.php token        grava o token do usuário do app no IXC (digitado, sem aparecer na tela)
  *   php server/bin/ixc.php teste        confere se o servidor fala com o IXC usando o token
  *   php server/bin/ixc.php listar X     mostra id e nome, para preencher o config.php. X pode ser:
- *        assuntos | setores | filiais | planos | vendedores | colaboradores | canais | concorrentes | planos-negociacao | tipos-contrato | estagios
+ *        assuntos | setores | filiais | planos | vendedores | fornecedores | colaboradores | canais | concorrentes | planos-negociacao | tipos-contrato | estagios
  *   php server/bin/ixc.php campos contato   mostra os campos de um lead do IXC (para conferir gênero, fones, RG)
+ *   php server/bin/ixc.php campos fn_apagar mostra os campos de uma conta a pagar (para conferir o lançamento dos recibos)
  */
 declare(strict_types=1);
 
@@ -42,6 +43,7 @@ try {
         $cfg = config()['ixc'] ?? [];
         echo '  upgrade vai ao IXC: ' . (!empty($cfg['enviar_upgrade']) || !empty($cfg['enviar_upgrade_segundo']) ? 'SIM' . (array_key_exists('atualizar_contato', $cfg) && !$cfg['atualizar_contato'] ? ' (só o atendimento)' : ' (contato + atendimento)') : 'não (só no comercial)') . "\n";
         echo '  2º ponto vai ao IXC: ' . (!empty($cfg['enviar_upgrade_segundo']) ? 'SIM' : 'não (só no comercial)') . "\n";
+        echo '  recibos viram contas a pagar no IXC: ' . (!empty($cfg['enviar_contas_pagar']) ? 'SIM (ajuste em Configurações → Contas a pagar no IXC)' : 'não') . "\n";
         foreach (['assunto_upgrade' => 'su_oss_assunto', 'assunto_segundo' => 'su_oss_assunto'] as $k => $t) {
             if (!empty($cfg[$k])) {
                 $a = ixc()->um($t, 'id', (string)$cfg[$k]);
@@ -66,6 +68,7 @@ try {
             'filiais' => ['filial', ['fantasia', 'razao']],
             'planos' => ['vd_contratos', ['nome']],
             'vendedores' => ['vendedor', ['nome']],
+            'fornecedores' => ['fornecedor', ['razao', 'fantasia', 'nome']],
             'colaboradores' => ['funcionarios', ['funcionario', 'nome']],
             'canais' => ['crm_tipo_candidato', ['tipo_candidato', 'descricao', 'nome']],
             'concorrentes' => ['crm_concorrente', ['nome', 'descricao']],
@@ -94,5 +97,5 @@ try {
     exit(1);
 }
 
-fwrite(STDERR, "Use: php server/bin/ixc.php token | teste | listar <assuntos|setores|filiais|planos|vendedores|colaboradores|canais|concorrentes|planos-negociacao|tipos-contrato|estagios>\n");
+fwrite(STDERR, "Use: php server/bin/ixc.php token | teste | listar <assuntos|setores|filiais|planos|vendedores|fornecedores|colaboradores|canais|concorrentes|planos-negociacao|tipos-contrato|estagios>\n");
 exit(1);

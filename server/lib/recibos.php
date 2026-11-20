@@ -60,7 +60,7 @@ function recibos_cpf_salvar(array $lista): int
 
 /**
  * Partes a receber no mês de referência, uma por pessoa/origem/situação:
- * [['chave', 'nome', 'o' => origem, 'pago' => bool, 'ls' => [[texto, valor], ...], 'tot' => float], ...]
+ * [['chave', 'nome', 'o' => origem, 'pago' => bool, 'ls' => [[texto, valor, tipo], ...], 'tot' => float], ...]
  * Vendas: comissões com valor, já pagas ou com o cliente tendo pago o 1º boleto.
  * Recolhimento e instalação: O.S conferidas (ou pagas). RH: todos os lançamentos do mês.
  * Serviços em execução: os pagamentos feitos à equipe no mês (cada um numa linha, já pagos).
@@ -118,6 +118,8 @@ function recibos_partes(string $mes, array $origens): array
     foreach ($p as &$x) {
         $ls = [];
         foreach ($x['ls'] as $t => [$n, $v]) {
+            // tipo da linha (para a conta a pagar no IXC): vendas, rec, inst, serv ou rh.horas, rh.sobre, rh.compl, rh.pag, rh.dsr
+            $tipo = $x['o'] === 'rh' ? 'rh.' . (array_search($t, RH_TIPOS, true) ?: 'dsr') : $x['o'];
             if ($x['o'] === 'serv') {
                 $t = 'Serviços: ' . preg_replace('/#\d+$/', '', $t); // o #id só separa dois pagamentos iguais no mesmo dia
             } elseif ($x['o'] === 'rh') {
@@ -126,7 +128,7 @@ function recibos_partes(string $mes, array $origens): array
             } else {
                 $t = RECIBO_ORIGENS[$x['o']] . ': ' . str_replace('(O.S)', "($n O.S)", $x['o'] === 'vendas' ? "$t ($n)" : $t);
             }
-            $ls[] = [$x['o'] === 'rh' ? 'RH: ' . $t : $t, $v];
+            $ls[] = [$x['o'] === 'rh' ? 'RH: ' . $t : $t, $v, $tipo];
         }
         $x['ls'] = $ls;
     }
