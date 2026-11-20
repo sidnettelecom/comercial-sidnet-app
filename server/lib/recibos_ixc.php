@@ -42,16 +42,16 @@ const RIXC_TIPOS = [
 
 /**
  * Padrão de fábrica: três contas de despesa (sem conta modelo ainda) e o caminho de cada tipo.
- * despesas: [id => ['nome', 'modelo' => id da conta a pagar modelo no IXC]]
+ * despesas: [id => ['nome', 'conta' => id da conta contábil analítica no IXC, 'modelo' => id de uma conta a pagar modelo (jeito antigo)]]
  * grupos:   grupos de pessoas (ex.: TÉCNICO, ADMINISTRATIVO), na ordem da tela
  * regras:   [tipo => [grupo => id da despesa]]; grupo '' = padrão (todos). Na coluna de um grupo, '' = usa o padrão.
  *           No padrão, '' = esse tipo não vai ao IXC.
  */
 const RIXC_PADRAO = [
     'despesas' => [
-        '1' => ['nome' => 'Comissões', 'modelo' => ''],
-        '2' => ['nome' => 'Custos de salário', 'modelo' => ''],
-        '3' => ['nome' => 'Serviços de terceiros', 'modelo' => ''],
+        '1' => ['nome' => 'Comissões', 'conta' => '', 'modelo' => ''],
+        '2' => ['nome' => 'Custos de salário', 'conta' => '', 'modelo' => ''],
+        '3' => ['nome' => 'Serviços de terceiros', 'conta' => '', 'modelo' => ''],
     ],
     'grupos' => [],
     'regras' => [
@@ -83,6 +83,8 @@ function rixc_campos(): array
         'status' => 'status',
         'tabela_forn' => 'fornecedor',
         'forn_cpf' => 'cnpj_cpf',
+        'conta_contabil' => '',  // campo da "Conta contábil analítica" em fn_apagar ('' = o portal descobre sozinho)
+        'tabela_contabil' => '', // tabela das contas contábeis analíticas ('' = tenta as prováveis)
     ], (array)(config()['ixc']['contas_pagar_campos'] ?? []));
 }
 
@@ -144,7 +146,7 @@ function rixc_config_salvar(array $in): void
             $id = (string)(max(array_map('intval', array_keys($c['despesas'] + $desp)) ?: [0]) + 1);
         }
         if ($nome === '') continue; // nome apagado = tira a conta de despesa
-        $desp[(string)$id] = ['nome' => $nome, 'modelo' => so_digitos((string)($d['modelo'] ?? ''))];
+        $desp[(string)$id] = ['nome' => $nome, 'conta' => so_digitos((string)($d['conta'] ?? ($c['despesas'][$id]['conta'] ?? ''))), 'modelo' => so_digitos((string)($d['modelo'] ?? ($c['despesas'][$id]['modelo'] ?? '')))];
     }
     $c['despesas'] = $desp;
     // grupos de pessoas
@@ -162,7 +164,8 @@ function rixc_config_salvar(array $in): void
         $regras[$t] = ($regras[$t] ?? []) + ['' => ''];
     }
     $c['regras'] = $regras;
-    $c['forn_padrao'] = so_digitos((string)($in['forn_padrao'] ?? ''));
+    $fp = trim((string)($in['forn_padrao'] ?? ''));
+    $c['forn_padrao'] = preg_match('/#(\d+)\)?\s*$/', $fp, $m) ? $m[1] : so_digitos($fp);
     $c['so_padrao'] = !empty($in['so_padrao']) ? 1 : 0;
     $d = (int)($in['venc_dias'] ?? 0);
     if ($d < 0 || $d > 90) throw new RuntimeException('Vencimento: de 0 a 90 dias depois do lançamento.');
@@ -182,24 +185,62 @@ function rixc_pessoas_salvar(array $lista): int
 {
     $cfg = rixc_config();
     $atual = rixc_grupos_pessoas();
+    $fAtual = rixc_forn_pessoas();
     $up = db()->prepare('INSERT INTO recibos_ixc_pessoa (chave, nome, grupo) VALUES (?,?,?) ON CONFLICT(chave) DO UPDATE SET nome = excluded.nome, grupo = excluded.grupo');
+    $upF = db()->prepare('INSERT OR REPLACE INTO recibos_ixc_forn (chave, ixc_id) VALUES (?,?)');
+    $delF = db()->prepare('DELETE FROM recibos_ixc_forn WHERE chave = ?');
     $n = 0;
     foreach ($lista as $k => $v) {
         $k = recibo_chave((string)$k);
-        $g = (string)($v['grupo'] ?? '');
-        if ($k === '' || ($g !== '' && !in_array($g, $cfg['grupos'], true)) || $g === ($atual[$k] ?? '')) continue;
-        $up->execute([$k, mb_substr(up((string)($v['nome'] ?? $k)), 0, 80), $g]);
-        $n++;
+        if ($k === '') continue;
+        $mudou = false;
+        $g = (string)($v['grupo'] ?? ($atual[$k] ?? ''));
+        if (($g === '' || in_array($g, $cfg['grupos'], true)) && $g !== ($atual[$k] ?? '')) {
+            $up->execute([$k, mb_substr(up((string)($v['nome'] ?? $k)), 0, 80), $g]);
+            $mudou = true;
+        }
+        if (array_key_exists('forn', $v)) {
+            // vem da lista como "NOME DO FORNECEDOR (#123)", ou só o número
+            $t = trim((string)$v['forn']);
+            $f = preg_match('/#(\d+)\)?\s*$/', $t, $m) ? $m[1] : (ctype_digit($t) ? $t : '');
+            if ($t !== '' && $f === '') throw new RuntimeException('Fornecedor de ' . ($v['nome'] ?? $k) . ': escolha um nome da lista.');
+            if ($f !== ($fAtual[$k] ?? '')) {
+                $f === '' ? $delF->execute([$k]) : $upF->execute([$k, $f]);
+                $mudou = true;
+            }
+        }
+        if ($mudou) $n++;
     }
     return $n;
 }
 
-/** Pessoas conhecidas (para pôr no grupo): RH, técnicos, recolhedores, vendedores, quem já teve recibo. [chave => nome] */
+/** [chave => id do fornecedor no IXC] já ligado a cada pessoa */
+function rixc_forn_pessoas(): array
+{
+    return array_column(db()->query('SELECT chave, ixc_id FROM recibos_ixc_forn')->fetchAll(), 'ixc_id', 'chave');
+}
+
+/** Sugestão de fornecedor para quem ainda não tem: pelo CPF, senão pelo mesmo nome. [id, 'CPF'|'nome'] ou ['', ''] */
+function rixc_forn_sugerido(string $chave, string $cpf, array $forns): array
+{
+    if (strlen($cpf) === 11) foreach ($forns as $f) if ($f['cpf'] === $cpf) return [$f['id'], 'CPF'];
+    foreach ($forns as $f) if (recibo_chave($f['nome']) === $chave) return [$f['id'], 'nome'];
+    return ['', ''];
+}
+
+/** "NOME (#123)" para a lista de escolha */
+function rixc_forn_rotulo(string $id, array $forns): string
+{
+    foreach ($forns as $f) if ($f['id'] === $id) return $f['nome'] . ' (#' . $id . ')';
+    return $id !== '' ? 'fornecedor (#' . $id . ')' : '';
+}
+
+/** Pessoas conhecidas (para ligar ao fornecedor e pôr no grupo): RH, técnicos, recolhedores, vendedores, equipes de serviços, quem já teve recibo. [chave => nome] */
 function rixc_pessoas_conhecidas(): array
 {
     $out = [];
     $add = function (string $nome) use (&$out) { if (trim($nome) !== '') $out[recibo_chave($nome)] ??= up($nome); };
-    foreach (['rh_funcionarios', 'inst_tecnicos', 'inst_agendadores', 'rec_tecnicos', 'vendedores'] as $t) {
+    foreach (['rh_funcionarios', 'inst_tecnicos', 'inst_agendadores', 'rec_tecnicos', 'vendedores', 'serv_equipes'] as $t) {
         try {
             foreach (db()->query("SELECT nome FROM $t WHERE ativo = 1") as $r) $add((string)$r['nome']);
         } catch (PDOException) {
@@ -233,6 +274,118 @@ function rixc_modelo(string $id): array
     return $out;
 }
 
+function rixc_arquivo_despesas(): string
+{
+    return dirname((string)config()['banco']) . '/ixc-despesas.json';
+}
+
+/**
+ * Lê do IXC (só leitura):
+ *  - a lista de contas contábeis analíticas (o campo "Conta contábil analítica" da conta a pagar);
+ *  - as últimas contas a pagar, para descobrir em que campo fica a conta contábil e, para cada conta contábil,
+ *    a conta a pagar mais nova que a usou (dela o portal copia filial, conta, forma de pagamento...).
+ * Guarda tudo em ixc-despesas.json. Devolve quantas contas contábeis achou.
+ */
+function rixc_buscar_despesas(int $quantas = 1500): int
+{
+    $cp = rixc_campos();
+    $api = ixc();
+    // 1) contas contábeis analíticas: a tabela do config, ou a primeira das prováveis que responder
+    $tabs = $cp['tabela_contabil'] !== '' ? [$cp['tabela_contabil']] : ['planejamento_analitico', 'fn_planejamento_analitico', 'contabil_conta_analitica', 'planejamento', 'fn_planejamento', 'plano_contas'];
+    $contas = [];
+    $tabela = '';
+    foreach ($tabs as $t) {
+        try {
+            $rs = $api->listar($t, 'id', '0', '>', 5000, 'asc');
+        } catch (Throwable) {
+            $rs = [];
+        }
+        foreach ($rs as $r) {
+            $nome = '';
+            foreach (['descricao', 'planejamento', 'conta', 'nome', 'titulo'] as $c) {
+                if (!empty($r[$c]) && is_string($r[$c]) && !ctype_digit($r[$c])) { $nome = trim($r[$c]); break; }
+            }
+            if ($nome === '') continue;
+            $cod = '';
+            foreach (['codigo', 'classificacao', 'cod_conta', 'conta_codigo', 'estrutura', 'numero'] as $c) {
+                if (!empty($r[$c]) && is_scalar($r[$c])) { $cod = trim((string)$r[$c]); break; }
+            }
+            if (isset($r['ativo']) && in_array($r['ativo'], ['N', '0'], true)) continue;
+            if (isset($r['tipo']) && in_array(up((string)$r['tipo']), ['S', 'SINTETICA', 'SINTÉTICA'], true)) continue;
+            $contas[(string)$r['id']] = ['id' => (string)$r['id'], 'nome' => mb_substr(($cod !== '' ? $cod . ' ' : '') . $nome, 0, 90), 'n' => 0, 'modelo' => ''];
+        }
+        if ($contas) { $tabela = $t; break; }
+    }
+    // 2) últimas contas a pagar: qual campo guarda a conta contábil e o modelo mais novo de cada uma
+    $regs = $api->listar($cp['tabela'], 'id', '0', '>', $quantas, 'desc');
+    $campo = $cp['conta_contabil'];
+    if ($campo === '' && $contas && $regs) {
+        $pontos = [];
+        foreach ($regs as $r) foreach ($r as $k => $v) {
+            if (!is_scalar($v) || !preg_match('/planej|contab|conta/i', (string)$k) || (string)$v === '' || (string)$v === '0') continue;
+            $pontos[$k] = ($pontos[$k] ?? 0) + (isset($contas[(string)$v]) ? 1 : -1);
+        }
+        arsort($pontos);
+        $campo = (string)(array_key_first(array_filter($pontos, fn($p) => $p > 0)) ?? '');
+    }
+    $base = '';
+    foreach ($regs as $r) {
+        if ((int)$r['id'] > (int)$base) $base = (string)$r['id']; // a mais nova (maior número)
+        $v = $campo !== '' ? (string)($r[$campo] ?? '') : '';
+        if ($v !== '' && isset($contas[$v])) {
+            $contas[$v]['n']++;
+            if ((int)$r['id'] > (int)$contas[$v]['modelo']) $contas[$v]['modelo'] = (string)$r['id'];
+        }
+    }
+    $lista = array_values($contas);
+    usort($lista, fn($a, $b) => [$b['n'] > 0, $a['nome']] <=> [$a['n'] > 0, $b['nome']]);
+    // 3) fornecedores (para ligar cada pessoa ao fornecedor dela no IXC)
+    $forns = [];
+    foreach ($api->listar($cp['tabela_forn'], 'id', '0', '>', 10000, 'asc') as $f) {
+        $nome = trim((string)(($f['razao'] ?? '') ?: (($f['fantasia'] ?? '') ?: ($f['nome'] ?? ''))));
+        if ($nome === '' || (isset($f['ativo']) && $f['ativo'] === 'N')) continue;
+        $forns[] = ['id' => (string)$f['id'], 'nome' => mb_substr(preg_replace('/\s+/', ' ', up($nome)), 0, 80), 'cpf' => so_digitos((string)($f[$cp['forn_cpf']] ?? ''))];
+    }
+    usort($forns, fn($a, $b) => strcmp($a['nome'], $b['nome']));
+    file_put_contents(rixc_arquivo_despesas(), json_encode(['em' => date('d/m/Y H:i'), 'tabela' => $tabela, 'campo' => $campo, 'base' => $base, 'contas' => $lista, 'forns' => $forns], JSON_UNESCAPED_UNICODE));
+    return count($lista);
+}
+
+/** O que a última busca achou: ['em', 'tabela', 'campo', 'base', 'contas' => [['id', 'nome', 'n', 'modelo'], ...]] */
+function rixc_despesas_ixc(): array
+{
+    $f = rixc_arquivo_despesas();
+    $j = is_file($f) ? json_decode((string)file_get_contents($f), true) : null;
+    return (is_array($j) ? $j : []) + ['em' => '', 'tabela' => '', 'campo' => '', 'base' => '', 'contas' => [], 'forns' => []];
+}
+
+/** Texto da opção na tela */
+function rixc_conta_rotulo(array $o): string
+{
+    return $o['nome'] . ($o['n'] ? ' (já usada em ' . $o['n'] . ' conta(s) a pagar)' : '');
+}
+
+/**
+ * De onde sai a conta a pagar de uma despesa: [id da conta a pagar que serve de modelo, campos por cima].
+ * Com a conta contábil escolhida: copia a conta a pagar mais nova com essa conta contábil (ou a mais nova de todas)
+ * e põe a conta contábil escolhida por cima. Sem ela: o modelo digitado à mão (jeito antigo).
+ */
+function rixc_modelo_da_despesa(array $desp, string $nomeD): array
+{
+    if (($desp['conta'] ?? '') !== '') {
+        $x = rixc_despesas_ixc();
+        $campo = rixc_campos()['conta_contabil'] ?: $x['campo'];
+        if ($campo === '') throw new RuntimeException('não descobri em que campo o IXC guarda a conta contábil. Clique em "Buscar no IXC" de novo; se continuar, peça para conferir com  php server/bin/ixc.php campos fn_apagar.');
+        $mod = '';
+        foreach ($x['contas'] as $c) if ($c['id'] === $desp['conta']) $mod = $c['modelo'];
+        $mod = $mod ?: $x['base'];
+        if ($mod === '') throw new RuntimeException('não achei nenhuma conta a pagar no IXC para usar de base. Clique em "Buscar no IXC".');
+        return [$mod, [$campo => $desp['conta']]];
+    }
+    if (($desp['modelo'] ?? '') !== '') return [$desp['modelo'], []];
+    throw new RuntimeException('falta escolher a conta contábil de "' . $nomeD . '" em Configurações → Contas a pagar no IXC.');
+}
+
 /** Fornecedor do IXC da pessoa: pelo CPF (guarda o que achou), senão o padrão. Devolve [id, como achou] ou lança. */
 function rixc_fornecedor(string $chave, string $nome, string $cpf, array $cfg): array
 {
@@ -248,9 +401,14 @@ function rixc_fornecedor(string $chave, string $nome, string $cpf, array $cfg): 
                 return [(string)$f['id'], 'pelo CPF'];
             }
         }
+        [$sug] = rixc_forn_sugerido($chave, '', rixc_despesas_ixc()['forns']);
+        if ($sug !== '') {
+            db()->prepare('INSERT OR REPLACE INTO recibos_ixc_forn (chave, ixc_id) VALUES (?,?)')->execute([$chave, $sug]);
+            return [$sug, 'pelo nome'];
+        }
     }
     if ($cfg['forn_padrao'] !== '') return [$cfg['forn_padrao'], 'padrão'];
-    throw new RuntimeException((strlen($cpf) === 11 ? 'o CPF não está nos fornecedores do IXC' : 'está sem CPF') . ' e não há fornecedor padrão (Configurações → Contas a pagar no IXC).');
+    throw new RuntimeException('não achei o fornecedor no IXC (nem pelo CPF nem pelo nome) e não há fornecedor padrão. Escolha o fornecedor dela em Configurações → Contas a pagar no IXC.');
 }
 
 /** [despesa => ['valor' => float, 'ls' => [[texto, valor]]]] de um recibo (pessoa), pelo tipo de cada linha e o grupo da pessoa */
@@ -335,8 +493,7 @@ function rixc_lancar(string $mes, array $recibos, string $quem): array
                     throw new RuntimeException('o valor diminuiu ' . rh_rs(-$dif) . ' depois de lançado. Corrija à mão no IXC (conta ' . implode(', ', array_map(fn($i) => '#' . $i, $lanc[$r['chave']][$d]['ids'])) . ').');
                 }
                 if ($dif < 0.01) continue;
-                $mod = $cfg['despesas'][$d]['modelo'];
-                if ($mod === '') throw new RuntimeException('falta o número da conta modelo de "' . $nomeD . '" em Configurações → Contas a pagar no IXC.');
+                [$mod, $extra] = rixc_modelo_da_despesa($cfg['despesas'][$d], $nomeD);
                 $modelos[$mod] ??= rixc_modelo($mod);
                 $forn ??= rixc_fornecedor($r['chave'], $r['nome'], (string)$r['cpf'], $cfg);
                 $doc = 'REC ' . substr($mes, 5, 2) . '/' . substr($mes, 0, 4) . ' ' . mb_substr($r['nome'], 0, 30);
@@ -344,7 +501,7 @@ function rixc_lancar(string $mes, array $recibos, string $quem): array
                     . ($antes > 0 ? "\nCOMPLEMENTO: o recibo cresceu depois do primeiro lançamento (já lançado " . rh_rs($antes) . ').' : '')
                     . "\n" . implode("\n", array_map(fn($l) => $l[0] . ': ' . rh_rs($l[1]), $x['ls']));
                 $v = number_format($dif, 2, '.', '');
-                $dados = array_merge($modelos[$mod], [
+                $dados = array_merge($modelos[$mod], $extra, [
                     $cp['fornecedor'] => $forn[0], $cp['valor'] => $v, $cp['aberto'] => $v,
                     $cp['emissao'] => $hoje, $cp['vencimento'] => $venc,
                     $cp['documento'] => $doc, $cp['obs'] => $obs, $cp['status'] => 'A',

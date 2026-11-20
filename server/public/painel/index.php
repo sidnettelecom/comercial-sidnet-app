@@ -613,8 +613,14 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($a === 'rixc_pessoas') {
             if (!$admin) throw new RuntimeException('Só o gestor admin muda as contas a pagar do IXC.');
             $n = rixc_pessoas_salvar((array)($_POST['pg'] ?? []));
-            if ($n) registrar($quem, 'alterou grupo das pessoas (contas a pagar IXC)', "$n");
-            $msg = $n ? "Grupo salvo ($n pessoa(s))." : 'Nenhum grupo mudou.';
+            if ($n) registrar($quem, 'alterou grupo/fornecedor das pessoas (contas a pagar IXC)', "$n");
+            $msg = $n ? "Salvo ($n pessoa(s))." : 'Nada mudou.';
+        } elseif ($a === 'rixc_buscar') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin.');
+            $nd = rixc_buscar_despesas();
+            registrar($quem, 'leu despesas do IXC', "$nd");
+            $nf = count(rixc_despesas_ixc()['forns']);
+            $msg = ($nd ? "Achei $nd conta(s) contábil(eis) analítica(s) e $nf fornecedor(es) no IXC. Escolha a conta de cada despesa e o fornecedor de cada pessoa, e salve." : "Achei $nf fornecedor(es), mas o IXC não devolveu a lista de contas contábeis: dá para usar o nº de uma conta a pagar modelo em cada linha.") . ' Nada foi gravado no IXC.';
         } elseif ($a === 'rixc_modelo') {
             if (!$admin) throw new RuntimeException('Só o gestor admin.');
             $mid = so_digitos((string)($_POST['modelo'] ?? ''));
@@ -2296,6 +2302,24 @@ th.c,td.c{text-align:center}
     $grP = rixc_grupos_pessoas();
     $pesX = rixc_pessoas_conhecidas();
     $ultX = db()->query('SELECT * FROM recibos_ixc ORDER BY id DESC LIMIT 30')->fetchAll();
+    $lstX = rixc_despesas_ixc();
+    $fnP = rixc_forn_pessoas();
+    $cpfP = recibos_cpfs();
+    // campo de cada despesa: lista das contas contábeis analíticas do IXC (ou, se não vier a lista, o nº de uma conta a pagar modelo)
+    $selM = function (string $id, array $d) use ($lstX): string {
+        if (!$lstX['contas']) return '<input name="despesas[' . h($id) . '][modelo]" value="' . h((string)($d['modelo'] ?? '')) . '" inputmode="numeric" placeholder="nº de uma conta a pagar modelo" size="12">'
+            . ($lstX['em'] ? '<br><span class="small q">O IXC não devolveu a lista de contas contábeis. Digite o nº de uma conta a pagar já lançada com a conta contábil certa.</span>' : '');
+        $atual = (string)($d['conta'] ?? '');
+        $o = '<select name="despesas[' . h($id) . '][conta]" style="max-width:640px"><option value="">escolha a conta contábil</option>';
+        $achou = false;
+        foreach ($lstX['contas'] as $x) {
+            $sel = $x['id'] === $atual;
+            $achou = $achou || $sel;
+            $o .= '<option value="' . h($x['id']) . '"' . ($sel ? ' selected' : '') . '>' . h(rixc_conta_rotulo($x)) . '</option>';
+        }
+        if ($atual !== '' && !$achou) $o .= '<option value="' . h($atual) . '" selected>conta contábil nº ' . h($atual) . '</option>';
+        return $o . '</select>' . ((string)($d['modelo'] ?? '') !== '' && $atual === '' ? '<br><span class="small">hoje usa a conta a pagar modelo nº ' . h($d['modelo']) . '</span>' : '');
+    };
     $selD = function (string $nome, string $atual, string $vazio) use ($cfgX): string {
         $o = '<select name="' . h($nome) . '"><option value="">' . h($vazio) . '</option>';
         foreach ($cfgX['despesas'] as $id => $d) $o .= '<option value="' . h((string)$id) . '"' . ((string)$id === $atual ? ' selected' : '') . '>' . h($d['nome']) . '</option>';
@@ -2304,12 +2328,15 @@ th.c,td.c{text-align:center}
 ?>
   <div class="topo"><div><h1>Contas a pagar no IXC</h1><p class="small">Na tela Recibos, o botão "Lançar no IXC" cria uma conta a pagar no IXC para cada conta de despesa de cada recibo. Exemplo: um recibo com comissão e hora extra vira duas contas a pagar, uma em Comissões e outra em Custos de salário. A liquidação continua à mão no IXC. O mesmo recibo nunca é lançado duas vezes: se crescer depois, vai só a diferença.</p></div></div>
   <?php if (!rixc_ligado()): ?><div class="msg">Está desligado no servidor. Para ligar, no config.php coloque <b>'enviar_contas_pagar' => true</b> dentro de 'ixc'. Dá para deixar tudo configurado aqui antes.</div><?php endif ?>
+  <form method="post" action="?p=rixc" class="card row"><?= csrf_campo() ?><input type="hidden" name="acao" value="rixc_buscar">
+    <button class="pri"><?= $lstX['em'] ? 'Buscar no IXC de novo' : 'Buscar no IXC (contas contábeis e fornecedores)' ?></button>
+    <span class="small"><?= $lstX['em'] ? 'Última busca: ' . h($lstX['em']) . ', ' . count($lstX['contas']) . ' conta(s) contábil(eis), ' . count($lstX['forns']) . ' fornecedor(es)' . ($lstX['contas'] && $lstX['campo'] === '' ? ' (ATENÇÃO: não achei o campo da conta contábil nas contas a pagar)' : '') . '. ' : '' ?>Só lê, não grava nada no IXC.</span></form>
   <form method="post" action="?p=rixc" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="rixc_cfg">
     <h2>1. Contas de despesa</h2>
-    <p class="small">Para cada conta de despesa, lance à mão no IXC uma conta a pagar de exemplo, com o plano de contas, a filial e a conta certos, e escreva o número dela aqui. O portal copia esse modelo e troca só o fornecedor, o valor, as datas e a descrição. Para tirar uma conta de despesa, apague o nome.</p>
-    <div class="tw"><table class="rec"><thead><tr><th>Nome</th><th>Nº da conta a pagar modelo no IXC</th></tr></thead>
-      <?php foreach ($cfgX['despesas'] as $id => $d): ?><tr><td><input name="despesas[<?= h((string)$id) ?>][nome]" value="<?= h($d['nome']) ?>" maxlength="60"></td><td><input name="despesas[<?= h((string)$id) ?>][modelo]" value="<?= h($d['modelo']) ?>" inputmode="numeric" placeholder="ex.: 15230" size="10"><?= $d['modelo'] === '' ? ' <span class="pill q">falta</span>' : '' ?></td></tr><?php endforeach ?>
-      <tr><td><input name="despesas[novo][nome]" placeholder="nova: ex. Salário técnico" maxlength="60"></td><td><input name="despesas[novo][modelo]" inputmode="numeric" placeholder="nº do modelo" size="10"></td></tr>
+    <p class="small">Clique primeiro em "Buscar no IXC" (logo acima). Em cada linha, escolha a conta contábil analítica certa, a mesma do campo "Conta contábil analítica" da conta a pagar do IXC. Filial, conta e forma de pagamento vêm da última conta a pagar lançada no IXC com essa conta contábil. Para criar uma linha nova, escreva o nome na última linha. Para tirar uma, apague o nome.</p>
+    <div class="tw"><table class="rec"><thead><tr><th>Nome</th><th>Conta contábil analítica no IXC</th></tr></thead>
+      <?php foreach ($cfgX['despesas'] as $id => $d): ?><tr><td><input name="despesas[<?= h((string)$id) ?>][nome]" value="<?= h($d['nome']) ?>" maxlength="60"></td><td><?= $selM((string)$id, $d) ?><?= ($d['conta'] ?? '') === '' && ($d['modelo'] ?? '') === '' ? ' <span class="pill q">falta</span>' : '' ?></td></tr><?php endforeach ?>
+      <tr><td><input name="despesas[novo][nome]" placeholder="nova: ex. Salário técnico" maxlength="60"></td><td><?= $selM('novo', []) ?></td></tr>
     </table></div>
     <h2>2. Grupos de pessoas</h2>
     <p class="small">Quando o mesmo tipo de pagamento vai para despesas diferentes conforme a pessoa (ex.: hora extra de técnico e de administrativo). Um por linha. Deixe vazio se não precisar.</p>
@@ -2322,23 +2349,29 @@ th.c,td.c{text-align:center}
     </table></div>
     <h2>4. Fornecedor e vencimento</h2>
     <div class="rec-form">
-      <label>Fornecedor padrão (nº no IXC)<input name="forn_padrao" value="<?= h($cfgX['forn_padrao']) ?>" inputmode="numeric" placeholder="ex.: 87"></label>
+      <label>Fornecedor padrão (para quem não tiver fornecedor)<input name="forn_padrao" value="<?= h(rixc_forn_rotulo((string)$cfgX['forn_padrao'], $lstX['forns'])) ?>" list="forns-ixc" placeholder="digite para procurar"></label>
       <label>Vencimento: dias depois do lançamento<input name="venc_dias" value="<?= (int)$cfgX['venc_dias'] ?>" inputmode="numeric"></label>
       <label class="larga op"><input type="checkbox" name="so_padrao" value="1" <?= $cfgX['so_padrao'] ? 'checked' : '' ?> style="width:18px;height:18px">Lançar tudo no fornecedor padrão (não procurar a pessoa pelo CPF)</label>
     </div>
-    <p class="small">A pessoa é procurada nos fornecedores do IXC pelo CPF (o mesmo CPF da tela Recibos). Quem não estiver lá vai no fornecedor padrão, com o nome e o CPF na descrição.</p>
+    <p class="small">O fornecedor de cada pessoa se escolhe mais abaixo, em "Cada pessoa". Se ficar em branco, o portal procura pelo CPF e pelo nome nos fornecedores do IXC; se não achar, vai no fornecedor padrão, com o nome e o CPF na descrição.</p>
     <div class="row" style="margin-top:10px"><button class="pri">Salvar</button></div>
   </form>
   <form method="post" action="?p=rixc" class="card row"><?= csrf_campo() ?><input type="hidden" name="acao" value="rixc_modelo">
     <label class="op">Conferir uma conta modelo no IXC: nº <input name="modelo" inputmode="numeric" size="10"></label><button>Conferir</button><span class="small">Só lê, não grava nada no IXC.</span></form>
-  <?php if ($cfgX['grupos']): ?>
+  <datalist id="forns-ixc"><?php foreach ($lstX['forns'] as $f): ?><option value="<?= h($f['nome'] . ' (#' . $f['id'] . ')') ?>"><?php endforeach ?></datalist>
   <form method="post" action="?p=rixc" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="rixc_pessoas">
-    <h2>Grupo de cada pessoa</h2>
-    <p class="small">Sem grupo, a pessoa usa a coluna "Padrão".</p>
-    <div class="rcb-cpfs"><?php foreach ($pesX as $k => $n): ?><label><?= h($n) ?><input type="hidden" name="pg[<?= h($k) ?>][nome]" value="<?= h($n) ?>"><select name="pg[<?= h($k) ?>][grupo]"><option value="">sem grupo</option><?php foreach ($cfgX['grupos'] as $g): ?><option <?= ($grP[$k] ?? '') === $g ? 'selected' : '' ?>><?= h($g) ?></option><?php endforeach ?></select></label><?php endforeach ?></div>
-    <div class="row" style="margin-top:10px"><button class="pri">Salvar grupos</button></div>
+    <h2>Cada pessoa: fornecedor no IXC<?= $cfgX['grupos'] ? ' e grupo' : '' ?></h2>
+    <p class="small"><?= $lstX['forns'] ? 'Digite no campo para procurar o fornecedor na lista do IXC. Quem já veio preenchido em cinza foi achado pelo CPF ou pelo nome: confira e salve.' : 'Clique em "Buscar no IXC" lá em cima para trazer a lista de fornecedores.' ?><?= $cfgX['grupos'] ? ' Sem grupo, a pessoa usa a coluna "Padrão".' : '' ?></p>
+    <div class="tw"><table class="rec"><thead><tr><th>Pessoa</th><th>Fornecedor no IXC</th><?php if ($cfgX['grupos']): ?><th>Grupo</th><?php endif ?></tr></thead>
+      <?php foreach ($pesX as $k => $n): $fId = $fnP[$k] ?? ''; [$sugF, $comoF] = $fId === '' ? rixc_forn_sugerido($k, $cpfP[$k] ?? '', $lstX['forns']) : ['', '']; ?>
+      <tr><td><b><?= h($n) ?></b><?= ($cpfP[$k] ?? '') !== '' ? '<br><span class="small">CPF ' . h(rh_cpf($cpfP[$k])) . '</span>' : '' ?><input type="hidden" name="pg[<?= h($k) ?>][nome]" value="<?= h($n) ?>"></td>
+        <td><input name="pg[<?= h($k) ?>][forn]" value="<?= h(rixc_forn_rotulo($fId !== '' ? $fId : $sugF, $lstX['forns'])) ?>" list="forns-ixc" placeholder="<?= $lstX['forns'] ? 'digite o nome' : 'nº do fornecedor' ?>" style="min-width:320px<?= $sugF !== '' ? ';color:#64748b' : '' ?>"><?= $sugF !== '' ? '<br><span class="small">achado pelo ' . h($comoF) . ', falta salvar</span>' : ($fId === '' ? '<br><span class="small q">sem fornecedor: vai no padrão</span>' : '') ?></td>
+        <?php if ($cfgX['grupos']): ?><td><select name="pg[<?= h($k) ?>][grupo]"><option value="">sem grupo</option><?php foreach ($cfgX['grupos'] as $g): ?><option <?= ($grP[$k] ?? '') === $g ? 'selected' : '' ?>><?= h($g) ?></option><?php endforeach ?></select></td><?php endif ?></tr>
+      <?php endforeach ?>
+      <?php if (!$pesX): ?><tr><td colspan="3" class="small">Ninguém cadastrado ainda.</td></tr><?php endif ?>
+    </table></div>
+    <div class="row" style="margin-top:10px"><button class="pri">Salvar</button></div>
   </form>
-  <?php endif ?>
   <div class="card"><h2>Últimas contas lançadas no IXC</h2><div class="tw"><table class="rec">
     <thead><tr><th>Quando</th><th>Recibo de</th><th>Pessoa</th><th>Despesa</th><th class="r">Valor</th><th>Conta no IXC</th><th>Quem</th></tr></thead>
     <?php foreach ($ultX as $u): ?><tr><td class="small"><?= h($u['lancado_em']) ?></td><td><?= h(mes_nome($u['mes'])) ?></td><td><?= h($u['nome']) ?></td><td><?= h($u['despesa_nome']) ?></td><td class="n r"><?= rh_rs((float)$u['valor']) ?></td><td class="n">#<?= h($u['ixc_id']) ?></td><td class="small"><?= h($u['lancado_por']) ?></td></tr><?php endforeach ?>
