@@ -102,6 +102,7 @@ function recibos_partes(string $mes, array $origens): array
     if (in_array('rh', $origens, true)) {
         foreach (rh_totais($mes) as $r) {
             foreach ($r['ls'] as $l) $add((string)$r['f']['nome'], 'rh', $r['pago_em'] !== '', RH_TIPOS[$l['tipo']], (float)$l['valor']);
+            if ($r['dsr'] > 0) $add((string)$r['f']['nome'], 'rh', $r['pago_em'] !== '', 'DSR sobre horas informais', (float)$r['dsr']);
         }
     }
     if (in_array('serv', $origens, true)) {
