@@ -164,7 +164,8 @@ function rixc_config_salvar(array $in): void
         $regras[$t] = ($regras[$t] ?? []) + ['' => ''];
     }
     $c['regras'] = $regras;
-    $c['forn_padrao'] = so_digitos((string)($in['forn_padrao'] ?? ''));
+    $fp = trim((string)($in['forn_padrao'] ?? ''));
+    $c['forn_padrao'] = preg_match('/#(\d+)\)?\s*$/', $fp, $m) ? $m[1] : so_digitos($fp);
     $c['so_padrao'] = !empty($in['so_padrao']) ? 1 : 0;
     $d = (int)($in['venc_dias'] ?? 0);
     if ($d < 0 || $d > 90) throw new RuntimeException('Vencimento: de 0 a 90 dias depois do lançamento.');
@@ -184,24 +185,62 @@ function rixc_pessoas_salvar(array $lista): int
 {
     $cfg = rixc_config();
     $atual = rixc_grupos_pessoas();
+    $fAtual = rixc_forn_pessoas();
     $up = db()->prepare('INSERT INTO recibos_ixc_pessoa (chave, nome, grupo) VALUES (?,?,?) ON CONFLICT(chave) DO UPDATE SET nome = excluded.nome, grupo = excluded.grupo');
+    $upF = db()->prepare('INSERT OR REPLACE INTO recibos_ixc_forn (chave, ixc_id) VALUES (?,?)');
+    $delF = db()->prepare('DELETE FROM recibos_ixc_forn WHERE chave = ?');
     $n = 0;
     foreach ($lista as $k => $v) {
         $k = recibo_chave((string)$k);
-        $g = (string)($v['grupo'] ?? '');
-        if ($k === '' || ($g !== '' && !in_array($g, $cfg['grupos'], true)) || $g === ($atual[$k] ?? '')) continue;
-        $up->execute([$k, mb_substr(up((string)($v['nome'] ?? $k)), 0, 80), $g]);
-        $n++;
+        if ($k === '') continue;
+        $mudou = false;
+        $g = (string)($v['grupo'] ?? ($atual[$k] ?? ''));
+        if (($g === '' || in_array($g, $cfg['grupos'], true)) && $g !== ($atual[$k] ?? '')) {
+            $up->execute([$k, mb_substr(up((string)($v['nome'] ?? $k)), 0, 80), $g]);
+            $mudou = true;
+        }
+        if (array_key_exists('forn', $v)) {
+            // vem da lista como "NOME DO FORNECEDOR (#123)", ou só o número
+            $t = trim((string)$v['forn']);
+            $f = preg_match('/#(\d+)\)?\s*$/', $t, $m) ? $m[1] : (ctype_digit($t) ? $t : '');
+            if ($t !== '' && $f === '') throw new RuntimeException('Fornecedor de ' . ($v['nome'] ?? $k) . ': escolha um nome da lista.');
+            if ($f !== ($fAtual[$k] ?? '')) {
+                $f === '' ? $delF->execute([$k]) : $upF->execute([$k, $f]);
+                $mudou = true;
+            }
+        }
+        if ($mudou) $n++;
     }
     return $n;
 }
 
-/** Pessoas conhecidas (para pôr no grupo): RH, técnicos, recolhedores, vendedores, quem já teve recibo. [chave => nome] */
+/** [chave => id do fornecedor no IXC] já ligado a cada pessoa */
+function rixc_forn_pessoas(): array
+{
+    return array_column(db()->query('SELECT chave, ixc_id FROM recibos_ixc_forn')->fetchAll(), 'ixc_id', 'chave');
+}
+
+/** Sugestão de fornecedor para quem ainda não tem: pelo CPF, senão pelo mesmo nome. [id, 'CPF'|'nome'] ou ['', ''] */
+function rixc_forn_sugerido(string $chave, string $cpf, array $forns): array
+{
+    if (strlen($cpf) === 11) foreach ($forns as $f) if ($f['cpf'] === $cpf) return [$f['id'], 'CPF'];
+    foreach ($forns as $f) if (recibo_chave($f['nome']) === $chave) return [$f['id'], 'nome'];
+    return ['', ''];
+}
+
+/** "NOME (#123)" para a lista de escolha */
+function rixc_forn_rotulo(string $id, array $forns): string
+{
+    foreach ($forns as $f) if ($f['id'] === $id) return $f['nome'] . ' (#' . $id . ')';
+    return $id !== '' ? 'fornecedor (#' . $id . ')' : '';
+}
+
+/** Pessoas conhecidas (para ligar ao fornecedor e pôr no grupo): RH, técnicos, recolhedores, vendedores, equipes de serviços, quem já teve recibo. [chave => nome] */
 function rixc_pessoas_conhecidas(): array
 {
     $out = [];
     $add = function (string $nome) use (&$out) { if (trim($nome) !== '') $out[recibo_chave($nome)] ??= up($nome); };
-    foreach (['rh_funcionarios', 'inst_tecnicos', 'inst_agendadores', 'rec_tecnicos', 'vendedores'] as $t) {
+    foreach (['rh_funcionarios', 'inst_tecnicos', 'inst_agendadores', 'rec_tecnicos', 'vendedores', 'serv_equipes'] as $t) {
         try {
             foreach (db()->query("SELECT nome FROM $t WHERE ativo = 1") as $r) $add((string)$r['nome']);
         } catch (PDOException) {
@@ -300,7 +339,15 @@ function rixc_buscar_despesas(int $quantas = 1500): int
     }
     $lista = array_values($contas);
     usort($lista, fn($a, $b) => [$b['n'] > 0, $a['nome']] <=> [$a['n'] > 0, $b['nome']]);
-    file_put_contents(rixc_arquivo_despesas(), json_encode(['em' => date('d/m/Y H:i'), 'tabela' => $tabela, 'campo' => $campo, 'base' => $base, 'contas' => $lista], JSON_UNESCAPED_UNICODE));
+    // 3) fornecedores (para ligar cada pessoa ao fornecedor dela no IXC)
+    $forns = [];
+    foreach ($api->listar($cp['tabela_forn'], 'id', '0', '>', 10000, 'asc') as $f) {
+        $nome = trim((string)(($f['razao'] ?? '') ?: (($f['fantasia'] ?? '') ?: ($f['nome'] ?? ''))));
+        if ($nome === '' || (isset($f['ativo']) && $f['ativo'] === 'N')) continue;
+        $forns[] = ['id' => (string)$f['id'], 'nome' => mb_substr(preg_replace('/\s+/', ' ', up($nome)), 0, 80), 'cpf' => so_digitos((string)($f[$cp['forn_cpf']] ?? ''))];
+    }
+    usort($forns, fn($a, $b) => strcmp($a['nome'], $b['nome']));
+    file_put_contents(rixc_arquivo_despesas(), json_encode(['em' => date('d/m/Y H:i'), 'tabela' => $tabela, 'campo' => $campo, 'base' => $base, 'contas' => $lista, 'forns' => $forns], JSON_UNESCAPED_UNICODE));
     return count($lista);
 }
 
@@ -309,7 +356,7 @@ function rixc_despesas_ixc(): array
 {
     $f = rixc_arquivo_despesas();
     $j = is_file($f) ? json_decode((string)file_get_contents($f), true) : null;
-    return (is_array($j) ? $j : []) + ['em' => '', 'tabela' => '', 'campo' => '', 'base' => '', 'contas' => []];
+    return (is_array($j) ? $j : []) + ['em' => '', 'tabela' => '', 'campo' => '', 'base' => '', 'contas' => [], 'forns' => []];
 }
 
 /** Texto da opção na tela */
@@ -354,9 +401,14 @@ function rixc_fornecedor(string $chave, string $nome, string $cpf, array $cfg): 
                 return [(string)$f['id'], 'pelo CPF'];
             }
         }
+        [$sug] = rixc_forn_sugerido($chave, '', rixc_despesas_ixc()['forns']);
+        if ($sug !== '') {
+            db()->prepare('INSERT OR REPLACE INTO recibos_ixc_forn (chave, ixc_id) VALUES (?,?)')->execute([$chave, $sug]);
+            return [$sug, 'pelo nome'];
+        }
     }
     if ($cfg['forn_padrao'] !== '') return [$cfg['forn_padrao'], 'padrão'];
-    throw new RuntimeException((strlen($cpf) === 11 ? 'o CPF não está nos fornecedores do IXC' : 'está sem CPF') . ' e não há fornecedor padrão (Configurações → Contas a pagar no IXC).');
+    throw new RuntimeException('não achei o fornecedor no IXC (nem pelo CPF nem pelo nome) e não há fornecedor padrão. Escolha o fornecedor dela em Configurações → Contas a pagar no IXC.');
 }
 
 /** [despesa => ['valor' => float, 'ls' => [[texto, valor]]]] de um recibo (pessoa), pelo tipo de cada linha e o grupo da pessoa */
