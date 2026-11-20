@@ -233,6 +233,95 @@ function rixc_modelo(string $id): array
     return $out;
 }
 
+function rixc_arquivo_despesas(): string
+{
+    return dirname((string)config()['banco']) . '/ixc-despesas.json';
+}
+
+/**
+ * Lê as últimas contas a pagar do IXC e junta as que têm o mesmo plano de contas / filial / conta
+ * (os campos que o portal copia do modelo). Cada grupo vira uma opção na tela: o admin escolhe a
+ * despesa pelo exemplo (descrição, fornecedor, valor), sem precisar criar conta modelo à mão.
+ * Só lê, nada é gravado no IXC. Devolve quantos tipos de despesa achou.
+ */
+function rixc_buscar_despesas(int $quantas = 1500): int
+{
+    $cp = rixc_campos();
+    $api = ixc();
+    $grupos = [];
+    foreach ($api->listar($cp['tabela'], 'id', '0', '>', $quantas, 'desc') as $r) {
+        $copia = [];
+        foreach ($r as $k => $v) if (is_scalar($v) && !preg_match(RIXC_NAO_COPIAR, (string)$k)) $copia[$k] = (string)$v;
+        ksort($copia);
+        $sig = md5(json_encode($copia));
+        $g = &$grupos[$sig];
+        if (!$g) {
+            $g = ['id' => (string)$r['id'], 'n' => 0, 'campos' => $copia, 'ex' => [], 'forn' => (string)($r[$cp['fornecedor']] ?? '')];
+        }
+        $g['n']++;
+        $txt = trim(preg_replace('/\s+/', ' ', (string)(($r[$cp['documento']] ?? '') !== '' ? $r[$cp['documento']] : ($r[$cp['obs']] ?? ''))));
+        if ($txt !== '' && count($g['ex']) < 3 && !in_array(mb_substr($txt, 0, 50), $g['ex'], true)) $g['ex'][] = mb_substr($txt, 0, 50);
+        unset($g);
+    }
+    // nome do plano de contas: tenta as tabelas mais prováveis do IXC (se não der, fica só o número)
+    $nomes = [];
+    $nomeDe = function (string $campo, string $id) use ($api, &$nomes): string {
+        if ($id === '' || $id === '0') return '';
+        $chave = "$campo:$id";
+        if (isset($nomes[$chave])) return $nomes[$chave];
+        $tabs = preg_match('/planej|plano/i', $campo) ? ['planejamento_analitico', 'fn_planejamento', 'planejamento', 'planejamento_sintetico'] : (preg_match('/filial/i', $campo) ? ['filial'] : ['contas', 'fn_contas', 'planejamento_analitico']);
+        foreach ($tabs as $t) {
+            try {
+                $x = $api->um($t, 'id', $id);
+            } catch (Throwable) {
+                $x = null;
+            }
+            if ($x) {
+                foreach (['descricao', 'planejamento', 'nome', 'conta', 'fantasia', 'razao'] as $c) {
+                    if (!empty($x[$c]) && is_string($x[$c])) return $nomes[$chave] = mb_substr(trim($x[$c]), 0, 60);
+                }
+            }
+        }
+        return $nomes[$chave] = '';
+    };
+    $out = [];
+    uasort($grupos, fn($a, $b) => $b['n'] <=> $a['n']);
+    foreach (array_slice($grupos, 0, 60, true) as $g) {
+        $plano = '';
+        foreach ($g['campos'] as $k => $v) {
+            if (preg_match('/planej|plano/i', $k) && $v !== '' && $v !== '0') { $plano = ($nomeDe($k, $v) ?: 'nº ' . $v); break; }
+        }
+        if ($plano === '') foreach ($g['campos'] as $k => $v) {
+            if (preg_match('/^id_conta$|conta/i', $k) && $v !== '' && $v !== '0') { $plano = ($nomeDe($k, $v) ?: 'nº ' . $v); break; }
+        }
+        $forn = '';
+        if ($g['forn'] !== '') {
+            try {
+                $f = $api->um($cp['tabela_forn'], 'id', $g['forn']);
+                $forn = $f ? mb_substr(trim((string)($f['razao'] ?? ($f['fantasia'] ?? ($f['nome'] ?? '')))), 0, 40) : '';
+            } catch (Throwable) {
+            }
+        }
+        $out[] = ['id' => $g['id'], 'n' => $g['n'], 'plano' => $plano, 'ex' => $g['ex'], 'forn' => $forn];
+    }
+    file_put_contents(rixc_arquivo_despesas(), json_encode(['em' => date('d/m/Y H:i'), 'lista' => $out], JSON_UNESCAPED_UNICODE));
+    return count($out);
+}
+
+/** ['em', 'lista' => [['id', 'n', 'plano', 'ex' => [...], 'forn'], ...]] da última busca */
+function rixc_despesas_ixc(): array
+{
+    $f = rixc_arquivo_despesas();
+    $j = is_file($f) ? json_decode((string)file_get_contents($f), true) : null;
+    return is_array($j) ? $j + ['em' => '', 'lista' => []] : ['em' => '', 'lista' => []];
+}
+
+/** Texto da opção na tela */
+function rixc_despesa_rotulo(array $o): string
+{
+    return ($o['plano'] !== '' ? $o['plano'] : 'Despesa') . ($o['ex'] ? ' · ex.: ' . implode(' / ', $o['ex']) : '') . ($o['forn'] !== '' ? ' · ' . $o['forn'] : '') . ' · ' . $o['n'] . ' conta(s) assim';
+}
+
 /** Fornecedor do IXC da pessoa: pelo CPF (guarda o que achou), senão o padrão. Devolve [id, como achou] ou lança. */
 function rixc_fornecedor(string $chave, string $nome, string $cpf, array $cfg): array
 {

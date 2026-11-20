@@ -615,6 +615,11 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $n = rixc_pessoas_salvar((array)($_POST['pg'] ?? []));
             if ($n) registrar($quem, 'alterou grupo das pessoas (contas a pagar IXC)', "$n");
             $msg = $n ? "Grupo salvo ($n pessoa(s))." : 'Nenhum grupo mudou.';
+        } elseif ($a === 'rixc_buscar') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin.');
+            $nd = rixc_buscar_despesas();
+            registrar($quem, 'leu despesas do IXC', "$nd");
+            $msg = "Achei $nd tipo(s) de despesa nas contas a pagar do IXC. Agora escolha, em cada linha abaixo, a despesa certa e clique em Salvar. Nada foi gravado no IXC.";
         } elseif ($a === 'rixc_modelo') {
             if (!$admin) throw new RuntimeException('Só o gestor admin.');
             $mid = so_digitos((string)($_POST['modelo'] ?? ''));
@@ -2296,6 +2301,19 @@ th.c,td.c{text-align:center}
     $grP = rixc_grupos_pessoas();
     $pesX = rixc_pessoas_conhecidas();
     $ultX = db()->query('SELECT * FROM recibos_ixc ORDER BY id DESC LIMIT 30')->fetchAll();
+    $lstX = rixc_despesas_ixc();
+    $selM = function (string $nome, string $atual) use ($lstX): string {
+        if (!$lstX['lista']) return '<input name="' . h($nome) . '" value="' . h($atual) . '" inputmode="numeric" placeholder="nº da conta modelo" size="10">';
+        $o = '<select name="' . h($nome) . '" style="max-width:640px"><option value="">escolha a despesa do IXC</option>';
+        $achou = false;
+        foreach ($lstX['lista'] as $x) {
+            $sel = $x['id'] === $atual;
+            $achou = $achou || $sel;
+            $o .= '<option value="' . h($x['id']) . '"' . ($sel ? ' selected' : '') . '>' . h(rixc_despesa_rotulo($x)) . '</option>';
+        }
+        if ($atual !== '' && !$achou) $o .= '<option value="' . h($atual) . '" selected>conta modelo nº ' . h($atual) . ' (digitada antes)</option>';
+        return $o . '</select>';
+    };
     $selD = function (string $nome, string $atual, string $vazio) use ($cfgX): string {
         $o = '<select name="' . h($nome) . '"><option value="">' . h($vazio) . '</option>';
         foreach ($cfgX['despesas'] as $id => $d) $o .= '<option value="' . h((string)$id) . '"' . ((string)$id === $atual ? ' selected' : '') . '>' . h($d['nome']) . '</option>';
@@ -2304,12 +2322,15 @@ th.c,td.c{text-align:center}
 ?>
   <div class="topo"><div><h1>Contas a pagar no IXC</h1><p class="small">Na tela Recibos, o botão "Lançar no IXC" cria uma conta a pagar no IXC para cada conta de despesa de cada recibo. Exemplo: um recibo com comissão e hora extra vira duas contas a pagar, uma em Comissões e outra em Custos de salário. A liquidação continua à mão no IXC. O mesmo recibo nunca é lançado duas vezes: se crescer depois, vai só a diferença.</p></div></div>
   <?php if (!rixc_ligado()): ?><div class="msg">Está desligado no servidor. Para ligar, no config.php coloque <b>'enviar_contas_pagar' => true</b> dentro de 'ixc'. Dá para deixar tudo configurado aqui antes.</div><?php endif ?>
+  <form method="post" action="?p=rixc" class="card row"><?= csrf_campo() ?><input type="hidden" name="acao" value="rixc_buscar">
+    <button class="pri"><?= $lstX['em'] ? 'Buscar despesas no IXC de novo' : 'Buscar despesas no IXC' ?></button>
+    <span class="small"><?= $lstX['em'] ? 'Última busca: ' . h($lstX['em']) . ', ' . count($lstX['lista']) . ' tipo(s) de despesa. ' : '' ?>Lê as últimas contas a pagar do IXC e junta as do mesmo plano de contas. Só lê, não grava nada no IXC.</span></form>
   <form method="post" action="?p=rixc" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="rixc_cfg">
     <h2>1. Contas de despesa</h2>
-    <p class="small">Para cada conta de despesa, lance à mão no IXC uma conta a pagar de exemplo, com o plano de contas, a filial e a conta certos, e escreva o número dela aqui. O portal copia esse modelo e troca só o fornecedor, o valor, as datas e a descrição. Para tirar uma conta de despesa, apague o nome.</p>
-    <div class="tw"><table class="rec"><thead><tr><th>Nome</th><th>Nº da conta a pagar modelo no IXC</th></tr></thead>
-      <?php foreach ($cfgX['despesas'] as $id => $d): ?><tr><td><input name="despesas[<?= h((string)$id) ?>][nome]" value="<?= h($d['nome']) ?>" maxlength="60"></td><td><input name="despesas[<?= h((string)$id) ?>][modelo]" value="<?= h($d['modelo']) ?>" inputmode="numeric" placeholder="ex.: 15230" size="10"><?= $d['modelo'] === '' ? ' <span class="pill q">falta</span>' : '' ?></td></tr><?php endforeach ?>
-      <tr><td><input name="despesas[novo][nome]" placeholder="nova: ex. Salário técnico" maxlength="60"></td><td><input name="despesas[novo][modelo]" inputmode="numeric" placeholder="nº do modelo" size="10"></td></tr>
+    <p class="small">Clique primeiro em "Buscar despesas no IXC" (logo acima). Em cada linha, escolha na lista a despesa do IXC que é a certa: a lista mostra o plano de contas e exemplos de contas a pagar que já foram lançadas daquele jeito. O portal lança igual a esse exemplo e troca só o fornecedor, o valor, as datas e a descrição. Para criar uma linha nova, escreva o nome na última linha. Para tirar uma, apague o nome.</p>
+    <div class="tw"><table class="rec"><thead><tr><th>Nome</th><th>Despesa no IXC</th></tr></thead>
+      <?php foreach ($cfgX['despesas'] as $id => $d): ?><tr><td><input name="despesas[<?= h((string)$id) ?>][nome]" value="<?= h($d['nome']) ?>" maxlength="60"></td><td><?= $selM("despesas[$id][modelo]", (string)$d['modelo']) ?><?= $d['modelo'] === '' ? ' <span class="pill q">falta</span>' : '' ?></td></tr><?php endforeach ?>
+      <tr><td><input name="despesas[novo][nome]" placeholder="nova: ex. Salário técnico" maxlength="60"></td><td><?= $selM('despesas[novo][modelo]', '') ?></td></tr>
     </table></div>
     <h2>2. Grupos de pessoas</h2>
     <p class="small">Quando o mesmo tipo de pagamento vai para despesas diferentes conforme a pessoa (ex.: hora extra de técnico e de administrativo). Um por linha. Deixe vazio se não precisar.</p>
