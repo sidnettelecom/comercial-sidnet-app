@@ -2299,7 +2299,8 @@ th.c,td.c{text-align:center}
 
 <?php elseif ($p === 'rixc'):
     $cfgX = rixc_config();
-    $grP = rixc_grupos_pessoas();
+    $dsP = rixc_desp_pessoas();
+    $rhPad = $cfgX['despesas'][(string)($cfgX['regras']['rh.horas'][''] ?? '')]['nome'] ?? '';
     $pesX = rixc_pessoas_conhecidas();
     $ultX = db()->query('SELECT * FROM recibos_ixc ORDER BY id DESC LIMIT 30')->fetchAll();
     $lstX = rixc_despesas_ixc();
@@ -2338,16 +2339,13 @@ th.c,td.c{text-align:center}
       <?php foreach ($cfgX['despesas'] as $id => $d): ?><tr><td><input name="despesas[<?= h((string)$id) ?>][nome]" value="<?= h($d['nome']) ?>" maxlength="60"></td><td><?= $selM((string)$id, $d) ?><?= ($d['conta'] ?? '') === '' && ($d['modelo'] ?? '') === '' ? ' <span class="pill q">falta</span>' : '' ?></td></tr><?php endforeach ?>
       <tr><td><input name="despesas[novo][nome]" placeholder="nova: ex. Salário técnico" maxlength="60"></td><td><?= $selM('novo', []) ?></td></tr>
     </table></div>
-    <h2>2. Grupos de pessoas</h2>
-    <p class="small">Quando o mesmo tipo de pagamento vai para despesas diferentes conforme a pessoa (ex.: hora extra de técnico e de administrativo). Um por linha. Deixe vazio se não precisar.</p>
-    <textarea name="grupos" rows="3" style="width:100%;max-width:420px" placeholder="TÉCNICO&#10;ADMINISTRATIVO"><?= h(implode("\n", $cfgX['grupos'])) ?></textarea>
-    <h2>3. Para onde vai cada tipo de pagamento</h2>
-    <p class="small">"Padrão" vale para todo mundo. Na coluna de um grupo, escolha só se for diferente do padrão. No padrão, "não lança" deixa esse tipo fora do IXC.</p>
-    <div class="tw"><table class="rec"><thead><tr><th>Tipo de pagamento</th><th>Padrão</th><?php foreach ($cfgX['grupos'] as $g): ?><th><?= h($g) ?></th><?php endforeach ?></tr></thead>
-      <?php foreach (RIXC_TIPOS as $t => $tn): ?><tr><td><?= h($tn) ?></td><td><?= $selD("regras[$t][_]", (string)($cfgX['regras'][$t][''] ?? ''), 'não lança') ?></td>
-        <?php foreach ($cfgX['grupos'] as $g): ?><td><?= $selD("regras[$t][$g]", (string)($cfgX['regras'][$t][$g] ?? ''), 'igual ao padrão') ?></td><?php endforeach ?></tr><?php endforeach ?>
+    <input type="hidden" name="grupos" value="">
+    <h2>2. Para onde vai cada tipo de pagamento</h2>
+    <p class="small">Vale para todo mundo. As linhas do <b>RH</b> (horas, sobreaviso, complemento, pagamento extra, DSR) podem ir para outra conta conforme a pessoa: isso se escolhe embaixo, em "Cada pessoa" (ex.: técnico em Salário técnico, administrativo em Salário administrativo). "Não lança" deixa esse tipo fora do IXC.</p>
+    <div class="tw"><table class="rec"><thead><tr><th>Tipo de pagamento</th><th>Conta de despesa</th></tr></thead>
+      <?php foreach (RIXC_TIPOS as $t => $tn): ?><tr><td><?= h($tn) ?></td><td><?= $selD("regras[$t][_]", (string)($cfgX['regras'][$t][''] ?? ''), 'não lança') ?></td></tr><?php endforeach ?>
     </table></div>
-    <h2>4. Fornecedor e vencimento</h2>
+    <h2>3. Fornecedor e vencimento</h2>
     <div class="rec-form">
       <label>Fornecedor padrão (para quem não tiver fornecedor)<input name="forn_padrao" value="<?= h(rixc_forn_rotulo((string)$cfgX['forn_padrao'], $lstX['forns'])) ?>" list="forns-ixc" placeholder="digite para procurar"></label>
       <label>Vencimento: dias depois do lançamento<input name="venc_dias" value="<?= (int)$cfgX['venc_dias'] ?>" inputmode="numeric"></label>
@@ -2360,13 +2358,13 @@ th.c,td.c{text-align:center}
     <label class="op">Conferir uma conta modelo no IXC: nº <input name="modelo" inputmode="numeric" size="10"></label><button>Conferir</button><span class="small">Só lê, não grava nada no IXC.</span></form>
   <datalist id="forns-ixc"><?php foreach ($lstX['forns'] as $f): ?><option value="<?= h($f['nome'] . ' (#' . $f['id'] . ')') ?>"><?php endforeach ?></datalist>
   <form method="post" action="?p=rixc" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="rixc_pessoas">
-    <h2>Cada pessoa: fornecedor no IXC<?= $cfgX['grupos'] ? ' e grupo' : '' ?></h2>
-    <p class="small"><?= $lstX['forns'] ? 'Digite no campo para procurar o fornecedor na lista do IXC. Quem já veio preenchido em cinza foi achado pelo CPF ou pelo nome: confira e salve.' : 'Clique em "Buscar no IXC" lá em cima para trazer a lista de fornecedores.' ?><?= $cfgX['grupos'] ? ' Sem grupo, a pessoa usa a coluna "Padrão".' : '' ?></p>
-    <div class="tw"><table class="rec"><thead><tr><th>Pessoa</th><th>Fornecedor no IXC</th><?php if ($cfgX['grupos']): ?><th>Grupo</th><?php endif ?></tr></thead>
+    <h2>Cada pessoa: fornecedor e conta de despesa no IXC</h2>
+    <p class="small"><?= $lstX['forns'] ? 'Digite no campo para procurar o fornecedor na lista do IXC. Quem já veio preenchido em cinza foi achado pelo CPF ou pelo nome: confira e salve.' : 'Clique em "Buscar no IXC" lá em cima para trazer a lista de fornecedores.' ?><br>"Conta de salário": para onde vão as horas, sobreaviso, complemento e pagamentos extras dessa pessoa (ex.: técnico → Salário técnico, administrativo → Salário administrativo). Comissões e serviços seguem o item 2.</p>
+    <div class="tw"><table class="rec"><thead><tr><th>Pessoa</th><th>Fornecedor no IXC</th><th>Conta de salário (RH)</th></tr></thead>
       <?php foreach ($pesX as $k => $n): $fId = $fnP[$k] ?? ''; [$sugF, $comoF] = $fId === '' ? rixc_forn_sugerido($k, $cpfP[$k] ?? '', $lstX['forns']) : ['', '']; ?>
       <tr><td><b><?= h($n) ?></b><?= ($cpfP[$k] ?? '') !== '' ? '<br><span class="small">CPF ' . h(rh_cpf($cpfP[$k])) . '</span>' : '' ?><input type="hidden" name="pg[<?= h($k) ?>][nome]" value="<?= h($n) ?>"></td>
         <td><input name="pg[<?= h($k) ?>][forn]" value="<?= h(rixc_forn_rotulo($fId !== '' ? $fId : $sugF, $lstX['forns'])) ?>" list="forns-ixc" placeholder="<?= $lstX['forns'] ? 'digite o nome' : 'nº do fornecedor' ?>" style="min-width:320px<?= $sugF !== '' ? ';color:#64748b' : '' ?>"><?= $sugF !== '' ? '<br><span class="small">achado pelo ' . h($comoF) . ', falta salvar</span>' : ($fId === '' ? '<br><span class="small q">sem fornecedor: vai no padrão</span>' : '') ?></td>
-        <?php if ($cfgX['grupos']): ?><td><select name="pg[<?= h($k) ?>][grupo]"><option value="">sem grupo</option><?php foreach ($cfgX['grupos'] as $g): ?><option <?= ($grP[$k] ?? '') === $g ? 'selected' : '' ?>><?= h($g) ?></option><?php endforeach ?></select></td><?php endif ?></tr>
+        <td><?= $selD("pg[$k][desp]", (string)($dsP[$k] ?? ''), 'a do item 2' . ($rhPad !== '' ? ' (' . $rhPad . ')' : '')) ?></td></tr>
       <?php endforeach ?>
       <?php if (!$pesX): ?><tr><td colspan="3" class="small">Ninguém cadastrado ainda.</td></tr><?php endif ?>
     </table></div>
