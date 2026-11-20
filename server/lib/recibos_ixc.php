@@ -118,6 +118,9 @@ function rixc_tabela(): void
     CREATE TABLE IF NOT EXISTS recibos_ixc_forn (chave TEXT PRIMARY KEY, ixc_id TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS recibos_ixc_pessoa (chave TEXT PRIMARY KEY, nome TEXT NOT NULL, grupo TEXT NOT NULL DEFAULT '');
     SQL);
+    // conta de despesa do RH escolhida para a pessoa (ex.: técnico → Salário técnico), por cima da regra geral
+    $cols = array_column(db()->query('PRAGMA table_info(recibos_ixc_pessoa)')->fetchAll(), 'name');
+    if (!in_array('despesa', $cols, true)) db()->exec("ALTER TABLE recibos_ixc_pessoa ADD COLUMN despesa TEXT NOT NULL DEFAULT ''");
 }
 
 function rixc_config(): array
@@ -180,6 +183,12 @@ function rixc_grupos_pessoas(): array
     return array_column(db()->query('SELECT chave, grupo FROM recibos_ixc_pessoa')->fetchAll(), 'grupo', 'chave');
 }
 
+/** [chave => id da conta de despesa do RH da pessoa] (só quem tem uma escolhida) */
+function rixc_desp_pessoas(): array
+{
+    return array_column(db()->query("SELECT chave, despesa FROM recibos_ixc_pessoa WHERE despesa <> ''")->fetchAll(), 'despesa', 'chave');
+}
+
 /** Grava o grupo de cada pessoa: [chave => ['nome' => ..., 'grupo' => ...]]. Devolve quantos mudaram. */
 function rixc_pessoas_salvar(array $lista): int
 {
@@ -188,6 +197,8 @@ function rixc_pessoas_salvar(array $lista): int
     $fAtual = rixc_forn_pessoas();
     $up = db()->prepare('INSERT INTO recibos_ixc_pessoa (chave, nome, grupo) VALUES (?,?,?) ON CONFLICT(chave) DO UPDATE SET nome = excluded.nome, grupo = excluded.grupo');
     $upF = db()->prepare('INSERT OR REPLACE INTO recibos_ixc_forn (chave, ixc_id) VALUES (?,?)');
+    $dAtual = rixc_desp_pessoas();
+    $upD = db()->prepare("INSERT INTO recibos_ixc_pessoa (chave, nome, despesa) VALUES (?,?,?) ON CONFLICT(chave) DO UPDATE SET nome = excluded.nome, despesa = excluded.despesa");
     $delF = db()->prepare('DELETE FROM recibos_ixc_forn WHERE chave = ?');
     $n = 0;
     foreach ($lista as $k => $v) {
@@ -195,9 +206,16 @@ function rixc_pessoas_salvar(array $lista): int
         if ($k === '') continue;
         $mudou = false;
         $g = (string)($v['grupo'] ?? ($atual[$k] ?? ''));
-        if (($g === '' || in_array($g, $cfg['grupos'], true)) && $g !== ($atual[$k] ?? '')) {
+        if (array_key_exists('grupo', $v) && ($g === '' || in_array($g, $cfg['grupos'], true)) && $g !== ($atual[$k] ?? '')) {
             $up->execute([$k, mb_substr(up((string)($v['nome'] ?? $k)), 0, 80), $g]);
             $mudou = true;
+        }
+        if (array_key_exists('desp', $v)) {
+            $dv = (string)$v['desp'];
+            if (($dv === '' || isset($cfg['despesas'][$dv])) && $dv !== ($dAtual[$k] ?? '')) {
+                $upD->execute([$k, mb_substr(up((string)($v['nome'] ?? $k)), 0, 80), $dv]);
+                $mudou = true;
+            }
         }
         if (array_key_exists('forn', $v)) {
             // vem da lista como "NOME DO FORNECEDOR (#123)", ou só o número
@@ -415,9 +433,12 @@ function rixc_fornecedor(string $chave, string $nome, string $cpf, array $cfg): 
 function rixc_por_despesa(array $recibo, array $cfg, array $grupos): array
 {
     $g = $grupos[$recibo['chave']] ?? '';
+    $dp = rixc_desp_pessoas()[$recibo['chave']] ?? '';
     $out = [];
     foreach ($recibo['ls'] as $l) {
         $d = rixc_despesa_de((string)($l[2] ?? ''), $g, $cfg);
+        // RH: a conta escolhida para a pessoa vale por cima (se o tipo vai ao IXC)
+        if ($d !== '' && $dp !== '' && isset($cfg['despesas'][$dp]) && str_starts_with((string)($l[2] ?? ''), 'rh.')) $d = $dp;
         if ($d === '') continue; // tipo que não vai ao IXC
         $out[$d] ??= ['valor' => 0.0, 'ls' => []];
         $out[$d]['valor'] += (float)$l[1];
