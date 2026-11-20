@@ -16,6 +16,8 @@ return [
         'enviar_upgrade_segundo' => false, // false: upgrade e 2º ponto só ficam registrados no comercial (nada no IXC); true: abre atendimento / pré-contrato como antes
         'enviar_upgrade' => false,     // true: só o UPGRADE vai ao IXC (2º ponto continua só no comercial): atualiza telefones e e-mail no cadastro do cliente e abre o atendimento de upgrade. Não muda o plano.
         'atualizar_contato' => true,   // (com enviar_upgrade) false: não mexe no cadastro, só escreve no atendimento o que mudar à mão
+        'enviar_contas_pagar' => false, // true: na tela Recibos aparece "Lançar no IXC": cada recibo vira contas a pagar no IXC, uma por conta de despesa (comissão, salário...). Ajuste em Configurações → Contas a pagar no IXC. A liquidação continua à mão.
+        // 'contas_pagar_campos' => ['valor' => 'valor'], // só se o IXC usar outro nome de campo em fn_apagar (confira: php server/bin/ixc.php campos fn_apagar)
         'assunto_upgrade' => 0,        // (com enviar_upgrade) assunto do atendimento de upgrade (hoje 63 = ALTERAÇÃO DE PLANO DE VENDA); o processo dele abre a O.S.
         'assunto_segundo' => 0,        // (só com enviar_upgrade_segundo) assunto do atendimento de 2º ponto
         'setor_id' => 0,               // setor (departamento) dos atendimentos

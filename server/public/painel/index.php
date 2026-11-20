@@ -18,6 +18,7 @@ require_once __DIR__ . '/../../lib/rh.php';
 require_once __DIR__ . '/../../lib/recibos.php';
 require_once __DIR__ . '/../../lib/servicos.php';
 require_once __DIR__ . '/../../lib/colaboradores.php';
+require_once __DIR__ . '/../../lib/recibos_ixc.php';
 dash_tabela();
 perm_tabela();
 rec_tabela();
@@ -27,6 +28,7 @@ serv_tabela();
 recibos_tabela();
 rh_compl_auto(date('Y-m')); // complemento fixo do mês entra sozinho
 colab_tabela();
+rixc_tabela();
 
 const PAINEL_INATIVO_MAX = 8 * 3600; // sai sozinho depois de 8 horas sem uso
 
@@ -127,7 +129,7 @@ const PERM_ACOES = [
     'inst_salvar' => 'inst.lista', 'inst_excluir' => 'inst.lista', 'inst_buscar' => 'inst.lista', 'inst_mais' => 'inst.lista', 'inst_mais_tec' => 'inst.lista',
     'inst_servicos_salvar' => 'inst.com', 'inst_com_salvar' => 'inst.com', 'inst_pagar' => 'inst.com',
     'rh_lanc_salvar' => 'rh.lanc', 'rh_lanc_excluir' => 'rh.lanc', 'rh_func_salvar' => 'rh.func', 'rh_func_ativo' => 'rh.func', 'rh_pagar' => 'rh.fecha', 'rh_sobre_salvar' => 'rh.lanc',
-    'recibos_cpf' => 'recibos',
+    'recibos_cpf' => 'recibos', 'recibos_ixc' => 'recibos.ixc',
     'colab_buscar' => 'cfg.colab', 'colab_salvar' => 'cfg.colab', 'colab_mostrar' => 'cfg.colab',
     'serv_servico' => 'serv.lanc', 'serv_pagamento' => 'serv.pag', 'serv_excluir' => 'serv',
     'serv_equipe_salvar' => 'serv.cad', 'serv_equipe_ativo' => 'serv.cad', 'serv_obra_salvar' => 'serv.cad', 'serv_obra_concluir' => 'serv.cad', 'serv_precos_salvar' => 'serv.cad',
@@ -136,6 +138,7 @@ $recForm = null; // formulário de O.S de recolhimento para mostrar de novo (err
 $instForm = null; // o mesmo para a O.S de instalação
 $rhForm = null; // lançamento do RH que deu erro, para mostrar de novo
 $servForm = null; // serviço/pagamento de serviços em execução para mostrar de novo
+$rixcRes = null; // resultado do lançamento das contas a pagar no IXC (tela Recibos)
 $quem = $gestor['usuario'] ?? '';
 
 // ---- ações ----
@@ -590,6 +593,34 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $n = recibos_cpf_salvar((array)($_POST['cpf'] ?? []));
             if ($n) registrar($quem, 'salvou CPF nos recibos', "$n pessoa(s)");
             $msg = $n ? "CPF salvo ($n)." : 'Nenhum CPF mudou.';
+        } elseif ($a === 'recibos_ixc') {
+            // mesmas contas da tela Recibos (mês, áreas que este gestor vê, situação), só as pessoas marcadas
+            $mesX = rh_mes_ok((string)($_POST['mes'] ?? ''));
+            if ($mesX === '') throw new RuntimeException('Mês inválido.');
+            $oX = array_values(array_intersect(array_filter(array_keys(RECIBO_ORIGENS), fn($o) => $pode('recibos.' . $o)), (array)($_POST['o'] ?? [])));
+            $sitX = in_array($_POST['sit'] ?? '', ['apagar', 'pagos'], true) ? $_POST['sit'] : 'todos';
+            $partesX = array_filter(recibos_partes($mesX, $oX), fn($x) => $sitX === 'todos' || ($sitX === 'pagos') === $x['pago']);
+            $pessoasX = array_intersect_key(recibos_por_pessoa($partesX, recibos_cpfs()), array_flip(array_map('strval', (array)($_POST['s'] ?? []))));
+            if (!$pessoasX) throw new RuntimeException('Marque pelo menos uma pessoa.');
+            $rixcRes = rixc_lancar($mesX, array_values($pessoasX), $quem);
+            registrar($quem, 'lançou contas a pagar no IXC', mes_nome($mesX) . ': ' . count($rixcRes['ok']) . ' conta(s), ' . count($rixcRes['erro']) . ' erro(s)');
+            $msg = count($rixcRes['ok']) . ' conta(s) a pagar criada(s) no IXC' . ($rixcRes['ja'] ? ', ' . count($rixcRes['ja']) . ' recibo(s) já estavam lançados' : '') . ($rixcRes['erro'] ? ', ' . count($rixcRes['erro']) . ' com problema (veja abaixo)' : '') . '.';
+        } elseif ($a === 'rixc_cfg') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin muda as contas a pagar do IXC.');
+            rixc_config_salvar($_POST);
+            registrar($quem, 'alterou contas a pagar do IXC');
+            $msg = 'Configuração das contas a pagar salva.';
+        } elseif ($a === 'rixc_pessoas') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin muda as contas a pagar do IXC.');
+            $n = rixc_pessoas_salvar((array)($_POST['pg'] ?? []));
+            if ($n) registrar($quem, 'alterou grupo das pessoas (contas a pagar IXC)', "$n");
+            $msg = $n ? "Grupo salvo ($n pessoa(s))." : 'Nenhum grupo mudou.';
+        } elseif ($a === 'rixc_modelo') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin.');
+            $mid = so_digitos((string)($_POST['modelo'] ?? ''));
+            if ($mid === '') throw new RuntimeException('Digite o número da conta modelo.');
+            $mx = rixc_modelo($mid);
+            $msg = 'Conta modelo #' . $mid . ' achada no IXC. O portal vai copiar: ' . ($mx ? implode(', ', array_map(fn($k, $v) => "$k = $v", array_keys($mx), $mx)) : 'nada (confira com o suporte)') . '.';
         } elseif ($a === 'serv_servico') {
             $servForm = (array)($_POST['l'] ?? []);
             $lid = serv_servico_salvar($servForm, $quem);
@@ -683,7 +714,7 @@ $AREA_PAG = ['vendas' => 'vendas.lista', 'excluir' => 'vendas.lista', 'mes' => '
     'comissoes' => 'com.lista', 'planilha' => 'com.planilha', 'gestores' => 'cfg.gest', 'config' => 'admin', 'senha' => '', 'trocar' => '',
     'recolhimentos' => 'rec.lista', 'rec_comissao' => 'rec.com', 'instalacoes' => 'inst.lista', 'inst_comissao' => 'inst.com',
     'rh_lancar' => 'rh.lanc', 'rh_fecha' => 'rh.fecha', 'rh_func' => 'rh.func', 'rh_cfg' => 'admin', 'recibos' => 'recibos',
-    'serv' => 'serv.saldo', 'serv_extrato' => 'serv.saldo', 'serv_lista' => 'serv.saldo', 'serv_lancar' => 'serv', 'serv_cad' => 'serv.cad', 'colab' => 'cfg.colab'];
+    'serv' => 'serv.saldo', 'serv_extrato' => 'serv.saldo', 'serv_lista' => 'serv.saldo', 'serv_lancar' => 'serv', 'serv_cad' => 'serv.cad', 'colab' => 'cfg.colab', 'rixc' => 'admin'];
 if (!isset($AREA_PAG[$p])) $p = 'vendas';
 if ($logado && $p !== 'trocar' && ($_GET['p'] ?? '') === '' && !$pode('vendas.lista')) {
     // tela inicial: a primeira opção liberada, na ordem do menu
@@ -1011,7 +1042,7 @@ th.c,td.c{text-align:center}
     . $grupo('rh', 'RH', [['rh_lancar', 'Lançamentos', $pode('rh.lanc')], ['rh_fecha', 'Fechamento do mês', $pode('rh.fecha')], ['rh_func', 'Funcionários', $pode('rh.func')], ['rh_cfg', 'Feriados e valores', $admin]])
     . $grupo('serv', 'Serviços em execução', [['serv', 'Saldos', $pode('serv.saldo'), ['serv', 'serv_extrato']], ['serv_lancar', 'Lançar', $pode('serv.lanc') || $pode('serv.pag')], ['serv_lista', 'Serviços lançados', $pode('serv.saldo')], ['serv_cad', 'Equipes, obras e preços', $pode('serv.cad')]])
     . ($pode('recibos') ? $aba('recibos', 'Recibos') : '')
-    . $grupo('config', 'Configurações', [['config', 'Permissões', $admin], ['gestores', 'Gestores', $pode('cfg.gest')], ['vendedores', 'Usuários', $pode('cfg.users')], ['planos', 'Planos', $pode('cfg.planos')], ['colab', 'Colaboradores do IXC', $pode('cfg.colab')]]) ?></nav>
+    . $grupo('config', 'Configurações', [['config', 'Permissões', $admin], ['gestores', 'Gestores', $pode('cfg.gest')], ['vendedores', 'Usuários', $pode('cfg.users')], ['planos', 'Planos', $pode('cfg.planos')], ['colab', 'Colaboradores do IXC', $pode('cfg.colab')], ['rixc', 'Contas a pagar no IXC', $admin && destino() === 'ixc']]) ?></nav>
   <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?p=senha">Trocar minha senha</a><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
 <?php endif ?>
@@ -2118,6 +2149,11 @@ th.c,td.c{text-align:center}
     $nomesO = fn(array $os) => preg_replace('/, ([^,]+)$/', ' e $1', implode(', ', array_map(fn($o) => RECIBO_REFERENTE[$o], $os)));
     $semCpf = array_filter($pessoasR, fn($r) => $r['cpf'] === '');
     $aquiR = '?' . h(http_build_query(array_diff_key($_GET, ['g' => 1])));
+    // contas a pagar no IXC: situação de cada recibo (só se estiver ligado no config.php)
+    $ixcR = rixc_ligado();
+    $podeIxcR = $ixcR && $pode('recibos.ixc');
+    if ($ixcR) { $cfgX = rixc_config(); $lancX = rixc_lancados($mesR); $grX = rixc_grupos_pessoas(); }
+    $sitX = fn(array $r) => $ixcR ? rixc_situacao($r, $lancX, $cfgX, $grX) : ['nao', []];
 ?>
   <div class="topo noprint"><div><h1>Recibos</h1><p class="small">Um recibo por pessoa no mês, com tudo somado: comissão de vendas, recolhimento, instalação, RH e pagamentos de serviços em execução. Uma via só, para a pessoa assinar e ficar com a empresa. Sai 4 por folha A4.</p></div></div>
   <form method="get" class="card noprint rcb-filtro"><input type="hidden" name="p" value="recibos"><input type="hidden" name="f" value="1">
@@ -2128,24 +2164,33 @@ th.c,td.c{text-align:center}
     <div class="row"><?php foreach ($oPode as $o): ?><label class="og"><input type="checkbox" name="o[]" value="<?= h($o) ?>" <?= in_array($o, $oSel, true) ? 'checked' : '' ?>><?= h(RECIBO_ORIGENS[$o]) ?></label><?php endforeach ?>
       <button>Filtrar</button></div>
     <div class="tw"><table class="rec">
-      <thead><tr><th class="ck"></th><th>Pessoa</th><th>De onde vem</th><th>Detalhe</th><th class="r">Valor</th><th>Situação</th></tr></thead>
+      <thead><tr><th class="ck"></th><th>Pessoa</th><th>De onde vem</th><th>Detalhe</th><th class="r">Valor</th><th>Situação</th><?php if ($ixcR): ?><th>No IXC</th><?php endif ?></tr></thead>
       <?php foreach ($pessoasR as $k => $r): ?>
       <tr><td class="ck"><input type="checkbox" name="s[]" value="<?= h($k) ?>" <?= in_array($k, $selR, true) ? 'checked' : '' ?> aria-label="Imprimir recibo de <?= h($r['nome']) ?>"></td>
         <td><b><?= h($r['nome']) ?></b><?= $r['cpf'] !== '' ? '<br><span class="small">CPF ' . h(rh_cpf($r['cpf'])) . '</span>' : '<br><span class="small q">sem CPF</span>' ?></td>
         <td><?php foreach ($r['origens'] as $o): ?><span class="tp o-<?= h($o) ?>"><?= h(RECIBO_ORIGENS[$o]) ?></span> <?php endforeach ?></td>
         <td class="small"><?= h(implode(' · ', array_map(fn($l) => $l[0], $r['ls']))) ?></td>
         <td class="n r"><b><?= rh_rs($r['tot']) ?></b></td>
-        <td><?= $r['pago'] === 'sim' ? '<span class="tp pago">pago</span>' : ($r['pago'] === 'parte' ? '<span class="pill q">parte paga</span>' : '<span class="pill q">a pagar</span>') ?></td></tr>
+        <td><?= $r['pago'] === 'sim' ? '<span class="tp pago">pago</span>' : ($r['pago'] === 'parte' ? '<span class="pill q">parte paga</span>' : '<span class="pill q">a pagar</span>') ?></td>
+        <?php if ($ixcR): [$sx, $idsX] = $sitX($r); ?><td><?= $sx === 'sim' ? '<span class="pill ok">lançado</span>' : ($sx === 'dif' ? '<span class="pill er" title="O recibo mudou depois de lançado">mudou</span>' : '<span class="small">não lançado</span>') ?><?= $idsX ? '<br><span class="small">conta ' . h(implode(', ', array_map(fn($i) => '#' . $i, $idsX))) . '</span>' : '' ?></td><?php endif ?></tr>
       <?php endforeach ?>
-      <?php if (!$pessoasR): ?><tr><td colspan="6" class="small">Nada para <?= h($refR) ?> com esse filtro.</td></tr><?php else: ?>
-      <tfoot><tr><td></td><td colspan="3">Total da lista (<?= count($pessoasR) ?> pessoa(s))</td><td class="n r"><?= rh_rs(array_sum(array_column($pessoasR, 'tot'))) ?></td><td></td></tr></tfoot><?php endif ?>
+      <?php if (!$pessoasR): ?><tr><td colspan="<?= $ixcR ? 7 : 6 ?>" class="small">Nada para <?= h($refR) ?> com esse filtro.</td></tr><?php else: ?>
+      <tfoot><tr><td></td><td colspan="3">Total da lista (<?= count($pessoasR) ?> pessoa(s))</td><td class="n r"><?= rh_rs(array_sum(array_column($pessoasR, 'tot'))) ?></td><td<?= $ixcR ? ' colspan="2"' : '' ?>></td></tr></tfoot><?php endif ?>
     </table></div>
     <?php if ($pessoasR): ?><div class="row"><button class="pri" name="g" value="1">Gerar recibos marcados</button></div><?php endif ?>
     <p class="small">Entra no recibo: comissão de vendas com valor, já paga ou com o cliente tendo pago o 1º boleto; O.S de recolhimento e de instalação conferidas; todos os lançamentos do RH do mês; pagamentos feitos às equipes de serviços em execução no mês. A mesma pessoa em mais de uma área (mesmo nome) sai num recibo só.</p>
   </form>
   <?php if ($gerarR): ?>
   <div class="topo noprint"><div><h2><?= count($impR) ?> recibo(s) em <?= (int)ceil(count($impR) / 4) ?> folha(s) A4</h2><?= $emp['cnpj'] === '' ? '<p class="small">Falta o CNPJ no cabeçalho: ' . ($admin ? 'preencha em RH → Funcionários, no fim da página.' : 'peça ao admin para preencher.') . '</p>' : '' ?></div>
-    <?php if ($impR): ?><button class="pri" type="button" data-imprimir>Imprimir</button><?php endif ?></div>
+    <div class="row"><?php if ($impR && $podeIxcR): ?><form method="post" action="<?= $aquiR ?>&amp;g=1" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="recibos_ixc"><input type="hidden" name="mes" value="<?= h($mesR) ?>"><input type="hidden" name="sit" value="<?= h($sitR) ?>">
+        <?php foreach ($oSel as $o): ?><input type="hidden" name="o[]" value="<?= h($o) ?>"><?php endforeach ?><?php foreach ($impR as $r): ?><input type="hidden" name="s[]" value="<?= h($r['chave']) ?>"><?php endforeach ?>
+        <button title="Cria no IXC uma conta a pagar para cada conta de despesa de cada recibo. Recibo já lançado não vai de novo.">Lançar no IXC (contas a pagar)</button></form><?php endif ?>
+      <?php if ($impR): ?><button class="pri" type="button" data-imprimir>Imprimir</button><?php endif ?></div></div>
+  <?php if ($rixcRes): ?><div class="card noprint"><h2>Contas a pagar no IXC</h2>
+    <?php if ($rixcRes['ok']): ?><p><b>Criadas:</b></p><ul><?php foreach ($rixcRes['ok'] as $l): ?><li><?= h($l) ?></li><?php endforeach ?></ul><?php endif ?>
+    <?php if ($rixcRes['ja']): ?><p class="small">Já estavam lançadas, nada mudou: <?= h(implode(', ', $rixcRes['ja'])) ?>.</p><?php endif ?>
+    <?php if ($rixcRes['erro']): ?><p><b>Não lançadas (corrija e clique de novo, o que já foi não repete):</b></p><ul><?php foreach ($rixcRes['erro'] as $l): ?><li class="q"><?= h($l) ?></li><?php endforeach ?></ul><?php endif ?>
+    <p class="small">A liquidação continua sendo feita à mão no IXC.</p></div><?php endif ?>
   <div class="rfolhas"><?php foreach (array_chunk($impR, 4) as $folha): ?><div class="rfolha">
     <?php foreach ($folha as $r): ?><div class="rc">
       <div class="cab"><div><b><?= h($emp['nome']) ?></b><?= $emp['cnpj'] !== '' ? ' · CNPJ ' . h(rh_cnpj($emp['cnpj'])) : '' ?></div><div class="t">RECIBO · <?= h(mb_strtoupper($refR)) ?></div></div>
@@ -2245,6 +2290,60 @@ th.c,td.c{text-align:center}
     <div class="row" style="margin-top:10px"><button class="pri">Salvar cabeçalho</button></div>
   </form>
   <?php endif ?>
+
+<?php elseif ($p === 'rixc'):
+    $cfgX = rixc_config();
+    $grP = rixc_grupos_pessoas();
+    $pesX = rixc_pessoas_conhecidas();
+    $ultX = db()->query('SELECT * FROM recibos_ixc ORDER BY id DESC LIMIT 30')->fetchAll();
+    $selD = function (string $nome, string $atual, string $vazio) use ($cfgX): string {
+        $o = '<select name="' . h($nome) . '"><option value="">' . h($vazio) . '</option>';
+        foreach ($cfgX['despesas'] as $id => $d) $o .= '<option value="' . h((string)$id) . '"' . ((string)$id === $atual ? ' selected' : '') . '>' . h($d['nome']) . '</option>';
+        return $o . '</select>';
+    };
+?>
+  <div class="topo"><div><h1>Contas a pagar no IXC</h1><p class="small">Na tela Recibos, o botão "Lançar no IXC" cria uma conta a pagar no IXC para cada conta de despesa de cada recibo. Exemplo: um recibo com comissão e hora extra vira duas contas a pagar, uma em Comissões e outra em Custos de salário. A liquidação continua à mão no IXC. O mesmo recibo nunca é lançado duas vezes: se crescer depois, vai só a diferença.</p></div></div>
+  <?php if (!rixc_ligado()): ?><div class="msg">Está desligado no servidor. Para ligar, no config.php coloque <b>'enviar_contas_pagar' => true</b> dentro de 'ixc'. Dá para deixar tudo configurado aqui antes.</div><?php endif ?>
+  <form method="post" action="?p=rixc" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="rixc_cfg">
+    <h2>1. Contas de despesa</h2>
+    <p class="small">Para cada conta de despesa, lance à mão no IXC uma conta a pagar de exemplo, com o plano de contas, a filial e a conta certos, e escreva o número dela aqui. O portal copia esse modelo e troca só o fornecedor, o valor, as datas e a descrição. Para tirar uma conta de despesa, apague o nome.</p>
+    <div class="tw"><table class="rec"><thead><tr><th>Nome</th><th>Nº da conta a pagar modelo no IXC</th></tr></thead>
+      <?php foreach ($cfgX['despesas'] as $id => $d): ?><tr><td><input name="despesas[<?= h((string)$id) ?>][nome]" value="<?= h($d['nome']) ?>" maxlength="60"></td><td><input name="despesas[<?= h((string)$id) ?>][modelo]" value="<?= h($d['modelo']) ?>" inputmode="numeric" placeholder="ex.: 15230" size="10"><?= $d['modelo'] === '' ? ' <span class="pill q">falta</span>' : '' ?></td></tr><?php endforeach ?>
+      <tr><td><input name="despesas[novo][nome]" placeholder="nova: ex. Salário técnico" maxlength="60"></td><td><input name="despesas[novo][modelo]" inputmode="numeric" placeholder="nº do modelo" size="10"></td></tr>
+    </table></div>
+    <h2>2. Grupos de pessoas</h2>
+    <p class="small">Quando o mesmo tipo de pagamento vai para despesas diferentes conforme a pessoa (ex.: hora extra de técnico e de administrativo). Um por linha. Deixe vazio se não precisar.</p>
+    <textarea name="grupos" rows="3" style="width:100%;max-width:420px" placeholder="TÉCNICO&#10;ADMINISTRATIVO"><?= h(implode("\n", $cfgX['grupos'])) ?></textarea>
+    <h2>3. Para onde vai cada tipo de pagamento</h2>
+    <p class="small">"Padrão" vale para todo mundo. Na coluna de um grupo, escolha só se for diferente do padrão. No padrão, "não lança" deixa esse tipo fora do IXC.</p>
+    <div class="tw"><table class="rec"><thead><tr><th>Tipo de pagamento</th><th>Padrão</th><?php foreach ($cfgX['grupos'] as $g): ?><th><?= h($g) ?></th><?php endforeach ?></tr></thead>
+      <?php foreach (RIXC_TIPOS as $t => $tn): ?><tr><td><?= h($tn) ?></td><td><?= $selD("regras[$t][_]", (string)($cfgX['regras'][$t][''] ?? ''), 'não lança') ?></td>
+        <?php foreach ($cfgX['grupos'] as $g): ?><td><?= $selD("regras[$t][$g]", (string)($cfgX['regras'][$t][$g] ?? ''), 'igual ao padrão') ?></td><?php endforeach ?></tr><?php endforeach ?>
+    </table></div>
+    <h2>4. Fornecedor e vencimento</h2>
+    <div class="rec-form">
+      <label>Fornecedor padrão (nº no IXC)<input name="forn_padrao" value="<?= h($cfgX['forn_padrao']) ?>" inputmode="numeric" placeholder="ex.: 87"></label>
+      <label>Vencimento: dias depois do lançamento<input name="venc_dias" value="<?= (int)$cfgX['venc_dias'] ?>" inputmode="numeric"></label>
+      <label class="larga op"><input type="checkbox" name="so_padrao" value="1" <?= $cfgX['so_padrao'] ? 'checked' : '' ?> style="width:18px;height:18px">Lançar tudo no fornecedor padrão (não procurar a pessoa pelo CPF)</label>
+    </div>
+    <p class="small">A pessoa é procurada nos fornecedores do IXC pelo CPF (o mesmo CPF da tela Recibos). Quem não estiver lá vai no fornecedor padrão, com o nome e o CPF na descrição.</p>
+    <div class="row" style="margin-top:10px"><button class="pri">Salvar</button></div>
+  </form>
+  <form method="post" action="?p=rixc" class="card row"><?= csrf_campo() ?><input type="hidden" name="acao" value="rixc_modelo">
+    <label class="op">Conferir uma conta modelo no IXC: nº <input name="modelo" inputmode="numeric" size="10"></label><button>Conferir</button><span class="small">Só lê, não grava nada no IXC.</span></form>
+  <?php if ($cfgX['grupos']): ?>
+  <form method="post" action="?p=rixc" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="rixc_pessoas">
+    <h2>Grupo de cada pessoa</h2>
+    <p class="small">Sem grupo, a pessoa usa a coluna "Padrão".</p>
+    <div class="rcb-cpfs"><?php foreach ($pesX as $k => $n): ?><label><?= h($n) ?><input type="hidden" name="pg[<?= h($k) ?>][nome]" value="<?= h($n) ?>"><select name="pg[<?= h($k) ?>][grupo]"><option value="">sem grupo</option><?php foreach ($cfgX['grupos'] as $g): ?><option <?= ($grP[$k] ?? '') === $g ? 'selected' : '' ?>><?= h($g) ?></option><?php endforeach ?></select></label><?php endforeach ?></div>
+    <div class="row" style="margin-top:10px"><button class="pri">Salvar grupos</button></div>
+  </form>
+  <?php endif ?>
+  <div class="card"><h2>Últimas contas lançadas no IXC</h2><div class="tw"><table class="rec">
+    <thead><tr><th>Quando</th><th>Recibo de</th><th>Pessoa</th><th>Despesa</th><th class="r">Valor</th><th>Conta no IXC</th><th>Quem</th></tr></thead>
+    <?php foreach ($ultX as $u): ?><tr><td class="small"><?= h($u['lancado_em']) ?></td><td><?= h(mes_nome($u['mes'])) ?></td><td><?= h($u['nome']) ?></td><td><?= h($u['despesa_nome']) ?></td><td class="n r"><?= rh_rs((float)$u['valor']) ?></td><td class="n">#<?= h($u['ixc_id']) ?></td><td class="small"><?= h($u['lancado_por']) ?></td></tr><?php endforeach ?>
+    <?php if (!$ultX): ?><tr><td colspan="7" class="small">Nada lançado ainda.</td></tr><?php endif ?>
+  </table></div></div>
 
 <?php elseif ($p === 'colab'):
     $lstC = colab_lista_ixc();
