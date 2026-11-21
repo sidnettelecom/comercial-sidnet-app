@@ -150,7 +150,10 @@ function rixc_config_salvar(array $in): void
             $id = (string)(max(array_map('intval', array_keys($c['despesas'] + $desp)) ?: [0]) + 1);
         }
         if ($nome === '') continue; // nome apagado = tira a conta de despesa
-        $desp[(string)$id] = ['nome' => $nome, 'conta' => so_digitos((string)($d['conta'] ?? ($c['despesas'][$id]['conta'] ?? ''))), 'modelo' => so_digitos((string)($d['modelo'] ?? ($c['despesas'][$id]['modelo'] ?? '')))];
+        // conta contábil: o código digitado (ex.: "328") ou escolhido na lista ("328 Despesas Salários..."): vale o número do começo
+        $ct = trim((string)($d['conta'] ?? ($c['despesas'][$id]['conta'] ?? '')));
+        if ($ct !== '' && !preg_match('/^(\d+)/', $ct, $mc)) throw new RuntimeException('"' . $nome . '": digite o código da conta contábil (número), ex.: 328.');
+        $desp[(string)$id] = ['nome' => $nome, 'conta' => $ct === '' ? '' : $mc[1], 'modelo' => so_digitos((string)($d['modelo'] ?? ($c['despesas'][$id]['modelo'] ?? '')))];
     }
     $c['despesas'] = $desp;
     // grupos de pessoas
@@ -397,6 +400,7 @@ function rixc_modelo_da_despesa(array $desp, string $nomeD): array
         $mod = '';
         foreach ($x['contas'] as $c) if ($c['id'] === $desp['conta']) $mod = $c['modelo'];
         $mod = $mod ?: $x['base'];
+        if ($mod === '') $mod = (string)(ixc()->listar(rixc_campos()['tabela'], 'id', '0', '>', 1, 'desc')[0]['id'] ?? ''); // sem busca: a conta a pagar mais nova
         if ($mod === '') throw new RuntimeException('não achei nenhuma conta a pagar no IXC para usar de base. Clique em "Buscar no IXC".');
         return [$mod, [$campo => $desp['conta']]];
     }
