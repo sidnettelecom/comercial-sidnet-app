@@ -853,6 +853,7 @@ body.fora main{width:100%;max-width:420px}
 .lado{flex:1 1 230px;max-width:100%;box-sizing:border-box;background:var(--g-lado);color:#fff;padding:22px 16px;display:flex;flex-direction:column;gap:24px}
 .lado .marca{display:flex;align-items:center;gap:12px}
 .lado .marca img{background:#fff;border-radius:14px;padding:2px;flex:none}
+.lado .marca .sair{margin-left:auto;flex:none;color:#fff;text-decoration:none;font-weight:700;font-size:13px;padding:8px 14px;border-radius:12px;background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.35)}.lado .marca .sair:hover,.lado .marca .sair:focus-visible{background:rgba(255,255,255,.28)}
 .lado .marca b{display:block;font-size:15.5px}.lado .marca span{font-size:12px;color:#bfdbfe}
 .lado nav{display:flex;flex-direction:column;gap:4px}
 .lado nav a{display:flex;align-items:center;gap:12px;height:44px;padding:0 12px;border-radius:14px;color:#dbeafe;text-decoration:none;font-weight:700}
@@ -1059,7 +1060,7 @@ th.c,td.c{text-align:center}
 <?php if ($logado):
     $ultimo = db()->query("SELECT MAX(enviado_crm_em) FROM vendas")->fetchColumn(); ?>
 <aside class="lado">
-  <div class="marca"><img src="/app/logo-96.png" alt="" width="48" height="48"><div><b>Portal Sidnet</b><span>Comercial, financeiro e campo</span></div></div>
+  <div class="marca"><img src="/app/logo-96.png" alt="" width="48" height="48"><div><b>Portal Sidnet</b><span>Comercial, financeiro e campo</span></div><a class="sair" href="?sair=1" title="Sair (<?= h($quem) ?>)">Sair</a></div>
   <nav aria-label="Seções"><?= ($pode('dash') ? $aba('dash', 'Dashboard') : '')
     . $grupo('vendas', 'Vendas', [['vendas', 'Vendas', $pode('vendas.lista'), ['vendas', 'excluir']], ['mes', 'Vendas do mês', $pode('vendas.mes')]])
     . $grupo('comissoes', 'Comissões', [['comissoes', 'Comissões', $pode('com.lista')], ['planilha', 'Comissões planilha', $pode('com.planilha')] /* PLANILHA-TEMP */])
