@@ -104,10 +104,24 @@ final class Ixc
      */
     public function alterar(string $tabela, string $id, array $atual, array $mudar): void
     {
-        $j = $this->chamar($tabela, array_merge($atual, self::limpar($mudar)), false, $id);
+        $j = $this->chamar($tabela, array_merge(self::datas_para_gravar($atual), self::limpar($mudar)), false, $id);
         if (($j['type'] ?? '') !== 'success') {
             throw new ErroCrm('O IXC não aceitou a alteração (' . $tabela . ' #' . $id . '): ' . self::texto($j['message'] ?? 'sem mensagem'));
         }
+    }
+
+    /**
+     * O IXC devolve as datas como aaaa-mm-dd, mas na gravação só aceita dd/mm/aaaa: reenviar o registro
+     * como veio APAGA as datas (visto na conta a pagar #18718). Aqui elas voltam para dd/mm/aaaa.
+     */
+    public static function datas_para_gravar(array $r): array
+    {
+        foreach ($r as $k => $v) {
+            if (!is_string($v)) continue;
+            if (preg_match('/^0000-00-00( 00:00:00)?$/', $v)) $r[$k] = '';
+            elseif (preg_match('/^(\d{4})-(\d{2})-(\d{2})( \d{2}:\d{2}:\d{2})?$/', $v, $m)) $r[$k] = "$m[3]/$m[2]/$m[1]" . ($m[4] ?? '');
+        }
+        return $r;
     }
 
     /**
