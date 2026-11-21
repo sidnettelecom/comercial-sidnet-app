@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' https://comercial.sidnet.com.br https://viacep.com.br; form-action 'self'; base-uri 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self' https://portal.sidnet.com.br https://comercial.sidnet.com.br https://viacep.com.br; form-action 'self'; base-uri 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="manifest" href="manifest.webmanifest">
@@ -824,12 +824,14 @@ var $=function(id){return document.getElementById(id)};
 var DEF_PLANOS=["PLANO PROMOCIONAL 600MB"];var PRECOS={"PLANO PROMOCIONAL 600MB":109.90};
 var cfg=load(K.cfg,{vend:"",sup:"",wa:"",planos:DEF_PLANOS,crmUrl:"",empresa:"3",crmUser:""});
 if(!cfg.empresa)cfg.empresa="3";
-var SRV_PADRAO="https://comercial.sidnet.com.br";
+var SRV_PADRAO="https://portal.sidnet.com.br";
 /* No APK a página é servida por https://appassets.androidplatform.net, que não é o servidor */
 function servidorDaPagina(){return /^https:$/.test(location.protocol)&&!/androidplatform\.net$/.test(location.hostname)?location.origin:SRV_PADRAO}
-/* Aceita "comercial.sidnet.com.br", com /painel, com barra no fim etc. e devolve só https://host */
+/* Aceita "portal.sidnet.com.br", com /painel, com barra no fim etc. e devolve só https://host */
 function normalizarServidor(v){v=String(v||"").trim();if(!v)return "";if(!/^https?:\/\//i.test(v))v="https://"+v;var m=v.match(/^(https?:\/\/[^\/?#\s]+)/i);return m?m[1].toLowerCase():""}
 cfg.crmUrl=normalizarServidor(cfg.crmUrl);
+/* O servidor mudou de comercial.sidnet.com.br para portal.sidnet.com.br (mesmo servidor, a chave continua valendo) */
+if(cfg.crmUrl==="https://comercial.sidnet.com.br")cfg.crmUrl=SRV_PADRAO;
 if(!cfg.crmUrl||/androidplatform\.net/.test(cfg.crmUrl))cfg.crmUrl=servidorDaPagina();
 if(!cfg.planos||!cfg.planos.length)cfg.planos=DEF_PLANOS;
 var recs=load(K.recs,[]);

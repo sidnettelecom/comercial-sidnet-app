@@ -136,19 +136,25 @@ com a mensagem pronta, e o vendedor escolhe para quem mandar. Cada consulta fica
 ## Instalar no Debian
 
 Antes: faça backup do sistema antigo e pare o que estiver usando as portas 80/443 nesse servidor.
-Aponte um domínio (ex.: `app.sidnet.com.br`) para o IP do servidor.
+Aponte o domínio (`portal.sidnet.com.br`) para o servidor (hoje pelo Cloudflare Tunnel).
 
 ```
 curl -fsSLO https://raw.githubusercontent.com/sidnettelecom/comercial-sidnet-app/main/server/deploy/install.sh
-sudo DOMINIO=app.sidnet.com.br bash install.sh
+sudo DOMINIO="portal.sidnet.com.br comercial.sidnet.com.br" bash install.sh
 sudo nano /etc/comercial-sidnet/config.php
 ```
 
 No `config.php`: usuário e senha do CRM só para o app (crie no CRM um usuário como `app.vendas`,
-com acesso ao Novo Lead e aos Upgrades) e a senha do painel. Depois, em `https://app.sidnet.com.br/painel/`:
+com acesso ao Novo Lead e aos Upgrades) e a senha do painel. Depois, em `https://portal.sidnet.com.br/painel/`:
 carregue os vendedores do CRM, crie cada vendedor (o painel gera uma senha provisória) e passe usuário e senha para ele.
 
 Atualizar depois: `sudo git -C /opt/comercial-sidnet pull`.
+
+O endereço antigo `comercial.sidnet.com.br` continua respondendo junto com o novo (os dois nomes no
+`server_name` do nginx e no Cloudflare Tunnel), porque os APKs antigos dos vendedores apontam para ele.
+O APK novo já usa `portal.sidnet.com.br` e troca sozinho o endereço antigo salvo no celular.
+Só desligue o nome antigo quando todos os celulares estiverem com o APK novo.
+
 Log do repasse: `/var/lib/comercial-sidnet/repasse.log`.
 
 ## Campos que vão para o CRM
