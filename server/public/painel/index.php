@@ -630,6 +630,17 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             registrar($quem, 'leu despesas do IXC', "$nd");
             $nf = count(rixc_despesas_ixc()['forns']);
             $msg = ($nd ? "Achei $nd conta(s) contábil(eis) analítica(s) e $nf fornecedor(es) no IXC. Escolha a conta de cada despesa e o fornecedor de cada pessoa, e salve." : "Achei $nf fornecedor(es), mas o IXC não devolveu a lista de contas contábeis: dá para usar o nº de uma conta a pagar modelo em cada linha.") . ' Nada foi gravado no IXC.';
+        } elseif ($a === 'rixc_liberar') {
+            // conta excluída à mão no IXC: tira o registro para o recibo poder ser lançado de novo
+            if (!$admin) throw new RuntimeException('Só o gestor admin.');
+            $lid = (int)($_POST['id'] ?? 0);
+            $lr = db()->prepare('SELECT * FROM recibos_ixc WHERE id = ?');
+            $lr->execute([$lid]);
+            $lr = $lr->fetch();
+            if (!$lr) throw new RuntimeException('Lançamento não encontrado.');
+            db()->prepare('DELETE FROM recibos_ixc WHERE id = ?')->execute([$lid]);
+            registrar($quem, 'liberou recibo para lançar de novo no IXC', $lr['nome'] . ' ' . $lr['mes'] . ' ' . $lr['despesa_nome'] . ' (IXC #' . $lr['ixc_id'] . ')');
+            $msg = 'Liberado: o recibo de ' . $lr['nome'] . ' (' . $lr['despesa_nome'] . ') pode ser lançado de novo. A conta #' . $lr['ixc_id'] . ' do IXC precisa estar excluída lá, senão fica em dobro.';
         } elseif ($a === 'rixc_modelo') {
             if (!$admin) throw new RuntimeException('Só o gestor admin.');
             $mid = so_digitos((string)($_POST['modelo'] ?? ''));
@@ -2380,9 +2391,9 @@ th.c,td.c{text-align:center}
     <div class="row" style="margin-top:10px"><button class="pri">Salvar</button></div>
   </form>
   <div class="card"><h2>Últimas contas lançadas no IXC</h2><div class="tw"><table class="rec">
-    <thead><tr><th>Quando</th><th>Recibo de</th><th>Pessoa</th><th>Despesa</th><th class="r">Valor</th><th>Conta no IXC</th><th>Quem</th></tr></thead>
-    <?php foreach ($ultX as $u): ?><tr><td class="small"><?= h($u['lancado_em']) ?></td><td><?= h(mes_nome($u['mes'])) ?></td><td><?= h($u['nome']) ?></td><td><?= h($u['despesa_nome']) ?></td><td class="n r"><?= rh_rs((float)$u['valor']) ?></td><td class="n">#<?= h($u['ixc_id']) ?></td><td class="small"><?= h($u['lancado_por']) ?></td></tr><?php endforeach ?>
-    <?php if (!$ultX): ?><tr><td colspan="7" class="small">Nada lançado ainda.</td></tr><?php endif ?>
+    <thead><tr><th>Quando</th><th>Recibo de</th><th>Pessoa</th><th>Despesa</th><th class="r">Valor</th><th>Conta no IXC</th><th>Quem</th><th></th></tr></thead>
+    <?php foreach ($ultX as $u): ?><tr><td class="small"><?= h($u['lancado_em']) ?></td><td><?= h(mes_nome($u['mes'])) ?></td><td><?= h($u['nome']) ?></td><td><?= h($u['despesa_nome']) ?></td><td class="n r"><?= rh_rs((float)$u['valor']) ?></td><td class="n">#<?= h($u['ixc_id']) ?></td><td class="small"><?= h($u['lancado_por']) ?></td><td><form method="post" class="in" onsubmit="return confirm('Só use se a conta #<?= h($u['ixc_id']) ?> já foi EXCLUÍDA no IXC. Liberar o recibo para lançar de novo?')"><?= csrf_campo() ?><input type="hidden" name="acao" value="rixc_liberar"><input type="hidden" name="id" value="<?= (int)$u['id'] ?>"><button class="del" title="Use depois de excluir a conta no IXC">Liberar para lançar de novo</button></form></td></tr><?php endforeach ?>
+    <?php if (!$ultX): ?><tr><td colspan="8" class="small">Nada lançado ainda.</td></tr><?php endif ?>
   </table></div></div>
 
 <?php elseif ($p === 'colab'):
