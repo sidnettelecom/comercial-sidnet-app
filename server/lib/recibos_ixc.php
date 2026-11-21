@@ -380,6 +380,38 @@ function rixc_despesas_ixc(): array
     return (is_array($j) ? $j : []) + ['em' => '', 'tabela' => '', 'campo' => '', 'base' => '', 'contas' => [], 'forns' => []];
 }
 
+/**
+ * Procura no IXC, um por um, os códigos de conta contábil que não estão na lista guardada
+ * (ex.: conta que a busca deixou de fora) e acrescenta na lista. Devolve [código => nome ou null se não existe].
+ */
+function rixc_conferir_codigos(array $codigos): array
+{
+    $x = rixc_despesas_ixc();
+    $tabs = array_values(array_unique(array_filter([rixc_campos()['tabela_contabil'], $x['tabela'], 'planejamento_analitico', 'fn_planejamento_analitico', 'contabil_conta_analitica', 'planejamento', 'fn_planejamento', 'plano_contas'])));
+    $ja = array_column($x['contas'], null, 'id');
+    $res = [];
+    foreach (array_unique(array_filter($codigos)) as $cod) {
+        $cod = (string)$cod;
+        if (isset($ja[$cod])) continue;
+        $res[$cod] = null;
+        foreach ($tabs as $t) {
+            try { $r = ixc()->um($t, 'id', $cod); } catch (Throwable) { $r = null; }
+            if (!$r) continue;
+            $nome = '';
+            foreach (['descricao', 'planejamento', 'conta', 'nome', 'titulo'] as $c) {
+                if (!empty($r[$c]) && is_string($r[$c]) && !ctype_digit($r[$c])) { $nome = trim($r[$c]); break; }
+            }
+            if ($nome === '') continue;
+            $res[$cod] = $nome;
+            $x['contas'][] = ['id' => $cod, 'nome' => mb_substr($cod . ' ' . $nome, 0, 90), 'n' => 0, 'modelo' => ''];
+            if ($x['tabela'] === '') $x['tabela'] = $t;
+            break;
+        }
+    }
+    if (array_filter($res)) @file_put_contents(rixc_arquivo_despesas(), json_encode($x, JSON_UNESCAPED_UNICODE));
+    return $res;
+}
+
 /** Texto da opção na tela */
 function rixc_conta_rotulo(array $o): string
 {
