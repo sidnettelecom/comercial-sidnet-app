@@ -859,6 +859,8 @@ body.fora main{width:100%;max-width:420px}
 .lado nav a{display:flex;align-items:center;gap:12px;height:44px;padding:0 12px;border-radius:14px;color:#dbeafe;text-decoration:none;font-weight:700}
 .lado nav a svg{width:20px;height:20px}
 .lado nav a[aria-current]{background:rgba(255,255,255,.16);color:#fff}
+/* opções que envolvem dinheiro (comissões e recibos) em verde */
+.lado nav a:is([href="?p=comissoes"],[href="?p=planilha"],[href="?p=rec_comissao"],[href="?p=inst_comissao"],[href="?p=recibos"]){color:#4ade80}
 .lado nav a:hover{background:rgba(255,255,255,.1)}
 .lado .status{margin-top:auto;background:rgba(255,255,255,.12);border-radius:16px;padding:14px;display:grid;gap:6px;font-size:13px}
 .lado .status div{display:flex;align-items:center;gap:8px;font-weight:700}
