@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Instala o servidor do app Comercial + Sidnet num Debian 11/12/13.
-#   sudo DOMINIO=app.sidnet.com.br bash install.sh
+#   sudo DOMINIO="portal.sidnet.com.br comercial.sidnet.com.br" bash install.sh
 # Não apaga nada do sistema antigo: pare e remova o antigo você mesmo, depois do backup.
 set -euo pipefail
 
-DOMINIO="${DOMINIO:?Informe o domínio: sudo DOMINIO=app.sidnet.com.br bash install.sh}"
+DOMINIO="${DOMINIO:?Informe o domínio (veja o começo deste arquivo)}"
 REPO="${REPO:-https://github.com/sidnettelecom/comercial-sidnet-app.git}"
 DEST=/opt/comercial-sidnet
 DADOS=/var/lib/comercial-sidnet
