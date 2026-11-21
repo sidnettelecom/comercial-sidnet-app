@@ -8,6 +8,8 @@
  *        assuntos | setores | filiais | planos | vendedores | fornecedores | colaboradores | canais | concorrentes | planos-negociacao | tipos-contrato | estagios
  *   php server/bin/ixc.php campos contato   mostra os campos de um lead do IXC (para conferir gênero, fones, RG)
  *   php server/bin/ixc.php campos fn_apagar mostra os campos de uma conta a pagar (para conferir o lançamento dos recibos)
+ *   php server/bin/ixc.php campos fn_apagar 18718      mostra os campos desse registro (pelo ID)
+ *   php server/bin/ixc.php comparar fn_apagar 18703 18718   mostra só os campos diferentes entre os dois registros
  */
 declare(strict_types=1);
 
@@ -54,9 +56,26 @@ try {
         }
         exit(0);
     }
+    if ($cmd === 'comparar') {
+        $t = $argv[2] ?? '';
+        $a = ctype_digit($argv[3] ?? '') ? ixc()->um($t, 'id', $argv[3]) : null;
+        $b = ctype_digit($argv[4] ?? '') ? ixc()->um($t, 'id', $argv[4]) : null;
+        if (!$a || !$b) { fwrite(STDERR, "Use: php server/bin/ixc.php comparar <tabela> <id1> <id2> (os dois precisam existir)\n"); exit(1); }
+        printf("  %-32s %-30s %s\n", 'campo', '#' . $argv[3], '#' . $argv[4]);
+        $n = 0;
+        foreach (array_unique(array_merge(array_keys($a), array_keys($b))) as $k) {
+            $va = is_scalar($a[$k] ?? null) ? (string)$a[$k] : json_encode($a[$k] ?? null);
+            $vb = is_scalar($b[$k] ?? null) ? (string)$b[$k] : json_encode($b[$k] ?? null);
+            if ($va === $vb) continue;
+            $n++;
+            printf("  %-32s %-30s %s\n", $k, mb_substr(str_replace(["\r", "\n"], ' ', $va), 0, 30), mb_substr(str_replace(["\r", "\n"], ' ', $vb), 0, 40));
+        }
+        echo "$n campo(s) diferente(s).\n";
+        exit(0);
+    }
     if ($cmd === 'campos') {
         $t = $argv[2] ?? 'contato';
-        $reg = ixc()->listar($t, 'id', '0', '>', 1)[0] ?? null;
+        $reg = ctype_digit($argv[3] ?? '') ? ixc()->um($t, 'id', $argv[3]) : (ixc()->listar($t, 'id', '0', '>', 1)[0] ?? null);
         if (!$reg) { echo "Nenhum registro em $t.\n"; exit(0); }
         foreach ($reg as $k => $v) printf("  %-32s %s\n", $k, mb_substr(is_scalar($v) ? (string)$v : json_encode($v), 0, 60));
         exit(0);
