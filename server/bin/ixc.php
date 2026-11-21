@@ -10,6 +10,8 @@
  *   php server/bin/ixc.php campos fn_apagar mostra os campos de uma conta a pagar (para conferir o lançamento dos recibos)
  *   php server/bin/ixc.php campos fn_apagar 18718      mostra os campos desse registro (pelo ID)
  *   php server/bin/ixc.php comparar fn_apagar 18703 18718   mostra só os campos diferentes entre os dois registros
+ *   php server/bin/ixc.php arrumar-apagar 18718   põe status_auditoria e comunicado = N numa conta a pagar lançada pelo portal
+ *        (as lançadas antes desta correção ficavam escondidas na tela do IXC)
  */
 declare(strict_types=1);
 
@@ -54,6 +56,16 @@ try {
                 echo "  $k: ainda não preenchido no config.php\n";
             }
         }
+        exit(0);
+    }
+    if ($cmd === 'arrumar-apagar') {
+        $id = $argv[2] ?? '';
+        $r = ctype_digit($id) ? ixc()->um('fn_apagar', 'id', $id) : null;
+        if (!$r) { fwrite(STDERR, "Use: php server/bin/ixc.php arrumar-apagar <id da conta a pagar>\n"); exit(1); }
+        if (!str_contains((string)($r['obs'] ?? ''), 'PORTAL SIDNET')) { fwrite(STDERR, "A conta #$id não foi lançada pelo portal. Nada foi mudado.\n"); exit(1); }
+        ixc()->alterar('fn_apagar', $id, $r, ['status_auditoria' => 'N', 'comunicado' => 'N']);
+        $r = ixc()->um('fn_apagar', 'id', $id);
+        echo "Conta a pagar #$id: status_auditoria=" . ($r['status_auditoria'] ?? '?') . ', comunicado=' . ($r['comunicado'] ?? '?') . ". Veja se ela aparece agora na tela do IXC.\n";
         exit(0);
     }
     if ($cmd === 'comparar') {
