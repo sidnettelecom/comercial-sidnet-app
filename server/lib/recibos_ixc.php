@@ -83,13 +83,14 @@ function rixc_campos(): array
         'status' => 'status',
         'tabela_forn' => 'fornecedor',
         'forn_cpf' => 'cnpj_cpf',
-        'conta_contabil' => '',  // campo da "Conta contábil analítica" em fn_apagar ('' = o portal descobre sozinho)
+        'conta_contabil' => 'id_conta', // campo da "Conta contábil analítica" em fn_apagar (conferido no IXC da Sidnet em 21/11/2026; '' = o portal tenta descobrir)
         'tabela_contabil' => '', // tabela das contas contábeis analíticas ('' = tenta as prováveis)
     ], (array)(config()['ixc']['contas_pagar_campos'] ?? []));
 }
 
 /** Campos do modelo que NÃO são copiados (pagamento, baixa, datas, valores, ids e registro de quem mexeu). */
-const RIXC_NAO_COPIAR = '/^id$|pag|baix|liquid|juro|multa|desc|aberto|valor|data|status|documento|obs|fornecedor|parcela|nosso|ultima|log|cancel|usuario|operador|criad|alterad|hora|boleto|remessa|retorno|lote|cheque|conciliad|nfe|nota|chave/i';
+// (tipo_pagamento, conta_pagamento, id_contas, filial_id, previsao e centro de custo são copiados; o que é do pagamento, da pessoa ou do documento, não)
+const RIXC_NAO_COPIAR = '/^id$|valor|data|status|documento|obs|fornecedor|parcela|nosso|ultima|log|cancel|usuario|operador|criad|alterad|hora|boleto|remessa|retorno|lote|cheque|conciliad|nfe|nota|chave|pix|dado_bancario|codigo_barras|duplicata|estorn|debito|id_entrada|baix|liquid|juro|multa|desconto|aberto|comunicado/i';
 
 function rixc_ligado(): bool
 {
@@ -314,7 +315,7 @@ function rixc_buscar_despesas(int $quantas = 1500): int
     $tabela = '';
     foreach ($tabs as $t) {
         try {
-            $rs = $api->listar($t, 'id', '0', '>', 5000, 'asc');
+            $rs = $api->listar($t, 'id', '0', '>', 20000, 'asc'); // no IXC da Sidnet são mais de 7 mil (clientes e fornecedores entram também)
         } catch (Throwable) {
             $rs = [];
         }
@@ -324,13 +325,12 @@ function rixc_buscar_despesas(int $quantas = 1500): int
                 if (!empty($r[$c]) && is_string($r[$c]) && !ctype_digit($r[$c])) { $nome = trim($r[$c]); break; }
             }
             if ($nome === '') continue;
-            $cod = '';
-            foreach (['codigo', 'classificacao', 'cod_conta', 'conta_codigo', 'estrutura', 'numero'] as $c) {
-                if (!empty($r[$c]) && is_scalar($r[$c])) { $cod = trim((string)$r[$c]); break; }
-            }
             if (isset($r['ativo']) && in_array($r['ativo'], ['N', '0'], true)) continue;
-            if (isset($r['tipo']) && in_array(up((string)$r['tipo']), ['S', 'SINTETICA', 'SINTÉTICA'], true)) continue;
-            $contas[(string)$r['id']] = ['id' => (string)$r['id'], 'nome' => mb_substr(($cod !== '' ? $cod . ' ' : '') . $nome, 0, 90), 'n' => 0, 'modelo' => ''];
+            // a lista do IXC mistura a conta de cada cliente (tipo A) e de cada fornecedor (tipo P): para despesa não servem
+            if (isset($r['tipo']) && in_array(up((string)$r['tipo']), ['A', 'P', 'S', 'SINTETICA', 'SINTÉTICA'], true)) continue;
+            if (preg_match('/\((cliente|fornecedor)\)\s*$/i', $nome)) continue;
+            // o número que aparece é o mesmo ID da tela do IXC (ex.: 328 Despesas Salários e Ordenados ADM)
+            $contas[(string)$r['id']] = ['id' => (string)$r['id'], 'nome' => mb_substr($r['id'] . ' ' . $nome, 0, 90), 'n' => 0, 'modelo' => ''];
         }
         if ($contas) { $tabela = $t; break; }
     }
