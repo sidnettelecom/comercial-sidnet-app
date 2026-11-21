@@ -610,6 +610,15 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             rixc_config_salvar($_POST);
             registrar($quem, 'alterou contas a pagar do IXC');
             $msg = 'Configuração das contas a pagar salva.';
+            // código digitado que não estava na lista: confere direto no IXC
+            if ((config()['destino'] ?? '') === 'ixc') {
+                try {
+                    foreach (rixc_conferir_codigos(array_column(rixc_config()['despesas'], 'conta')) as $cod => $nm) {
+                        $msg .= $nm !== null ? " Conta $cod achada no IXC: $nm." : " Atenção: não achei a conta contábil $cod no IXC, confira o código.";
+                    }
+                } catch (Throwable) {
+                }
+            }
         } elseif ($a === 'rixc_pessoas') {
             if (!$admin) throw new RuntimeException('Só o gestor admin muda as contas a pagar do IXC.');
             $n = rixc_pessoas_salvar((array)($_POST['pg'] ?? []));
