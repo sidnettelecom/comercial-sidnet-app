@@ -19,6 +19,7 @@ require_once __DIR__ . '/../../lib/recibos.php';
 require_once __DIR__ . '/../../lib/servicos.php';
 require_once __DIR__ . '/../../lib/colaboradores.php';
 require_once __DIR__ . '/../../lib/recibos_ixc.php';
+require_once __DIR__ . '/../../lib/auditoria.php';
 dash_tabela();
 perm_tabela();
 rec_tabela();
@@ -29,6 +30,7 @@ recibos_tabela();
 rh_compl_auto(date('Y-m')); // complemento fixo do mês entra sozinho
 colab_tabela();
 rixc_tabela();
+audit_tabela();
 
 const PAINEL_INATIVO_MAX = 8 * 3600; // sai sozinho depois de 8 horas sem uso
 
@@ -129,7 +131,7 @@ const PERM_ACOES = [
     'inst_salvar' => 'inst.lista', 'inst_excluir' => 'inst.lista', 'inst_buscar' => 'inst.lista', 'inst_mais' => 'inst.lista', 'inst_mais_tec' => 'inst.lista',
     'inst_servicos_salvar' => 'inst.com', 'inst_com_salvar' => 'inst.com', 'inst_pagar' => 'inst.com',
     'rh_lanc_salvar' => 'rh.lanc', 'rh_lanc_excluir' => 'rh.lanc', 'rh_func_salvar' => 'rh.func', 'rh_func_ativo' => 'rh.func', 'rh_pagar' => 'rh.fecha', 'rh_sobre_salvar' => 'rh.lanc',
-    'recibos_cpf' => 'recibos', 'recibos_ixc' => 'recibos.ixc',
+    'recibos_cpf' => 'recibos', 'recibos_ixc' => 'recibos.ixc', 'audit_ok' => 'recibos.audit',
     'colab_buscar' => 'cfg.colab', 'colab_salvar' => 'cfg.colab', 'colab_mostrar' => 'cfg.colab',
     'serv_servico' => 'serv.lanc', 'serv_pagamento' => 'serv.pag', 'serv_excluir' => 'serv',
     'serv_equipe_salvar' => 'serv.cad', 'serv_equipe_ativo' => 'serv.cad', 'serv_obra_salvar' => 'serv.cad', 'serv_obra_concluir' => 'serv.cad', 'serv_precos_salvar' => 'serv.cad',
@@ -593,6 +595,18 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $n = recibos_cpf_salvar((array)($_POST['cpf'] ?? []));
             if ($n) registrar($quem, 'salvou CPF nos recibos', "$n pessoa(s)");
             $msg = $n ? "CPF salvo ($n)." : 'Nenhum CPF mudou.';
+        } elseif ($a === 'audit_ok') {
+            $mesA = rh_mes_ok((string)($_POST['mes'] ?? ''));
+            if ($mesA === '') throw new RuntimeException('Mês inválido.');
+            audit_assinar($mesA, array_values(array_filter(array_keys(RECIBO_ORIGENS), fn($o) => $pode('recibos.' . $o))), rixc_ligado(), (string)($_POST['obs'] ?? ''), $quem);
+            registrar($quem, 'auditou recibos', mes_nome($mesA));
+            $msg = mes_nome($mesA) . ' marcado como auditado.';
+        } elseif ($a === 'audit_desfazer') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin desfaz uma auditoria.');
+            $mesA = rh_mes_ok((string)($_POST['mes'] ?? ''));
+            audit_desfazer($mesA);
+            registrar($quem, 'desfez auditoria dos recibos', mes_nome($mesA));
+            $msg = 'Auditoria de ' . mes_nome($mesA) . ' desfeita: o mês volta a ser conferido.';
         } elseif ($a === 'recibos_ixc') {
             // mesmas contas da tela Recibos (mês, áreas que este gestor vê, situação), só as pessoas marcadas
             $mesX = rh_mes_ok((string)($_POST['mes'] ?? ''));
@@ -739,12 +753,12 @@ $p = !empty($gestor['trocar']) ? 'trocar' : ($_GET['p'] ?? '');
 $AREA_PAG = ['vendas' => 'vendas.lista', 'excluir' => 'vendas.lista', 'mes' => 'vendas.mes', 'dash' => 'dash', 'vendedores' => 'cfg.users', 'planos' => 'cfg.planos',
     'comissoes' => 'com.lista', 'planilha' => 'com.planilha', 'gestores' => 'cfg.gest', 'config' => 'admin', 'senha' => '', 'trocar' => '',
     'recolhimentos' => 'rec.lista', 'rec_comissao' => 'rec.com', 'instalacoes' => 'inst.lista', 'inst_comissao' => 'inst.com',
-    'rh_lancar' => 'rh.lanc', 'rh_fecha' => 'rh.fecha', 'rh_func' => 'rh.func', 'rh_cfg' => 'admin', 'recibos' => 'recibos',
+    'rh_lancar' => 'rh.lanc', 'rh_fecha' => 'rh.fecha', 'rh_func' => 'rh.func', 'rh_cfg' => 'admin', 'recibos' => 'recibos', 'auditoria' => 'recibos.audit',
     'serv' => 'serv.saldo', 'serv_extrato' => 'serv.saldo', 'serv_lista' => 'serv.saldo', 'serv_lancar' => 'serv', 'serv_cad' => 'serv.cad', 'colab' => 'cfg.colab', 'rixc' => 'admin'];
 if (!isset($AREA_PAG[$p])) $p = 'vendas';
 if ($logado && $p !== 'trocar' && ($_GET['p'] ?? '') === '' && !$pode('vendas.lista')) {
     // tela inicial: a primeira opção liberada, na ordem do menu
-    foreach (['dash', 'mes', 'comissoes', 'planilha', 'recolhimentos', 'rec_comissao', 'instalacoes', 'inst_comissao', 'rh_lancar', 'rh_fecha', 'rh_func', 'serv', 'serv_lancar', 'serv_cad', 'recibos', 'gestores', 'vendedores', 'planos', 'colab'] as $pg)
+    foreach (['dash', 'mes', 'comissoes', 'planilha', 'recolhimentos', 'rec_comissao', 'instalacoes', 'inst_comissao', 'rh_lancar', 'rh_fecha', 'rh_func', 'serv', 'serv_lancar', 'serv_cad', 'recibos', 'auditoria', 'gestores', 'vendedores', 'planos', 'colab'] as $pg)
         if ($pode($AREA_PAG[$pg])) { $p = $pg; break; }
 }
 if ($logado && $AREA_PAG[$p] !== '' && !($AREA_PAG[$p] === 'admin' ? $admin : $pode($AREA_PAG[$p]))) $p = 'sem';
@@ -860,7 +874,7 @@ body.fora main{width:100%;max-width:420px}
 .lado nav a svg{width:20px;height:20px}
 .lado nav a[aria-current]{background:rgba(255,255,255,.16);color:#fff}
 /* opções que envolvem dinheiro (comissões e recibos) em verde */
-.lado nav a:is([href="?p=comissoes"],[href="?p=planilha"],[href="?p=rec_comissao"],[href="?p=inst_comissao"],[href="?p=recibos"]){color:#4ade80}
+.lado nav a:is([href="?p=comissoes"],[href="?p=planilha"],[href="?p=rec_comissao"],[href="?p=inst_comissao"],[href="?p=recibos"],[href="?p=auditoria"]){color:#4ade80}
 .lado nav a:hover{background:rgba(255,255,255,.1)}
 .lado .status{margin-top:auto;background:rgba(255,255,255,.12);border-radius:16px;padding:14px;display:grid;gap:6px;font-size:13px}
 .lado .status div{display:flex;align-items:center;gap:8px;font-weight:700}
@@ -1050,6 +1064,10 @@ td.r,th.r{text-align:right}
 .serv-cad{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(380px,100%),1fr));gap:14px}
 td.ok{color:var(--ok)}a.bt.pri{background:var(--g-btn);color:#fff;border:0}a.bt.cta{background:var(--g-cta);color:#1c1203;border:0}
 .o-serv{background:#ffedd5;color:#9a3412}
+.aud td.r,.aud th.r{text-align:right}.aud tr.sel td{background:color-mix(in srgb,var(--brand) 7%,var(--surface))}.ok-ck{color:var(--ok);font-weight:800}.aud a.mes{font-weight:800;color:inherit}
+.aud td.et{font-size:12.5px;min-width:120px}.aud td.et span{display:block}.aud td.et.sim{color:var(--ok)}.aud td.et.nao span{color:var(--er);font-weight:700}.aud td.et.na{color:var(--muted)}.aud td.et-cpf span{white-space:nowrap}
+.aud td.et a{display:inline-block;margin:3px 8px 0 0;font-weight:700;color:var(--brand);text-decoration:none}
+.aud-fim{margin-top:12px;display:grid;gap:8px}.aud-fim p{margin:0}.aud-fim .q{color:#b45309}
 .rec-form [hidden]{display:none}
 input.val{width:96px;text-align:right}
 th.c,td.c{text-align:center}
@@ -1069,7 +1087,7 @@ th.c,td.c{text-align:center}
     . $grupo('instalacao', 'Instalação', [['instalacoes', 'Instalações concluídas', $pode('inst.lista')], ['inst_comissao', 'Comissões', $pode('inst.com')]])
     . $grupo('rh', 'RH', [['rh_lancar', 'Lançamentos', $pode('rh.lanc')], ['rh_fecha', 'Fechamento do mês', $pode('rh.fecha')], ['rh_func', 'Funcionários', $pode('rh.func')], ['rh_cfg', 'Feriados e valores', $admin]])
     . $grupo('serv', 'Serviços em execução', [['serv', 'Saldos', $pode('serv.saldo'), ['serv', 'serv_extrato']], ['serv_lancar', 'Lançar', $pode('serv.lanc') || $pode('serv.pag')], ['serv_lista', 'Serviços lançados', $pode('serv.saldo')], ['serv_cad', 'Equipes, obras e preços', $pode('serv.cad')]])
-    . ($pode('recibos') ? $aba('recibos', 'Recibos') : '')
+    . $grupo('recibos', 'Recibos', [['recibos', 'Gerar recibos', (bool)array_filter(array_keys(RECIBO_ORIGENS), fn($o) => $pode('recibos.' . $o))], ['auditoria', 'Auditoria', $pode('recibos.audit')]])
     . $grupo('config', 'Configurações', [['config', 'Permissões', $admin], ['gestores', 'Gestores', $pode('cfg.gest')], ['vendedores', 'Usuários', $pode('cfg.users')], ['planos', 'Planos', $pode('cfg.planos')], ['colab', 'Colaboradores do IXC', $pode('cfg.colab')], ['rixc', 'Contas a pagar no IXC', $admin && destino() === 'ixc']]) ?></nav>
   <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?p=senha">Trocar minha senha</a><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
 </aside>
@@ -2172,6 +2190,8 @@ th.c,td.c{text-align:center}
     $gerarR = isset($_GET['g']);
     $selR = $gerarR ? array_map('strval', (array)($_GET['s'] ?? [])) : array_keys($pessoasR);
     $impR = $gerarR ? array_values(array_intersect_key($pessoasR, array_flip($selR))) : [];
+    if ($impR) audit_gerados_gravar($mesR, $impR, $quem); // a auditoria confere se o recibo foi gerado com o valor de hoje
+    $gerR = audit_gerados($mesR);
     $emp = rh_empresa();
     $refR = mb_strtolower(mes_nome($mesR));
     $nomesO = fn(array $os) => preg_replace('/, ([^,]+)$/', ' e $1', implode(', ', array_map(fn($o) => RECIBO_REFERENTE[$o], $os)));
@@ -2199,7 +2219,7 @@ th.c,td.c{text-align:center}
         <td><?php foreach ($r['origens'] as $o): ?><span class="tp o-<?= h($o) ?>"><?= h(RECIBO_ORIGENS[$o]) ?></span> <?php endforeach ?></td>
         <td class="small"><?= h(implode(' · ', array_map(fn($l) => $l[0], $r['ls']))) ?></td>
         <td class="n r"><b><?= rh_rs($r['tot']) ?></b></td>
-        <td><?= $r['pago'] === 'sim' ? '<span class="tp pago">pago</span>' : ($r['pago'] === 'parte' ? '<span class="pill q">parte paga</span>' : '<span class="pill q">a pagar</span>') ?></td>
+        <td><?= $r['pago'] === 'sim' ? '<span class="tp pago">pago</span>' : ($r['pago'] === 'parte' ? '<span class="pill q">parte paga</span>' : '<span class="pill q">a pagar</span>') ?><?php $gx = $gerR[$k] ?? null; ?><?= $gx ? '<br><span class="small' . (abs((float)$gx['valor'] - $r['tot']) > 0.009 ? ' q" title="Gerado com ' . h(rh_rs((float)$gx['valor'])) . '; o valor mudou depois">recibo gerado com outro valor' : '">recibo gerado ' . h(substr(audit_quando($gx['gerado_em']), 0, 5))) . '</span>' : '' ?></td>
         <?php if ($ixcR): [$sx, $idsX] = $sitX($r); ?><td><?= $sx === 'sim' ? '<span class="pill ok">lançado</span>' : ($sx === 'dif' ? '<span class="pill er" title="O recibo mudou depois de lançado">mudou</span>' : '<span class="small">não lançado</span>') ?><?= $idsX ? '<br><span class="small">conta ' . h(implode(', ', array_map(fn($i) => '#' . $i, $idsX))) . '</span>' : '' ?></td><?php endif ?></tr>
       <?php endforeach ?>
       <?php if (!$pessoasR): ?><tr><td colspan="<?= $ixcR ? 7 : 6 ?>" class="small">Nada para <?= h($refR) ?> com esse filtro.</td></tr><?php else: ?>
@@ -2237,6 +2257,74 @@ th.c,td.c{text-align:center}
     <div class="rcb-cpfs"><?php foreach ($pessoasR as $k => $r): ?><label><?= h($r['nome']) ?><input type="hidden" name="cpf[<?= h($k) ?>][nome]" value="<?= h($r['nome']) ?>"><input name="cpf[<?= h($k) ?>][cpf]" value="<?= h(rh_cpf($r['cpf'])) ?>" inputmode="numeric" placeholder="000.000.000-00" maxlength="14"></label><?php endforeach ?></div>
     <div class="row" style="margin-top:10px"><button class="pri">Salvar CPFs</button></div>
   </form>
+  <?php endif ?>
+
+<?php elseif ($p === 'auditoria'):
+    $oA = array_values(array_filter(array_keys(RECIBO_ORIGENS), fn($o) => $pode('recibos.' . $o)));
+    $ixcA = rixc_ligado();
+    $mesesA = audit_meses($oA, $ixcA);
+    // mês aberto embaixo: o escolhido; senão o mais antigo que ainda tem pendência (fora o atual); senão o mês passado
+    $pendA = array_filter($mesesA, fn($a) => audit_situacao($a)[0] === 'pend' || audit_situacao($a)[0] === 'mudou');
+    $mesA = rh_mes_ok((string)($_GET['mes'] ?? '')) ?: ($pendA ? array_key_last($pendA) : mes_soma(date('Y-m'), -1));
+    $audA = $mesesA[$mesA] ?? audit_mes($mesA, $oA, $ixcA);
+    $todosA = isset($_GET['todos']) || !$audA['npend']; // sem pendência: mostra a lista inteira
+    $etA = $ixcA ? AUDIT_ETAPAS : array_diff_key(AUDIT_ETAPAS, ['ixc' => 1]);
+    [$sitA, $sitTxtA] = audit_situacao($audA);
+    $selo = fn(string $s, string $t) => '<span class="pill ' . ['ok' => 'ok', 'livre' => 'ok', 'pend' => 'er', 'mudou' => 'er', 'andamento' => 'q'][$s] . '">' . h($t) . '</span>';
+    $listaA = $todosA ? $audA['pessoas'] : array_filter($audA['pessoas'], fn($r) => $r['pend'] > 0);
+?>
+  <div class="topo"><div><h1>Auditoria dos recibos</h1><p class="small">O sistema confere sozinho, mês a mês e para cada pessoa, se tudo foi <b>analisado</b> (O.S conferidas, comissões com valor), <b>fechado</b> (marcado como pago na área), se o <b>recibo foi gerado</b> com o valor de hoje<?= $ixcA ? ' e se a <b>conta a pagar foi lançada no IXC</b>' : '' ?>. O que falta fica pendente, com o link para resolver.</p></div></div>
+  <?php if (!$oA): ?><div class="msg">Você não tem nenhuma área liberada em Recibos. Peça ao admin para liberar em Configurações → Permissões.</div><?php else: ?>
+  <div class="kpis">
+    <div class="<?= $pendA ? 'q' : 'ok' ?>"><b><?= count($pendA) ?></b><span>mês(es) fechado(s) com pendência</span></div>
+    <div class="<?= array_sum(array_map(fn($a) => $a['mes'] < date('Y-m') ? $a['npend'] : 0, $mesesA)) ? 'q' : 'ok' ?>"><b><?= array_sum(array_map(fn($a) => $a['mes'] < date('Y-m') ? $a['npend'] : 0, $mesesA)) ?></b><span>pessoa(s) com pendência nos meses fechados</span></div>
+    <div><b><?= rh_rs(array_sum(array_map(fn($a) => $a['mes'] < date('Y-m') ? $a['apagar'] : 0, $mesesA))) ?></b><span>ainda sem marcar pago nos meses fechados</span></div>
+    <div class="ok"><b><?= count(array_filter($mesesA, fn($a) => audit_situacao($a)[0] === 'ok')) ?></b><span>mês(es) auditado(s)</span></div>
+  </div>
+  <div class="card"><h2>Mês a mês <span class="small">últimos <?= AUDIT_MESES ?> meses · número = pessoas com aquela pendência</span></h2>
+    <div class="tw"><table class="aud">
+      <thead><tr><th>Mês</th><th>Situação</th><th class="r">Pessoas</th><th class="r">Total</th><?php foreach ($etA as $e => $t): ?><th class="c"><?= h($t) ?></th><?php endforeach ?><th></th></tr></thead>
+      <?php foreach ($mesesA as $m => $a): [$s, $st] = audit_situacao($a); ?>
+      <tr<?= $m === $mesA ? ' class="sel"' : '' ?>><td><a class="mes" href="?p=auditoria&amp;mes=<?= h($m) ?>"><?= h(mes_nome($m)) ?></a></td><td><?= $selo($s, $st) ?></td><td class="n r"><?= count($a['pessoas']) ?></td><td class="n r"><?= rh_rs($a['tot']) ?></td>
+        <?php foreach ($etA as $e => $t): ?><td class="c"><?= $a['cont'][$e] ? '<span class="pill ' . ($m >= date('Y-m') ? 'q' : 'er') . '">' . $a['cont'][$e] . '</span>' : '<span class="ok-ck" title="sem pendência">✓</span>' ?></td><?php endforeach ?>
+        <td><a class="bt" href="?p=auditoria&amp;mes=<?= h($m) ?>">Abrir</a></td></tr>
+      <?php endforeach ?>
+      <?php if (!$mesesA): ?><tr><td colspan="<?= count($etA) + 5 ?>" class="small">Nenhum mês com recibo nos últimos <?= AUDIT_MESES ?> meses.</td></tr><?php endif ?>
+    </table></div>
+  </div>
+  <div class="card">
+    <div class="topo"><div><h2><?= h(mes_nome($mesA)) ?> <?= $selo($sitA, $sitTxtA) ?></h2>
+      <p class="small"><?= count($audA['pessoas']) ?> pessoa(s) · total <?= rh_rs($audA['tot']) ?><?= $audA['apagar'] > 0 ? ' · falta marcar pago ' . rh_rs($audA['apagar']) : '' ?> · <?= $audA['npend'] ? $audA['npend'] . ' pessoa(s) com pendência' : 'nenhuma pendência' ?></p></div>
+      <div class="row"><?php if ($audA['npend']): ?><a class="bt" href="?p=auditoria&amp;mes=<?= h($mesA) ?><?= $todosA ? '' : '&amp;todos=1' ?>"><?= $todosA ? 'Mostrar só quem tem pendência' : 'Mostrar todos' ?></a><?php endif ?><a class="bt" href="?p=recibos&amp;mes=<?= h($mesA) ?>">Abrir Recibos do mês</a></div></div>
+    <div class="tw"><table class="aud">
+      <thead><tr><th>Pessoa</th><th>Áreas</th><th class="r">Valor</th><?php foreach ($etA as $e => $t): ?><th><?= h($t) ?></th><?php endforeach ?></tr></thead>
+      <?php foreach ($listaA as $r): ?>
+      <tr><td><b><?= h($r['nome']) ?></b></td>
+        <td><?php foreach ($r['origens'] as $o): ?><span class="tp o-<?= h($o) ?>"><?= h(RECIBO_ORIGENS[$o]) ?></span> <?php endforeach ?></td>
+        <td class="n r"><b><?= rh_rs($r['tot']) ?></b></td>
+        <?php foreach ($etA as $e => $t): $x = $r['et'][$e]; ?>
+        <td class="et et-<?= $e ?> <?= $x['ok'] === true ? 'sim' : ($x['ok'] === false ? 'nao' : 'na') ?>"><span><?= $x['ok'] === true ? '✓ ' : ($x['ok'] === false ? '! ' : '') ?><?= h($x['txt']) ?></span>
+          <?php foreach ($x['link'] as [$lt, $lu]): ?><a href="<?= h($lu) ?>"><?= h($lt) ?> →</a><?php endforeach ?></td>
+        <?php endforeach ?></tr>
+      <?php endforeach ?>
+      <?php if (!$listaA): ?><tr><td colspan="<?= count($etA) + 3 ?>" class="small"><?= $audA['pessoas'] ? 'Ninguém com pendência em ' . h(mb_strtolower(mes_nome($mesA))) . '. Clique em "Mostrar todos" para ver a lista inteira.' : 'Nada para ' . h(mb_strtolower(mes_nome($mesA))) . '.' ?></td></tr><?php endif ?>
+    </table></div>
+    <div class="aud-fim">
+    <?php if ($audA['assinado']): $as = $audA['assinado']; ?>
+      <p><b>Auditado por <?= h($as['feito_por']) ?> em <?= h(audit_quando($as['feito_em'])) ?></b> · <?= (int)$as['pessoas'] ?> pessoa(s) · <?= rh_rs((float)$as['valor']) ?><?= $as['obs'] !== '' ? '<br><span class="small">Obs.: ' . h($as['obs']) . '</span>' : '' ?></p>
+      <?php if ($audA['mudou']): ?><p class="q"><b>Atenção:</b> o total do mês mudou depois da auditoria (era <?= rh_rs((float)$as['valor']) ?>, hoje é <?= rh_rs($audA['tot']) ?>). Confira o que entrou ou saiu<?= $audA['pend'] ? ' e resolva as pendências' : '' ?>, depois marque de novo.</p>
+        <?php if (!$audA['pend'] && $mesA < date('Y-m')): ?><form method="post" action="?p=auditoria&amp;mes=<?= h($mesA) ?>" class="row"><?= csrf_campo() ?><input type="hidden" name="acao" value="audit_ok"><input type="hidden" name="mes" value="<?= h($mesA) ?>"><input name="obs" placeholder="Observação (opcional)" maxlength="300" size="40"><button class="pri">Marcar de novo como auditado</button></form><?php endif ?><?php endif ?>
+      <?php if ($admin): ?><form method="post" action="?p=auditoria&amp;mes=<?= h($mesA) ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="audit_desfazer"><input type="hidden" name="mes" value="<?= h($mesA) ?>"><button class="del">Desfazer auditoria</button></form><?php endif ?>
+    <?php elseif ($mesA >= date('Y-m')): ?>
+      <p class="small">O mês ainda está em andamento. A partir do dia 1º do mês que vem, sem pendência, ele pode ser marcado como auditado.</p>
+    <?php elseif ($audA['pend']): ?>
+      <p class="small">Resolva as <?= $audA['pend'] ?> pendência(s) acima para poder marcar <?= h(mb_strtolower(mes_nome($mesA))) ?> como auditado. A lista se atualiza sozinha: é só voltar aqui depois de conferir, pagar ou gerar.</p>
+    <?php elseif ($audA['pessoas']): ?>
+      <form method="post" action="?p=auditoria&amp;mes=<?= h($mesA) ?>" class="row"><?= csrf_campo() ?><input type="hidden" name="acao" value="audit_ok"><input type="hidden" name="mes" value="<?= h($mesA) ?>">
+        <span>Tudo analisado, fechado e gerado.</span><input name="obs" placeholder="Observação (opcional)" maxlength="300" size="40"><button class="pri">Marcar <?= h(mb_strtolower(mes_nome($mesA))) ?> como auditado</button></form>
+    <?php endif ?>
+    </div>
+  </div>
   <?php endif ?>
 
 <?php elseif ($p === 'rh_cfg'):
