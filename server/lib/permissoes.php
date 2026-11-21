@@ -39,6 +39,7 @@ const PERM_ARVORE = [
         'recibos.rh' => ['RH (com todos os tipos, até complemento de salário)', []],
         'recibos.serv' => ['Pagamentos de serviços em execução', []],
         'recibos.ixc' => ['Lançar contas a pagar no IXC', []],
+        'recibos.audit' => ['Auditoria (pendências de cada mês; vê só as áreas liberadas acima)', []],
     ]],
     'cfg' => ['Configurações', ['cfg.gest' => ['Gestores', []], 'cfg.users' => ['Usuários', []], 'cfg.planos' => ['Planos', []], 'cfg.colab' => ['Colaboradores do IXC (cadastrar nas áreas)', []]]],
 ];
