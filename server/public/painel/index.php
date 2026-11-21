@@ -2307,19 +2307,18 @@ th.c,td.c{text-align:center}
     $fnP = rixc_forn_pessoas();
     $cpfP = recibos_cpfs();
     // campo de cada despesa: lista das contas contábeis analíticas do IXC (ou, se não vier a lista, o nº de uma conta a pagar modelo)
-    $selM = function (string $id, array $d) use ($lstX): string {
-        if (!$lstX['contas']) return '<input name="despesas[' . h($id) . '][modelo]" value="' . h((string)($d['modelo'] ?? '')) . '" inputmode="numeric" placeholder="nº de uma conta a pagar modelo" size="12">'
-            . ($lstX['em'] ? '<br><span class="small q">O IXC não devolveu a lista de contas contábeis. Digite o nº de uma conta a pagar já lançada com a conta contábil certa.</span>' : '');
+    // campo de cada despesa: digita o código da conta contábil analítica do IXC (ex.: 328) ou procura pelo nome
+    $nomeConta = [];
+    foreach ($lstX['contas'] as $x) $nomeConta[$x['id']] = $x;
+    $selM = function (string $id, array $d) use ($lstX, $nomeConta): string {
         $atual = (string)($d['conta'] ?? '');
-        $o = '<select name="despesas[' . h($id) . '][conta]" style="max-width:640px"><option value="">escolha a conta contábil</option>';
-        $achou = false;
-        foreach ($lstX['contas'] as $x) {
-            $sel = $x['id'] === $atual;
-            $achou = $achou || $sel;
-            $o .= '<option value="' . h($x['id']) . '"' . ($sel ? ' selected' : '') . '>' . h(rixc_conta_rotulo($x)) . '</option>';
+        $o = '<input name="despesas[' . h($id) . '][conta]" value="' . h($atual !== '' && isset($nomeConta[$atual]) ? $nomeConta[$atual]['nome'] : $atual) . '" list="contas-ixc" placeholder="código, ex.: 328" style="min-width:420px" autocomplete="off">';
+        if ($atual !== '') {
+            $o .= '<br><span class="small">' . (isset($nomeConta[$atual]) ? ($nomeConta[$atual]['n'] ? 'já usada em ' . $nomeConta[$atual]['n'] . ' conta(s) a pagar no IXC' : 'ainda não usada em conta a pagar no IXC') : ($lstX['contas'] ? '<span class="q">código ' . h($atual) . ' não está na lista de contas de despesa do IXC: confira</span>' : 'conta contábil ' . h($atual))) . '</span>';
+        } elseif ((string)($d['modelo'] ?? '') !== '') {
+            $o .= '<br><span class="small">hoje usa a conta a pagar modelo nº ' . h($d['modelo']) . '</span>';
         }
-        if ($atual !== '' && !$achou) $o .= '<option value="' . h($atual) . '" selected>conta contábil nº ' . h($atual) . '</option>';
-        return $o . '</select>' . ((string)($d['modelo'] ?? '') !== '' && $atual === '' ? '<br><span class="small">hoje usa a conta a pagar modelo nº ' . h($d['modelo']) . '</span>' : '');
+        return $o;
     };
     $selD = function (string $nome, string $atual, string $vazio) use ($cfgX): string {
         $o = '<select name="' . h($nome) . '"><option value="">' . h($vazio) . '</option>';
@@ -2334,8 +2333,9 @@ th.c,td.c{text-align:center}
     <span class="small"><?= $lstX['em'] ? 'Última busca: ' . h($lstX['em']) . ', ' . count($lstX['contas']) . ' conta(s) contábil(eis), ' . count($lstX['forns']) . ' fornecedor(es)' . ($lstX['contas'] && $lstX['campo'] === '' ? ' (ATENÇÃO: não achei o campo da conta contábil nas contas a pagar)' : '') . '. ' : '' ?>Só lê, não grava nada no IXC.</span></form>
   <form method="post" action="?p=rixc" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="rixc_cfg">
     <h2>1. Contas de despesa</h2>
-    <p class="small">Clique primeiro em "Buscar no IXC" (logo acima). Em cada linha, escolha a conta contábil analítica certa, a mesma do campo "Conta contábil analítica" da conta a pagar do IXC. Filial, conta e forma de pagamento vêm da última conta a pagar lançada no IXC com essa conta contábil. Para criar uma linha nova, escreva o nome na última linha. Para tirar uma, apague o nome.</p>
-    <div class="tw"><table class="rec"><thead><tr><th>Nome</th><th>Conta contábil analítica no IXC</th></tr></thead>
+    <p class="small">Clique primeiro em "Buscar no IXC" (logo acima). Em cada linha, digite o código da conta contábil analítica do IXC (o mesmo ID da tela do IXC, ex.: 328) ou comece a digitar o nome para procurar. Filial, conta e forma de pagamento vêm da última conta a pagar lançada no IXC com essa conta contábil. Para criar uma linha nova, escreva o nome na última linha. Para tirar uma, apague o nome.</p>
+    <datalist id="contas-ixc"><?php foreach ($lstX['contas'] as $x): ?><option value="<?= h($x['nome']) ?>"><?php endforeach ?></datalist>
+    <div class="tw"><table class="rec"><thead><tr><th>Nome</th><th>Código da conta contábil analítica no IXC</th></tr></thead>
       <?php foreach ($cfgX['despesas'] as $id => $d): ?><tr><td><input name="despesas[<?= h((string)$id) ?>][nome]" value="<?= h($d['nome']) ?>" maxlength="60"></td><td><?= $selM((string)$id, $d) ?><?= ($d['conta'] ?? '') === '' && ($d['modelo'] ?? '') === '' ? ' <span class="pill q">falta</span>' : '' ?></td></tr><?php endforeach ?>
       <tr><td><input name="despesas[novo][nome]" placeholder="nova: ex. Salário técnico" maxlength="60"></td><td><?= $selM('novo', []) ?></td></tr>
     </table></div>
