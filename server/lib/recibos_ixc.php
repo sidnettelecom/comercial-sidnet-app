@@ -562,6 +562,8 @@ function rixc_lancar(string $mes, array $recibos, string $quem): array
                     $cp['fornecedor'] => $forn[0], $cp['valor'] => $v, $cp['aberto'] => $v,
                     $cp['emissao'] => $hoje, $cp['vencimento'] => $venc,
                     $cp['documento'] => $doc, $cp['obs'] => $obs, $cp['status'] => 'A',
+                    // sem estes dois "N" a conta fica gravada mas a tela do IXC não mostra (visto na #18718)
+                    'status_auditoria' => 'N', 'comunicado' => 'N',
                 ]);
                 $idIxc = ixc()->inserir($cp['tabela'], $dados);
                 $grava->execute([$mes, $r['chave'], $r['nome'], $d, $nomeD, $v, $idIxc, $forn[0], $quem]);
