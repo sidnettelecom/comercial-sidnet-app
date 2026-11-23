@@ -130,6 +130,7 @@ const PERM_ACOES = [
     'rec_regra_salvar' => 'rec.com', 'rec_com_salvar' => 'rec.com', 'rec_pagar' => 'rec.com',
     'inst_salvar' => 'inst.lista', 'inst_excluir' => 'inst.lista', 'inst_buscar' => 'inst.lista', 'inst_mais' => 'inst.lista', 'inst_mais_tec' => 'inst.lista',
     'inst_servicos_salvar' => 'inst.com', 'inst_com_salvar' => 'inst.com', 'inst_pagar' => 'inst.com',
+    'inst_an_decidir' => 'inst.analise', 'inst_an_consultar' => 'inst.analise', 'inst_an_cfg' => 'inst.analise', 'inst_an_assuntos' => 'inst.analise',
     'rh_lanc_salvar' => 'rh.lanc', 'rh_lanc_excluir' => 'rh.lanc', 'rh_func_salvar' => 'rh.func', 'rh_func_ativo' => 'rh.func', 'rh_pagar' => 'rh.fecha', 'rh_sobre_salvar' => 'rh.lanc',
     'recibos_cpf' => 'recibos', 'recibos_ixc' => 'recibos.ixc', 'audit_ok' => 'recibos.audit',
     'colab_buscar' => 'cfg.colab', 'colab_salvar' => 'cfg.colab', 'colab_mostrar' => 'cfg.colab',
@@ -531,6 +532,31 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 registrar($quem, 'pagou comissão da instalação', mes_nome($mesI) . " ($n O.S, pago em " . mes_nome($pg) . ')');
                 $msg = $n ? "$n O.S conferidas marcadas como pagas em " . mes_nome($pg) . '.' : 'Nenhuma O.S conferida (✔) e ainda não paga neste mês.';
             }
+        } elseif ($a === 'inst_an_decidir') {
+            $dec = (string)($_POST['decisao'] ?? '');
+            inst_an_decidir($id, $dec, (string)($_POST['motivo'] ?? ''), $quem);
+            $ii = inst_um($id);
+            $rotDec = ['pagar' => 'pagar a comissão', 'nao_pagar' => 'não pagar os técnicos', '' => 'voltar para analisar'][$dec];
+            registrar($quem, 'decidiu análise da instalação', "#$id {$ii['cliente']}: $rotDec" . ($dec === 'nao_pagar' ? ' (' . $ii['an_motivo'] . ')' : ''));
+            $msg = "{$ii['cliente']}: " . ($dec === 'pagar' ? 'comissão liberada. Agora é só conferir (✔) na Comissão da instalação.' : ($dec === 'nao_pagar' ? 'técnicos não recebem por esta instalação (quem agendou continua recebendo). Confira (✔) na Comissão da instalação para fechar.' : 'voltou para analisar.'));
+        } elseif ($a === 'inst_an_consultar') {
+            if (destino() !== 'ixc') throw new RuntimeException('A análise da instalação só funciona com o IXC.');
+            $mesI = preg_match('/^\d{4}-\d{2}$/', (string)($_POST['mes'] ?? '')) ? (string)$_POST['mes'] : '';
+            $n = inst_an_atualizar(300, $mesI);
+            registrar($quem, 'consultou O.S da análise da instalação no IXC', ($mesI !== '' ? mes_nome($mesI) : 'todas') . " ($n)");
+            $msg = $n ? "$n instalação(ões) consultadas no IXC (só leitura, nada foi gravado lá)." : 'Nada para consultar: as instalações deste mês já têm resultado final, decisão ou estão fora da regra.';
+        } elseif ($a === 'inst_an_cfg' || $a === 'inst_an_assuntos') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin muda a regra da análise da instalação.');
+            if ($a === 'inst_an_assuntos') {
+                $n = inst_an_assuntos_ixc();
+                registrar($quem, 'carregou assuntos de O.S do IXC (análise da instalação)', (string)$n);
+                $msg = "$n assuntos de O.S carregados do IXC. Desmarque os que não contam e salve.";
+            } else {
+                inst_an_config_salvar($_POST);
+                $c = inst_an_config();
+                registrar($quem, 'salvou regra da análise da instalação', "{$c['dias']} dias, desde {$c['desde']}, " . count($c['ignorar']) . ' assunto(s) não contam');
+                $msg = 'Regra da análise salva.';
+            }
         } elseif ($a === 'rh_lanc_salvar') {
             $rhForm = (array)($_POST['l'] ?? []);
             if (!in_array((string)($rhForm['tipo'] ?? ''), $rhTipos, true)) throw new RuntimeException('Você não tem permissão para esse tipo de lançamento.');
@@ -752,13 +778,13 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
 $p = !empty($gestor['trocar']) ? 'trocar' : ($_GET['p'] ?? '');
 $AREA_PAG = ['vendas' => 'vendas.lista', 'excluir' => 'vendas.lista', 'mes' => 'vendas.mes', 'dash' => 'dash', 'vendedores' => 'cfg.users', 'planos' => 'cfg.planos',
     'comissoes' => 'com.lista', 'planilha' => 'com.planilha', 'gestores' => 'cfg.gest', 'config' => 'admin', 'senha' => '', 'trocar' => '',
-    'recolhimentos' => 'rec.lista', 'rec_comissao' => 'rec.com', 'instalacoes' => 'inst.lista', 'inst_comissao' => 'inst.com',
+    'recolhimentos' => 'rec.lista', 'rec_comissao' => 'rec.com', 'instalacoes' => 'inst.lista', 'inst_comissao' => 'inst.com', 'inst_analise' => 'inst.analise',
     'rh_lancar' => 'rh.lanc', 'rh_fecha' => 'rh.fecha', 'rh_func' => 'rh.func', 'rh_cfg' => 'admin', 'recibos' => 'recibos', 'auditoria' => 'recibos.audit',
     'serv' => 'serv.saldo', 'serv_extrato' => 'serv.saldo', 'serv_lista' => 'serv.saldo', 'serv_lancar' => 'serv', 'serv_cad' => 'serv.cad', 'colab' => 'cfg.colab', 'rixc' => 'admin'];
 if (!isset($AREA_PAG[$p])) $p = 'vendas';
 if ($logado && $p !== 'trocar' && ($_GET['p'] ?? '') === '' && !$pode('vendas.lista')) {
     // tela inicial: a primeira opção liberada, na ordem do menu
-    foreach (['dash', 'mes', 'comissoes', 'planilha', 'recolhimentos', 'rec_comissao', 'instalacoes', 'inst_comissao', 'rh_lancar', 'rh_fecha', 'rh_func', 'serv', 'serv_lancar', 'serv_cad', 'recibos', 'auditoria', 'gestores', 'vendedores', 'planos', 'colab'] as $pg)
+    foreach (['dash', 'mes', 'comissoes', 'planilha', 'recolhimentos', 'rec_comissao', 'instalacoes', 'inst_analise', 'inst_comissao', 'rh_lancar', 'rh_fecha', 'rh_func', 'serv', 'serv_lancar', 'serv_cad', 'recibos', 'auditoria', 'gestores', 'vendedores', 'planos', 'colab'] as $pg)
         if ($pode($AREA_PAG[$pg])) { $p = $pg; break; }
 }
 if ($logado && $AREA_PAG[$p] !== '' && !($AREA_PAG[$p] === 'admin' ? $admin : $pode($AREA_PAG[$p]))) $p = 'sem';
@@ -1084,7 +1110,7 @@ th.c,td.c{text-align:center}
   <nav aria-label="Seções"><?= ($pode('dash') ? $aba('dash', 'Dashboard') : '')
     . $grupo('vendas', 'Vendas', [['vendas', 'Vendas', $pode('vendas.lista'), ['vendas', 'excluir']], ['mes', 'Vendas do mês', $pode('vendas.mes')], ['comissoes', 'Comissões', $pode('com.lista')], ['planilha', 'Comissões planilha', $pode('com.planilha')] /* PLANILHA-TEMP */])
     . $grupo('recolhimento', 'Recolhimento', [['recolhimentos', 'Recolhimentos', $pode('rec.lista')], ['rec_comissao', 'Comissão', $pode('rec.com')]])
-    . $grupo('instalacao', 'Instalação', [['instalacoes', 'Instalações concluídas', $pode('inst.lista')], ['inst_comissao', 'Comissões', $pode('inst.com')]])
+    . $grupo('instalacao', 'Instalação', [['instalacoes', 'Instalações concluídas', $pode('inst.lista')], ['inst_analise', 'Análise da instalação', $pode('inst.analise')], ['inst_comissao', 'Comissões', $pode('inst.com')]])
     . $grupo('rh', 'RH', [['rh_lancar', 'Lançamentos', $pode('rh.lanc')], ['rh_fecha', 'Fechamento do mês', $pode('rh.fecha')], ['rh_func', 'Funcionários', $pode('rh.func')], ['rh_cfg', 'Feriados e valores', $admin]])
     . $grupo('serv', 'Serviços em execução', [['serv', 'Saldos', $pode('serv.saldo'), ['serv', 'serv_extrato']], ['serv_lancar', 'Lançar', $pode('serv.lanc') || $pode('serv.pag')], ['serv_lista', 'Serviços lançados', $pode('serv.saldo')], ['serv_cad', 'Equipes, obras e preços', $pode('serv.cad')]])
     . $grupo('recibos', 'Recibos', [['recibos', 'Gerar recibos', (bool)array_filter(array_keys(RECIBO_ORIGENS), fn($o) => $pode('recibos.' . $o))], ['auditoria', 'Auditoria', $pode('recibos.audit')]])
@@ -1951,6 +1977,81 @@ th.c,td.c{text-align:center}
     <tfoot><tr><td colspan="5">TOTAL</td><td class="n"><?= count($linI) ?> O.S</td><td></td><td class="n"><?= $eqI ?> equip.</td><td colspan="2"></td></tr></tfoot>
   </table></div>
 
+<?php elseif ($p === 'inst_analise'):
+    $cfgA = inst_an_config();
+    $mesesI = inst_meses();
+    $mesI = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) ? (string)$_GET['mes'] : date('Y-m');
+    if (!in_array($mesI, $mesesI, true)) { $mesesI[] = $mesI; rsort($mesesI); }
+    $filA = (string)($_GET['sit'] ?? '');
+    $todasA = inst_do_mes($mesI);
+    $contA = array_fill_keys(array_keys(INST_AN_SIT), 0);
+    foreach ($todasA as $r) $contA[$r['an']['sit']]++;
+    $linA = $filA !== '' ? array_values(array_filter($todasA, fn($r) => $r['an']['sit'] === $filA || ($filA === 'com_os' && in_array($r['an']['sit'], ['analisar', 'pagar', 'nao_pagar'], true)))) : $todasA;
+    $finalA = $contA['aprovada'] + $contA['analisar'] + $contA['pagar'] + $contA['nao_pagar'];
+    $porTecA = inst_an_por_tecnico($todasA);
+    $linkMes = '?p=inst_analise&amp;mes=' . h($mesI);
+    $pct = fn(int $a, int $b) => $b ? round(100 * $a / $b) . '%' : '—';
+    $STA = ['' => 'aberta', 'A' => 'aberta', 'AN' => 'em análise', 'EN' => 'encaminhada', 'AS' => 'assumida', 'AG' => 'agendada', 'DS' => 'deslocamento', 'EX' => 'em execução', 'F' => 'finalizada', 'RAG' => 'reagendar'];
+?>
+  <div class="topo"><div><h1>Análise da instalação</h1><p class="small">Depois que a O.S de instalação fecha, o cliente fica <?= (int)$cfgA['dias'] ?> dias em observação. O sistema procura no IXC (só leitura) O.S novas desse cliente no período. Sem O.S: instalação aprovada e a comissão pode ser paga. Com O.S: a comissão fica segurada até você decidir aqui.</p></div>
+    <div class="row"><form method="get" class="in"><input type="hidden" name="p" value="inst_analise"><select name="mes" aria-label="Mês do fechamento da instalação" data-auto><?php foreach ($mesesI as $om): ?><option value="<?= h($om) ?>" <?= $om === $mesI ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select><noscript><button>Ver</button></noscript></form>
+    <?php if (destino() === 'ixc'): ?><form method="post" action="<?= $linkMes ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="mes" value="<?= h($mesI) ?>"><button class="pri" name="acao" value="inst_an_consultar" title="Só lê as O.S no IXC. O sistema também consulta sozinho a cada 6 horas.">Consultar IXC agora</button></form><?php endif ?></div></div>
+  <div class="kpis">
+    <div class="kpi"><span>Em observação</span><b class="q"><?= $contA['observacao'] + $contA['verificar'] ?></b><small>dentro dos <?= (int)$cfgA['dias'] ?> dias</small></div>
+    <div class="kpi"><span>Aprovadas</span><b class="ok"><?= $contA['aprovada'] ?></b><small>sem O.S no período</small></div>
+    <div class="kpi"><span>Teve O.S, falta decidir</span><b class="er"><?= $contA['analisar'] ?></b><small>comissão segurada</small></div>
+    <div class="kpi forte"><span>Instalações sem retorno</span><b><?= $pct($contA['aprovada'], $finalA) ?></b><small><?= $finalA ?> com resultado em <?= h(mes_nome($mesI)) ?></small></div>
+  </div>
+  <div class="row navv"><?php foreach (['' => 'Todas', 'observacao' => 'Em observação', 'com_os' => 'Teve O.S', 'analisar' => 'Falta decidir', 'aprovada' => 'Aprovadas', 'nao_pagar' => 'Não pagar'] as $fk => $ft): ?>
+    <a class="bt<?= $filA === $fk ? ' pri' : '' ?>" href="<?= $linkMes ?><?= $fk !== '' ? '&amp;sit=' . $fk : '' ?>"><?= h($ft) ?></a><?php endforeach ?></div>
+  <div class="card tw"><table class="rec">
+    <thead><tr><th>Cliente</th><th>Técnicos</th><th>Fechou</th><th>Observa até</th><th>Situação</th><th>O.S depois da instalação</th><th>Decisão</th></tr></thead>
+    <?php foreach ($linA as $r): $an = $r['an']; $i = (int)$r['id']; ?>
+    <tr><td><b><?= h($r['cliente']) ?></b><br><span class="small">contrato <?= h($r['contrato']) ?><?= $r['os'] !== '' ? ' · O.S ' . h($r['os']) : '' ?><?= $r['servico'] !== '' ? ' · ' . h($r['servico']) : '' ?></span></td>
+      <td><?= implode('<br>', array_map(fn($t) => h($t['nome']), $r['tecs'])) ?: '<span class="small">—</span>' ?></td>
+      <td class="n"><?= h(rec_dt($r['fechamento'])) ?></td><td class="n"><?= h(rec_dt($an['fim'])) ?></td>
+      <td><span class="pill <?= $an['classe'] ?>"><?= h($an['rotulo']) ?></span>
+        <?php if ($r['an_verif'] !== ''): ?><br><span class="small">IXC consultado <?= h(rec_dt($r['an_verif']) . substr($r['an_verif'], 10, 6)) ?></span><?php endif ?>
+        <?php if ($r['an_erro'] !== ''): ?><br><span class="small er"><?= h($r['an_erro']) ?></span><?php endif ?></td>
+      <td><?php foreach ($an['todas'] as $o): $conta = in_array($o, $an['os'], true); $dd = (int)(new DateTimeImmutable(substr($r['fechamento'], 0, 10)))->diff(new DateTimeImmutable($o['abertura']))->days; ?>
+        <div class="<?= $conta ? '' : 'small' ?>" style="margin-bottom:4px"><b>O.S <?= h($o['id']) ?></b> · <?= h($o['assunto'] ?: 'sem assunto') ?><br>
+          <span class="small">aberta <?= h(rec_dt($o['abertura'])) ?> (<?= $dd ?> dia<?= $dd === 1 ? '' : 's' ?> depois) · <?= h($STA[$o['status']] ?? $o['status']) ?><?= $conta ? '' : ' · não conta' ?><?= $o['msg'] !== '' ? '<br>' . h($o['msg']) : '' ?></span></div>
+        <?php endforeach ?><?= $an['todas'] ? '' : '<span class="small">' . ($r['an_verif'] === '' ? 'ainda não consultado' : 'nenhuma') . '</span>' ?></td>
+      <td><?php if ($an['sit'] === 'fora'): ?><span class="small">fechada antes de <?= h(rec_dt($cfgA['desde'])) ?></span>
+        <?php elseif ($r['pago_em'] !== ''): ?><span class="tp pago">pago <?= h(mes_nome($r['pago_em'])) ?></span><?= $r['an_motivo'] !== '' ? '<br><span class="small">' . h($r['an_motivo']) . '</span>' : '' ?>
+        <?php elseif (in_array($an['sit'], ['pagar', 'nao_pagar'], true)): ?><span class="small"><?= h($r['an_por']) ?> em <?= h(rec_dt($r['an_em'])) ?><?= $r['an_motivo'] !== '' ? '<br>' . h($r['an_motivo']) : '' ?></span>
+          <form method="post" action="<?= $linkMes ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= $i ?>"><input type="hidden" name="decisao" value=""><button name="acao" value="inst_an_decidir">Desfazer</button></form>
+        <?php elseif ($an['sit'] === 'analisar'): ?><form method="post" action="<?= $linkMes ?>" style="display:grid;gap:6px;min-width:220px"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= $i ?>"><input type="hidden" name="acao" value="inst_an_decidir">
+          <input name="motivo" placeholder="Motivo (obrigatório para não pagar)" aria-label="Motivo" maxlength="300">
+          <span class="row"><button name="decisao" value="pagar" title="A O.S não foi culpa da instalação">Pagar comissão</button><button class="del" name="decisao" value="nao_pagar" title="Problema da instalação: técnicos não recebem">Não pagar</button></span></form>
+        <?php else: ?><span class="small">—</span><?php endif ?></td></tr>
+    <?php endforeach ?>
+    <?php if (!$linA): ?><tr><td colspan="7" class="small">Nenhuma instalação <?= $filA !== '' ? 'nessa situação' : 'fechada' ?> em <?= h(mes_nome($mesI)) ?>.</td></tr><?php endif ?>
+  </table></div>
+  <div class="card"><h2>Qualidade por técnico em <?= h(mes_nome($mesI)) ?></h2>
+    <div class="tw"><table class="rec">
+      <thead><tr><th>Técnico</th><th>Instalações</th><th>Aprovadas (sem O.S)</th><th>Teve O.S</th><th>Não pagas</th><th>Em observação</th><th>Sem retorno</th></tr></thead>
+      <?php foreach ($porTecA as $t): $fin = $t['aprovada'] + $t['com_os']; ?>
+      <tr><td><b><?= h($t['nome']) ?></b></td><td class="n"><?= $t['inst'] ?></td><td class="n"><?= $t['aprovada'] ?></td><td class="n"><?= $t['com_os'] ? '<b class="er">' . $t['com_os'] . '</b>' : '0' ?></td><td class="n"><?= $t['nao_pagar'] ?></td><td class="n"><?= $t['obs'] ?></td><td class="n"><b><?= $pct($t['aprovada'], $fin) ?></b></td></tr>
+      <?php endforeach ?>
+      <?php if (!$porTecA): ?><tr><td colspan="7" class="small">Sem instalações na regra em <?= h(mes_nome($mesI)) ?>.</td></tr><?php endif ?>
+    </table></div>
+    <p class="small">"Sem retorno" conta só as instalações que já têm resultado (aprovadas ou com O.S). Em dupla, a instalação conta para os dois.</p>
+  </div>
+  <?php if ($admin): ?>
+  <form method="post" action="<?= $linkMes ?>" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_an_cfg">
+    <h2>Regra da análise (só admin)</h2>
+    <div class="row"><label>Dias de observação <input name="dias" type="number" min="1" max="180" value="<?= (int)$cfgA['dias'] ?>" style="width:80px"></label>
+      <label>Vale para instalações fechadas a partir de <input name="desde" type="date" value="<?= h($cfgA['desde']) ?>"></label></div>
+    <p class="small" style="margin:10px 0 6px"><b>Assuntos de O.S que contam</b> (marcado = segura a comissão). Desmarque os que não têm a ver com a instalação, como financeiro, mudança de plano ou mudança de endereço.</p>
+    <?php if ($cfgA['assuntos']): ?><div style="columns:260px;column-gap:16px"><?php foreach ($cfgA['assuntos'] as $aid => $an): ?>
+      <label style="display:block;break-inside:avoid;padding:2px 0"><input type="checkbox" name="conta[<?= h((string)$aid) ?>]" value="1" <?= in_array((string)$aid, $cfgA['ignorar'], true) ? '' : 'checked' ?>> <?= h($an ?: '#' . $aid) ?></label>
+    <?php endforeach ?></div><?php else: ?><p class="small">Nenhum assunto carregado ainda: por enquanto todas as O.S contam. Clique em "Carregar assuntos do IXC".</p><?php endif ?>
+    <div class="row" style="margin-top:10px"><button class="pri">Salvar regra</button>
+      <?php if (destino() === 'ixc'): ?><button name="acao" value="inst_an_assuntos" formnovalidate>Carregar assuntos do IXC</button><?php endif ?></div>
+  </form>
+  <?php endif ?>
+
 <?php elseif ($p === 'inst_comissao'):
     $mesesI = inst_meses();
     $mesI = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) ? (string)$_GET['mes'] : date('Y-m');
@@ -1997,11 +2098,13 @@ th.c,td.c{text-align:center}
     <div class="tw"><table class="rec">
       <thead><tr><th>✔</th><th>Cliente</th><th>Serviço</th><th>Fechou</th><th>Técnicos e valor de cada um</th><th>Quem agendou</th><th>Total da O.S</th><th>Pago em</th></tr></thead>
       <?php foreach ($linI as $r): $i = (int)$r['id']; $dis = $r['pago_em'] !== '' ? 'disabled' : ''; [$sugT, $sugA] = inst_sugestao($r, $servI); ?>
-      <tr><td class="ck"><?php if (!$dis): ?><input type="hidden" name="c[<?= $i ?>][ok]" value="0"><?php endif ?><input type="checkbox" name="c[<?= $i ?>][ok]" value="1" <?= $r['conferido'] ? 'checked' : '' ?> <?= $dis ?> aria-label="Conferido <?= h($r['cliente']) ?>"></td>
-        <td><b><?= h($r['cliente']) ?></b><br><span class="small">contrato <?= h($r['contrato']) ?><?= $r['os'] !== '' ? ' · O.S ' . h($r['os']) : '' ?><?= $r['qtd'] ? ' · ' . (int)$r['qtd'] . ' equip. recolhido' . ($r['qtd'] == 1 ? '' : 's') : '' ?></span></td>
+      <?php $an = $r['an']; $segura = $r['pago_em'] === '' && !$an['libera']; $disT = $dis ?: ($r['pago_em'] === '' && $an['zera'] ? 'disabled' : ''); ?>
+      <tr><td class="ck"><?php if (!$dis): ?><input type="hidden" name="c[<?= $i ?>][ok]" value="0"><?php endif ?><input type="checkbox" name="c[<?= $i ?>][ok]" value="1" <?= $r['conferido'] ? 'checked' : '' ?> <?= $dis ?: ($segura ? 'disabled' : '') ?> <?= $segura ? 'title="Segurada pela análise da instalação"' : '' ?> aria-label="Conferido <?= h($r['cliente']) ?>"></td>
+        <td><b><?= h($r['cliente']) ?></b><br><span class="small">contrato <?= h($r['contrato']) ?><?= $r['os'] !== '' ? ' · O.S ' . h($r['os']) : '' ?><?= $r['qtd'] ? ' · ' . (int)$r['qtd'] . ' equip. recolhido' . ($r['qtd'] == 1 ? '' : 's') : '' ?></span>
+          <?php if ($an['sit'] !== 'fora'): ?><br><?= $pode('inst.analise') ? '<a href="?p=inst_analise&amp;mes=' . h($mesI) . '" style="text-decoration:none">' : '' ?><span class="pill <?= $an['classe'] ?>"><?= h($an['rotulo']) ?></span><?= $pode('inst.analise') ? '</a>' : '' ?><?php endif ?></td>
         <td class="small"><?= h($r['servico'] ?: '—') ?></td>
         <td class="n"><?= h(rec_dt($r['fechamento'])) ?></td>
-        <td><div class="inst-tecs"><?php foreach ($r['tecs'] as $t): ?><label><span><?= h($t['nome']) ?></span><input class="val" name="c[<?= $i ?>][v][<?= (int)$t['id'] ?>]" value="<?= h(brl($t['valor'])) ?>" placeholder="<?= h(brl($sugT)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor de <?= h($t['nome']) ?>"></label><?php endforeach ?></div></td>
+        <td><div class="inst-tecs"><?php foreach ($r['tecs'] as $t): ?><label><span><?= h($t['nome']) ?></span><input class="val" name="c[<?= $i ?>][v][<?= (int)$t['id'] ?>]" value="<?= h(brl($t['valor'])) ?>" placeholder="<?= h(brl($sugT)) ?>" inputmode="decimal" <?= $disT ?> <?= $disT && !$dis ? 'title="Não pagar (análise da instalação)"' : '' ?> aria-label="Valor de <?= h($t['nome']) ?>"></label><?php endforeach ?></div></td>
         <td><?php if ($r['agendador_id']): ?><div class="inst-tecs"><label><span><?= h($r['agendador']) ?></span><input class="val" name="c[<?= $i ?>][va]" value="<?= h(brl($r['valor_agenda'])) ?>" placeholder="<?= h(brl($sugA)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor de quem agendou"></label></div><?php else: ?><span class="small">—</span><?php endif ?></td>
         <td class="n"><b><?= $Rr($somaV($r)) ?></b></td>
         <td><?= $r['pago_em'] !== '' ? '<span class="tp pago">' . h(mes_nome($r['pago_em'])) . '</span>' : '<span class="small">—</span>' ?></td></tr>
@@ -2013,7 +2116,8 @@ th.c,td.c{text-align:center}
       <span class="row"><button class="pri" name="acao" value="inst_pagar">Salvar e marcar conferidas como pagas em</button>
         <select name="pago_em" aria-label="Mês do pagamento"><?php for ($k = -1; $k <= 2; $k++): $om = mes_soma(date('Y-m'), $k); ?><option value="<?= $om ?>" <?= $k === 0 ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endfor ?></select></span>
     </div>
-    <p class="small">Valor em cinza é a sugestão do serviço: só vale depois de salvo (use "Salvar e preencher" acima). Se a O.S for corrigida e mudar técnicos, quem agendou ou o serviço, ela volta sem ✔.</p>
+    <p class="small">Valor em cinza é a sugestão do serviço: só vale depois de salvo (use "Salvar e preencher" acima). Se a O.S for corrigida e mudar técnicos, quem agendou ou o serviço, ela volta sem ✔.
+      Instalação em observação ou que teve O.S sem decisão fica segurada (sem ✔) até passar pela Análise da instalação; "Não pagar" deixa os técnicos com R$ 0,00.</p>
   </form>
   <div class="card"><h2>Total de cada pessoa em <?= h(mes_nome($mesI)) ?></h2>
     <div class="tw"><table class="rec">

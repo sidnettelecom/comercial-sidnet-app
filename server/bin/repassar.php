@@ -18,3 +18,16 @@ if (destino() === 'ixc' && (!is_file($marca) || time() - (int)filemtime($marca) 
         echo date('Y-m-d H:i:s') . ' comissões: ' . $e->getMessage() . PHP_EOL;
     }
 }
+
+// a cada 6 horas: análise da instalação (O.S do cliente nos dias depois da instalação), só leitura no IXC
+$marca = dirname(config()['banco']) . '/inst-analise.ultima';
+if (destino() === 'ixc' && (!is_file($marca) || time() - (int)filemtime($marca) >= 6 * 3600)) {
+    touch($marca);
+    try {
+        require_once __DIR__ . '/../lib/instalacao.php';
+        inst_tabela();
+        if ($n = inst_an_atualizar(300)) echo date('Y-m-d H:i:s') . " análise da instalação: $n instalação(ões) consultadas no IXC" . PHP_EOL;
+    } catch (Throwable $e) {
+        echo date('Y-m-d H:i:s') . ' análise da instalação: ' . $e->getMessage() . PHP_EOL;
+    }
+}

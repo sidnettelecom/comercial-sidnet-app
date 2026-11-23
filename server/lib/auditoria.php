@@ -97,8 +97,11 @@ function audit_analisar(string $mes, array $origens): array
     if (in_array('inst', $origens, true)) {
         foreach (inst_do_mes($mes) as $r) {
             if ($r['conferido'] || $r['pago_em'] !== '') continue;
-            foreach ($r['tecs'] as $t) $add((string)$t['nome'], 'inst', 'O.S de instalação sem conferir');
-            if ($r['agendador_id'] && $r['agendador'] !== '') $add((string)$r['agendador'], 'inst', 'O.S de instalação sem conferir');
+            $sit = $r['an']['sit'] ?? '';
+            $txt = $sit === 'observacao' || $sit === 'verificar' ? 'O.S de instalação em observação (análise da instalação)'
+                : ($sit === 'analisar' ? 'O.S de instalação com O.S depois, falta decidir na análise' : 'O.S de instalação sem conferir');
+            foreach ($r['tecs'] as $t) $add((string)$t['nome'], 'inst', $txt);
+            if ($r['agendador_id'] && $r['agendador'] !== '') $add((string)$r['agendador'], 'inst', $txt);
         }
     }
     $out = [];

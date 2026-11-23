@@ -11,6 +11,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/recolhimento.php'; // rec_macs(), rec_eq_form(), rec_data(), rec_dt(), rec_os_ixc(), rec_equipamentos()
+require_once __DIR__ . '/inst_analise.php'; // análise da instalação: O.S do cliente nos 30 dias depois
 
 const INST_MAX_TEC = 6; // técnicos por O.S
 
@@ -68,6 +69,7 @@ function inst_tabela(): void
         $q = db()->prepare('INSERT INTO inst_servicos (nome) VALUES (?)');
         foreach (['INSTALAÇÃO NOVA', '2º PONTO', 'MUDANÇA DE ENDEREÇO'] as $n) $q->execute([$n]);
     }
+    inst_an_tabela();
 }
 
 /** Listas simples por nome (técnicos, quem agenda, serviços). */
@@ -288,7 +290,7 @@ function inst_com_tecs(array $linhas): array
     foreach ($q->fetchAll() as $t) $por[(int)$t['inst_id']][] = ['id' => (int)$t['id'], 'nome' => $t['nome'], 'valor' => $t['valor']];
     foreach ($linhas as &$r) $r['tecs'] = $por[(int)$r['id']] ?? [];
     unset($r);
-    return $linhas;
+    return inst_an_aplicar($linhas);
 }
 
 /** O.S fechadas no mês (aaaa-mm), com técnicos e o nome de quem lançou. */
@@ -338,6 +340,9 @@ function inst_comissao_salvar(array $linhas, string $quem): int
         $id = (int)$id;
         $pg->execute([$id]);
         if ($pg->fetchColumn() !== '') continue; // paga ou não existe
+        $an = inst_um($id)['an'] ?? null;
+        if ($an && !$an['libera']) $l['ok'] = 0; // em observação ou com O.S sem decisão: comissão segurada
+        if ($an && $an['zera']) unset($l['v']); // "não pagar": técnicos ficam sem valor
         $mudou = false;
         foreach ((array)($l['v'] ?? []) as $tid => $v) {
             $v = dinheiro((string)$v);
@@ -368,6 +373,7 @@ function inst_aplicar_regra(string $mes, bool $sobrescrever): int
     foreach (inst_do_mes($mes) as $r) {
         if ($r['pago_em'] !== '' || $r['conferido']) continue;
         [$vt, $va] = inst_sugestao($r, $serv);
+        if (!empty($r['an']['zera'])) $vt = ''; // "não pagar": técnicos sem valor
         $mexeu = false;
         if ($vt !== '') foreach ($r['tecs'] as $t) {
             if (!$sobrescrever && $t['valor'] !== '') continue;
@@ -383,13 +389,25 @@ function inst_aplicar_regra(string $mes, bool $sobrescrever): int
     return $n;
 }
 
-/** Admin: marca como pagas, no mês $pagoEm, as O.S conferidas do mês $mes que ainda não foram pagas. */
+/**
+ * Admin: marca como pagas, no mês $pagoEm, as O.S conferidas do mês $mes que ainda não foram pagas
+ * (as seguradas pela análise da instalação ficam de fora). "Não pagar": grava 0 nos técnicos ao pagar.
+ */
 function inst_pagar(string $mes, string $pagoEm, string $quem): int
 {
     if (!preg_match('/^\d{4}-\d{2}$/', $pagoEm)) throw new RuntimeException('Escolha o mês do pagamento.');
-    $q = db()->prepare("UPDATE instalacoes SET pago_em = ?, alterado_por = ? WHERE substr(fechamento, 1, 7) = ? AND conferido = 1 AND pago_em = ''");
-    $q->execute([$pagoEm, $quem, $mes]);
-    return $q->rowCount();
+    $q = db()->prepare("UPDATE instalacoes SET pago_em = ?, alterado_por = ? WHERE id = ? AND conferido = 1 AND pago_em = ''");
+    $zera = db()->prepare("UPDATE inst_tec SET valor = '0.00' WHERE inst_id = ?");
+    $n = 0;
+    db()->beginTransaction();
+    foreach (inst_do_mes($mes) as $r) {
+        if ($r['pago_em'] !== '' || !$r['conferido']) continue;
+        $q->execute([$pagoEm, $quem, $r['id']]);
+        if ($q->rowCount() && !empty($r['an']['zera'])) $zera->execute([$r['id']]);
+        $n += $q->rowCount();
+    }
+    db()->commit();
+    return $n;
 }
 
 /** Total de cada pessoa: [['nome', 'papel', 'os', 'sozinho', 'valor', 'falta', 'sem_valor'], ...] técnicos primeiro, do maior para o menor */
