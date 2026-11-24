@@ -1821,7 +1821,7 @@ th.c,td.c{text-align:center}
     $vR = fn(string $k) => h((string)($edit[$k] ?? ''));
     $linkMes = '?p=recolhimentos&amp;mes=' . h($mesR) . '&amp;aba=' . $abaR;
     $preencher = !empty($edit['id']) && ($edit['situacao'] ?? 'ok') !== 'ok';
-    if ($preencher && $recForm === null && count(rec_tecnicos(true)) > 1) $edit['tecnico_id'] = 0; // mais de um recolhedor: o financeiro escolhe
+    if ($preencher && $recForm === null && empty($edit['tecnico_ixc']) && count(rec_tecnicos(true)) > 1) $edit['tecnico_id'] = 0; // mais de um recolhedor e não veio da O.S: o financeiro escolhe
 ?>
   <div class="topo"><div><h1>Recolhimentos</h1><p class="small">As O.S de recolhimento fechadas no IXC chegam sozinhas em "A preencher" (o sistema confere a cada 6 horas). O financeiro só coloca os equipamentos recolhidos. O sistema não abre nem fecha O.S e não grava nada no IXC: serve só para a comissão.</p></div>
 </div>

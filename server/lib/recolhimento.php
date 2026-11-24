@@ -70,6 +70,43 @@ function rec_tabela(): void
     // assuntos de O.S do IXC que são recolhimento, separados por vírgula (NULL = padrão REC_IMP_PADRAO)
     if (!in_array('assuntos', $colsR, true)) db()->exec('ALTER TABLE rec_regra ADD COLUMN assuntos TEXT');
     db()->exec('CREATE INDEX IF NOT EXISTS rec_os ON recolhimentos (os)');
+    if (!in_array('tecnico_ixc', $cols, true)) db()->exec('ALTER TABLE recolhimentos ADD COLUMN tecnico_ixc INTEGER NOT NULL DEFAULT 0'); // 1 = recolhedor veio da O.S no IXC
+    rec_unir_duplicados();
+}
+
+/** Chave para comparar nomes: sem acento, maiúsculo, sem letra dobrada (PASCOARELLI = PASCOARELI) e sem espaço sobrando */
+function rec_nome_chave(string $nome): string
+{
+    require_once __DIR__ . '/ixc.php'; // sem_acento()
+    return preg_replace(['/\s+/', '/([A-Z])\1+/'], [' ', '$1'], up(sem_acento(trim($nome))));
+}
+
+/**
+ * Recolhedor repetido com grafia diferente (ex.: LUCAS PASCOARELLI digitado à mão e LUCAS PASCOARELI vindo do IXC
+ * pela tela Colaboradores do IXC, ALEX 2026-11-24): fica um só, com o nome do IXC, e as O.S passam para ele.
+ */
+function rec_unir_duplicados(): void
+{
+    $grupos = [];
+    foreach (db()->query('SELECT id, nome, ativo FROM rec_tecnicos ORDER BY id') as $r) $grupos[rec_nome_chave($r['nome'])][] = $r;
+    $grupos = array_filter($grupos, fn($g) => count($g) > 1);
+    if (!$grupos) return;
+    $doIxc = [];
+    $arq = dirname(config()['banco']) . '/ixc-funcionarios.json';
+    if (is_file($arq)) foreach ((array)(json_decode((string)file_get_contents($arq), true)['lista'] ?? []) as $f) $doIxc[up((string)($f['nome'] ?? ''))] = 1;
+    $nOs = db()->prepare('SELECT COUNT(*) FROM recolhimentos WHERE tecnico_id = ?');
+    foreach ($grupos as $g) {
+        // fica o que tem o nome igual ao do IXC; se nenhum tem, o mais novo (cadastrado depois, em geral pela tela do IXC)
+        usort($g, fn($a, $b) => [isset($doIxc[up($b['nome'])]), $b['id']] <=> [isset($doIxc[up($a['nome'])]), $a['id']]);
+        $fica = array_shift($g);
+        db()->beginTransaction();
+        foreach ($g as $sai) {
+            db()->prepare('UPDATE recolhimentos SET tecnico_id = ? WHERE tecnico_id = ?')->execute([$fica['id'], $sai['id']]);
+            if ($sai['ativo']) db()->prepare('UPDATE rec_tecnicos SET ativo = 1 WHERE id = ?')->execute([$fica['id']]);
+            db()->prepare('DELETE FROM rec_tecnicos WHERE id = ?')->execute([$sai['id']]);
+        }
+        db()->commit();
+    }
 }
 
 /** Rótulos das situações */
@@ -413,8 +450,8 @@ function rec_tecnico_por_nome(string $nome): int
 {
     if ($nome === '') return 0;
     require_once __DIR__ . '/ixc.php';
-    $alvo = up(sem_acento($nome));
-    foreach (rec_tecnicos(true) as $t) if (up(sem_acento($t['nome'])) === $alvo) return (int)$t['id'];
+    $alvo = rec_nome_chave($nome);
+    foreach (rec_tecnicos(true) as $t) if (rec_nome_chave($t['nome']) === $alvo) return (int)$t['id'];
     return 0;
 }
 
@@ -494,10 +531,11 @@ function rec_imp_puxar(string $mes): array
     require_once __DIR__ . '/ixc.php';
     $assuntos = rec_imp_assuntos();
     if (!$assuntos) throw new RuntimeException('Nenhum assunto de O.S marcado como recolhimento. Escolha em "Puxar do IXC" (só admin).');
-    // recolhedor já escolhido: o único ativo (hoje o LUCAS); o financeiro confere ao preencher
+    // recolhedor: o colaborador responsável da O.S no IXC, se estiver na lista; senão o primeiro ativo e o financeiro escolhe ao preencher
     $tecs = rec_tecnicos(true);
     if (!$tecs) throw new RuntimeException('Cadastre o recolhedor antes (Configurações → Permissões, no fim da página).');
     $tecPadrao = (int)$tecs[0]['id'];
+    $tecIxc = [];
     $ini = $mes . '-01';
     $fim = (new DateTimeImmutable($ini))->modify('last day of this month')->format('Y-m-d');
     $parada = (new DateTimeImmutable($ini))->modify('-120 day')->format('Y-m-d'); // O.S abertas bem antes do mês não fecham nele
@@ -505,6 +543,7 @@ function rec_imp_puxar(string $mes): array
     $jaSemOs = db()->prepare("SELECT 1 FROM recolhimentos WHERE os = '' AND contrato = ? AND fechamento = ?"); // lançadas à mão sem nº de O.S
     $ins = db()->prepare("INSERT INTO recolhimentos (cliente, contrato, os, macs, modelos, qtd, abertura, fechamento, funcionando, tecnico_id, obs, lancado_por, situacao, ixc_cliente, diagnostico)
         VALUES (?, ?, ?, '', '', 0, ?, ?, 'SIM', ?, ?, 'IXC (puxado)', ?, ?, ?)");
+    $marcaTec = db()->prepare('UPDATE recolhimentos SET tecnico_ixc = 1 WHERE id = ?');
     $clientes = $diags = [];
     $out = ['novas' => 0, 'ja' => 0, 'nao' => 0];
     foreach ($assuntos as $aid) {
@@ -529,8 +568,14 @@ function rec_imp_puxar(string $mes): array
                     try { $clientes[$cid] = up((string)(ixc()->um('cliente', 'id', $cid)['razao'] ?? '')); } catch (Throwable) { $clientes[$cid] = ''; }
                 }
                 $dg = rec_diag_ixc($o, $diags);
-                $ins->execute([($clientes[$cid] ?? '') ?: 'CLIENTE ' . $cid, $ct, $os, $ab, $fe, $tecPadrao,
+                $tid = so_digitos((string)($o['id_tecnico'] ?? ''));
+                if ($tid !== '' && $tid !== '0' && !isset($tecIxc[$tid])) {
+                    try { $f = ixc()->um('funcionarios', 'id', $tid); $tecIxc[$tid] = rec_tecnico_por_nome(up((string)($f['funcionario'] ?? ($f['nome'] ?? '')))); } catch (Throwable) { $tecIxc[$tid] = 0; }
+                }
+                $tec = (int)($tecIxc[$tid] ?? 0);
+                $ins->execute([($clientes[$cid] ?? '') ?: 'CLIENTE ' . $cid, $ct, $os, $ab, $fe, $tec ?: $tecPadrao,
                     $dg['sit'] === 'nao' ? 'IXC: ' . $dg['nome'] : '', $dg['sit'], $cid, $dg['nome']]);
+                if ($tec) $marcaTec->execute([(int)db()->lastInsertId()]);
                 $out['novas']++;
                 if ($dg['sit'] === 'nao') $out['nao']++;
             }
