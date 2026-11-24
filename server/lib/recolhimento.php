@@ -73,7 +73,7 @@ function rec_tabela(): void
 }
 
 /** Rótulos das situações */
-const REC_SIT = ['ok' => 'Recolhidos', 'pendente' => 'A preencher', 'nao' => 'Fechadas sem recolher'];
+const REC_SIT = ['pendente' => 'A preencher', 'ok' => 'Recolhidos', 'nao' => 'Fechadas sem recolher'];
 
 /** Equipamentos da O.S: [['mac' => ..., 'modelo' => ...], ...] */
 function rec_equipamentos(array $r): array

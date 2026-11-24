@@ -1791,7 +1791,14 @@ th.c,td.c{text-align:center}
     $mesR = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) ? (string)$_GET['mes'] : date('Y-m');
     if (!in_array($mesR, $mesesR, true)) { $mesesR[] = $mesR; rsort($mesesR); }
     $buscaR = trim((string)($_GET['q'] ?? ''));
-    $abaR = in_array($_GET['aba'] ?? '', ['pendente', 'nao'], true) ? (string)$_GET['aba'] : 'ok';
+    // a tela abre em "A preencher": as O.S vêm sozinhas do IXC (pedido do ALEX, 2026-11-24); Recolhidos é aba=ok
+    $abaR = in_array($_GET['aba'] ?? '', ['pendente', 'ok', 'nao'], true) ? (string)$_GET['aba'] : (isset($_GET['novo']) || isset($_GET['editar']) ? 'ok' : 'pendente');
+    // abriu a tela: se faz mais de 30 minutos que não puxa, puxa o mês atual do IXC agora (além do automático de 6 em 6 horas)
+    $marcaR = dirname(config()['banco']) . '/rec-puxar.ultima';
+    if (destino() === 'ixc' && $_SERVER['REQUEST_METHOD'] === 'GET' && (!is_file($marcaR) || time() - (int)filemtime($marcaR) >= 1800)) {
+        @touch($marcaR);
+        try { rec_imp_puxar(date('Y-m')); } catch (Throwable) {}
+    }
     $linR = rec_do_mes($abaR === 'ok' ? $mesR : '', $buscaR, $abaR);
     $contR = rec_contagem();
     $tecsR = rec_tecnicos();
@@ -1812,20 +1819,21 @@ th.c,td.c{text-align:center}
     $eqR = array_sum(array_map(fn($r) => (int)$r['qtd'], $linR));
     $eqF = array_sum(array_map(fn($r) => $r['funcionando'] === 'SIM' ? (int)$r['qtd'] : 0, $linR));
     $vR = fn(string $k) => h((string)($edit[$k] ?? ''));
-    $linkMes = '?p=recolhimentos&amp;mes=' . h($mesR) . ($abaR !== 'ok' ? '&amp;aba=' . $abaR : '');
+    $linkMes = '?p=recolhimentos&amp;mes=' . h($mesR) . '&amp;aba=' . $abaR;
     $preencher = !empty($edit['id']) && ($edit['situacao'] ?? 'ok') !== 'ok';
     if ($preencher && $recForm === null && count(rec_tecnicos(true)) > 1) $edit['tecnico_id'] = 0; // mais de um recolhedor: o financeiro escolhe
 ?>
   <div class="topo"><div><h1>Recolhimentos</h1><p class="small">As O.S de recolhimento fechadas no IXC chegam sozinhas em "A preencher" (o sistema confere a cada 6 horas). O financeiro só coloca os equipamentos recolhidos. O sistema não abre nem fecha O.S e não grava nada no IXC: serve só para a comissão.</p></div>
-    <a class="bt" href="<?= $linkMes ?>&amp;novo=1#form-rec" style="background:var(--g-cta);border:0;color:#1c1203;height:46px;display:inline-flex;align-items:center;padding:0 18px;border-radius:14px;font-weight:800">+ Lançar O.S de recolhimento</a></div>
+</div>
   <nav class="abas" aria-label="Situação">
-    <?php foreach (REC_SIT as $sk => $sn): $nS = $sk === 'ok' ? null : $contR[$sk]; ?><a href="?p=recolhimentos&amp;mes=<?= h($mesR) ?><?= $sk !== 'ok' ? '&amp;aba=' . $sk : '' ?>" class="<?= $abaR === $sk ? 'on' : '' ?>"><?= h($sn) ?><?= $nS ? ' <span class="pill ' . ($sk === 'pendente' ? 'q' : 'mu') . '">' . $nS . '</span>' : '' ?></a><?php endforeach ?>
+    <?php foreach (REC_SIT as $sk => $sn): $nS = $sk === 'ok' ? null : $contR[$sk]; ?> <a href="?p=recolhimentos&amp;mes=<?= h($mesR) ?>&amp;aba=<?= $sk ?>" class="<?= $abaR === $sk ? 'on' : '' ?>"><?= h($sn) ?><?= $nS ? ' <span class="pill ' . ($sk === 'pendente' ? 'q' : 'mu') . '">' . $nS . '</span>' : '' ?></a><?php endforeach ?>
   </nav>
   <?php if ($abaR === 'pendente'): $impR = rec_imp_assuntos(); $nomesAR = inst_an_config()['assuntos']; ?>
   <div class="card"><h2>Puxar do IXC</h2>
     <p class="small" style="margin:0 0 8px">Traz as O.S de recolhimento <b>finalizadas</b> no mês (só leitura, nada é gravado no IXC). As que já estão aqui não repetem. O sistema também puxa sozinho o mês atual a cada 6 horas.</p>
     <div class="row"><span class="small">Assuntos:</span><?php foreach ($impR as $aid): ?><span class="pill mu"><?= h(($nomesAR[(string)$aid] ?? '') ?: 'assunto ' . $aid) ?></span><?php endforeach ?><?= $impR ? '' : '<span class="small er">nenhum achado: ' . ($admin ? 'escolha abaixo' : 'peça ao admin para escolher') . '</span>' ?>
-      <?php if (destino() === 'ixc'): ?><form method="post" action="<?= $linkMes ?>" class="in"><?= csrf_campo() ?><select name="mes" aria-label="Mês do fechamento"><?php foreach (array_unique([date('Y-m'), date('Y-m', strtotime('first day of last month'))]) as $om): ?><option value="<?= h($om) ?>"><?= h(mes_nome($om)) ?></option><?php endforeach ?></select><button class="pri" name="acao" value="rec_imp_puxar">Puxar agora</button></form><?php endif ?></div>
+      <?php if (destino() === 'ixc'): ?><form method="post" action="<?= $linkMes ?>" class="in"><?= csrf_campo() ?><select name="mes" aria-label="Mês do fechamento"><?php foreach (array_unique([date('Y-m'), date('Y-m', strtotime('first day of last month'))]) as $om): ?><option value="<?= h($om) ?>"><?= h(mes_nome($om)) ?></option><?php endforeach ?></select><button class="pri" name="acao" value="rec_imp_puxar">Puxar agora</button></form><?php endif ?>
+      <a class="small" href="?p=recolhimentos&amp;mes=<?= h($mesR) ?>&amp;aba=ok&amp;novo=1#form-rec">Alguma O.S não veio? Lançar à mão</a></div>
     <?php if ($admin): ?><details style="margin-top:10px"><summary>Escolher os assuntos que são recolhimento</summary>
       <form method="post" action="<?= $linkMes ?>" style="margin-top:8px"><?= csrf_campo() ?><input type="hidden" name="acao" value="rec_imp_cfg">
         <?php if ($nomesAR): ?><div style="columns:300px;column-gap:16px"><?php foreach ($nomesAR as $aid => $an): ?>
@@ -1836,7 +1844,7 @@ th.c,td.c{text-align:center}
   </div>
   <?php endif ?>
   <?php if ($abaR === 'ok'): ?>
-  <form method="get" class="row"><input type="hidden" name="p" value="recolhimentos">
+  <form method="get" class="row"><input type="hidden" name="p" value="recolhimentos"><input type="hidden" name="aba" value="ok">
     <select name="mes" aria-label="Mês do fechamento" data-auto><?php foreach ($mesesR as $om): ?><option value="<?= h($om) ?>" <?= $om === $mesR ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select>
     <input name="q" value="<?= h($buscaR) ?>" placeholder="Buscar nome, contrato, O.S, MAC ou modelo" aria-label="Buscar"><button>Buscar</button>
     <?php if ($buscaR !== ''): ?><a href="<?= $linkMes ?>">limpar</a><?php endif ?></form>
