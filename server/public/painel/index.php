@@ -130,7 +130,7 @@ const PERM_ACOES = [
     'rec_regra_salvar' => 'rec.com', 'rec_com_salvar' => 'rec.com', 'rec_pagar' => 'rec.com',
     'inst_salvar' => 'inst.lista', 'inst_excluir' => 'inst.lista', 'inst_buscar' => 'inst.lista', 'inst_mais' => 'inst.lista', 'inst_mais_tec' => 'inst.lista',
     'inst_servicos_salvar' => 'inst.com', 'inst_com_salvar' => 'inst.com', 'inst_pagar' => 'inst.com',
-    'inst_imp_puxar' => 'inst.lista', 'inst_imp_cfg' => 'inst.lista', 'inst_an_decidir' => 'inst.analise', 'inst_an_consultar' => 'inst.analise', 'inst_an_cfg' => 'inst.analise', 'inst_an_assuntos' => '',
+    'inst_imp_puxar' => 'inst.lista', 'inst_imp_cfg' => 'inst.lista', 'inst_ajudante' => 'inst.analise', 'inst_an_decidir' => 'inst.analise', 'inst_an_consultar' => 'inst.analise', 'inst_an_cfg' => 'inst.analise', 'inst_an_assuntos' => '',
     'rh_lanc_salvar' => 'rh.lanc', 'rh_lanc_excluir' => 'rh.lanc', 'rh_func_salvar' => 'rh.func', 'rh_func_ativo' => 'rh.func', 'rh_pagar' => 'rh.fecha', 'rh_sobre_salvar' => 'rh.lanc',
     'recibos_cpf' => 'recibos', 'recibos_ixc' => 'recibos.ixc', 'audit_ok' => 'recibos.audit',
     'colab_buscar' => 'cfg.colab', 'colab_salvar' => 'cfg.colab', 'colab_mostrar' => 'cfg.colab',
@@ -544,6 +544,11 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $n = inst_imp_config_salvar((array)($_POST['imp'] ?? []));
             registrar($quem, 'escolheu assuntos de instalação para puxar do IXC', (string)$n);
             $msg = "$n assunto(s) de O.S marcados como instalação.";
+        } elseif ($a === 'inst_ajudante') {
+            $ii = inst_ajudante_salvar($id, (string)($_POST['ajudante'] ?? ''), $quem, (int)($_POST['tecnico'] ?? 0));
+            $nomesT = implode(' e ', array_column($ii['tecs'], 'nome'));
+            registrar($quem, 'informou ajudante da instalação', "#$id {$ii['cliente']}: " . ($ii['ajudante'] === 'N' ? 'sem ajudante' : 'equipe ' . $nomesT));
+            $msg = "{$ii['cliente']}: " . ($ii['ajudante'] === 'N' ? "sem ajudante ($nomesT sozinho)." : "equipe $nomesT (fica em dupla na comissão).");
         } elseif ($a === 'inst_an_decidir') {
             $dec = (string)($_POST['decisao'] ?? '');
             inst_an_decidir($id, $dec, (string)($_POST['motivo'] ?? ''), $quem);
@@ -2013,7 +2018,11 @@ th.c,td.c{text-align:center}
     $todasA = inst_do_mes($mesI);
     $contA = array_fill_keys(array_keys(INST_AN_SIT), 0);
     foreach ($todasA as $r) $contA[$r['an']['sit']]++;
-    $linA = $filA !== '' ? array_values(array_filter($todasA, fn($r) => $r['an']['sit'] === $filA || ($filA === 'com_os' && in_array($r['an']['sit'], ['analisar', 'pagar', 'nao_pagar'], true)))) : $todasA;
+    $semAjA = fn($r) => $r['pago_em'] === '' && ($r['ajudante'] === '' || ($r['ajudante'] === 'S' && !in_array((int)$r['ajudante_id'], array_column($r['tecs'], 'id'), true)) || !$r['tecs']);
+    $linA = $filA === 'ajudante' ? array_values(array_filter($todasA, $semAjA))
+        : ($filA !== '' ? array_values(array_filter($todasA, fn($r) => $r['an']['sit'] === $filA || ($filA === 'com_os' && in_array($r['an']['sit'], ['analisar', 'pagar', 'nao_pagar'], true)))) : $todasA);
+    $nSemAjA = count(array_filter($todasA, $semAjA));
+    $tecsAtivosA = inst_tecnicos(true);
     $finalA = $contA['aprovada'] + $contA['analisar'] + $contA['pagar'] + $contA['nao_pagar'];
     $porTecA = inst_an_por_tecnico($todasA);
     $linkMes = '?p=inst_analise&amp;mes=' . h($mesI);
@@ -2029,13 +2038,22 @@ th.c,td.c{text-align:center}
     <div class="kpi"><span>Teve O.S, falta decidir</span><b class="er"><?= $contA['analisar'] ?></b><small>comissão segurada</small></div>
     <div class="kpi forte"><span>Instalações sem retorno</span><b><?= $pct($contA['aprovada'], $finalA) ?></b><small><?= $finalA ?> com resultado em <?= h(mes_nome($mesI)) ?></small></div>
   </div>
-  <div class="row navv"><?php foreach (['' => 'Todas', 'observacao' => 'Em observação', 'com_os' => 'Teve O.S', 'analisar' => 'Falta decidir', 'aprovada' => 'Aprovadas', 'nao_pagar' => 'Não pagar'] as $fk => $ft): ?>
+  <div class="row navv"><?php foreach (['' => 'Todas', 'observacao' => 'Em observação', 'com_os' => 'Teve O.S', 'analisar' => 'Falta decidir', 'aprovada' => 'Aprovadas', 'nao_pagar' => 'Não pagar', 'ajudante' => "Falta informar ajudante ($nSemAjA)"] as $fk => $ft): ?>
     <a class="bt<?= $filA === $fk ? ' pri' : '' ?>" href="<?= $linkMes ?><?= $fk !== '' ? '&amp;sit=' . $fk : '' ?>"><?= h($ft) ?></a><?php endforeach ?></div>
   <div class="card tw"><table class="rec">
     <thead><tr><th>Cliente</th><th>Técnicos</th><th>Fechou</th><th>Observa até</th><th>Situação</th><th>O.S depois da instalação</th><th>Decisão</th></tr></thead>
     <?php foreach ($linA as $r): $an = $r['an']; $i = (int)$r['id']; ?>
     <tr><td><b><?= h($r['cliente']) ?></b><br><span class="small">contrato <?= h($r['contrato']) ?><?= $r['os'] !== '' ? ' · O.S ' . h($r['os']) : '' ?><?= $r['servico'] !== '' ? ' · ' . h($r['servico']) : '' ?></span></td>
-      <td><?= implode('<br>', array_map(fn($t) => h($t['nome']), $r['tecs'])) ?: '<span class="small">—</span>' ?></td>
+      <td><?php $ajId = $r['ajudante'] === 'S' && in_array((int)$r['ajudante_id'], array_column($r['tecs'], 'id'), true) ? (int)$r['ajudante_id'] : 0; ?>
+        <?php foreach ($r['tecs'] as $t): ?><?= h($t['nome']) ?><?= (int)$t['id'] === $ajId ? ' <span class="small">(ajudante)</span>' : '' ?><br><?php endforeach ?>
+        <?php if (!$r['tecs']): ?><span class="small er"><?= h($r['ixc_tecnico'] !== '' ? "No IXC: {$r['ixc_tecnico']} (não é técnico)" : 'Sem técnico') ?></span><br><?php endif ?>
+        <?php if ($r['pago_em'] === ''): $ajSel = $r['ajudante'] === 'N' ? 'N' : (string)$ajId; ?>
+        <form method="post" action="<?= $linkMes ?><?= $filA !== '' ? '&amp;sit=' . h($filA) : '' ?>" style="display:grid;gap:4px;margin-top:4px;min-width:170px"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= $i ?>"><input type="hidden" name="acao" value="inst_ajudante">
+          <?php if (!$r['tecs']): ?><select name="tecnico" aria-label="Técnico que fez" required><option value="">técnico que fez…</option><?php foreach ($tecsAtivosA as $t): ?><option value="<?= (int)$t['id'] ?>"><?= h($t['nome']) ?></option><?php endforeach ?></select><?php endif ?>
+          <select name="ajudante" aria-label="Ajudante"><option value="" <?= $ajSel === '' || $ajSel === '0' ? 'selected' : '' ?>>ajudante: não informado</option><option value="N" <?= $ajSel === 'N' ? 'selected' : '' ?>>sem ajudante</option>
+            <?php foreach ($tecsAtivosA as $t): if ($ajId !== (int)$t['id'] && in_array((int)$t['id'], array_column($r['tecs'], 'id'), true)) continue; ?><option value="<?= (int)$t['id'] ?>" <?= $ajSel === (string)$t['id'] ? 'selected' : '' ?>>ajudante: <?= h($t['nome']) ?></option><?php endforeach ?></select>
+          <button>Salvar</button></form>
+        <?php endif ?></td>
       <td class="n"><?= h(rec_dt($r['fechamento'])) ?></td><td class="n"><?= h(rec_dt($an['fim'])) ?></td>
       <td><span class="pill <?= $an['classe'] ?>"><?= h($an['rotulo']) ?></span>
         <?php if ($r['an_verif'] !== ''): ?><br><span class="small">IXC consultado <?= h(rec_dt($r['an_verif']) . substr($r['an_verif'], 10, 6)) ?></span><?php endif ?>

@@ -36,7 +36,8 @@ function inst_an_tabela(): void
     $cols = array_column(db()->query('PRAGMA table_info(instalacoes)')->fetchAll(), 'name');
     foreach (['ixc_cliente' => "TEXT NOT NULL DEFAULT ''", 'an_os' => "TEXT NOT NULL DEFAULT '[]'", 'an_verif' => "TEXT NOT NULL DEFAULT ''",
         'an_final' => 'INTEGER NOT NULL DEFAULT 0', 'an_erro' => "TEXT NOT NULL DEFAULT ''", 'an_decisao' => "TEXT NOT NULL DEFAULT ''",
-        'an_motivo' => "TEXT NOT NULL DEFAULT ''", 'an_por' => "TEXT NOT NULL DEFAULT ''", 'an_em' => "TEXT NOT NULL DEFAULT ''"] as $c => $t)
+        'an_motivo' => "TEXT NOT NULL DEFAULT ''", 'an_por' => "TEXT NOT NULL DEFAULT ''", 'an_em' => "TEXT NOT NULL DEFAULT ''",
+        'ajudante' => "TEXT NOT NULL DEFAULT ''", 'ajudante_id' => 'INTEGER NOT NULL DEFAULT 0', 'ixc_tecnico' => "TEXT NOT NULL DEFAULT ''"] as $c => $t)
         if (!in_array($c, $cols, true)) db()->exec("ALTER TABLE instalacoes ADD COLUMN $c $t");
 }
 
@@ -314,7 +315,7 @@ function inst_imp_puxar(string $mes): array
     $parada = (new DateTimeImmutable($ini))->modify('-120 day')->format('Y-m-d'); // O.S abertas bem antes do mês não fecham nele
     $nomesA = inst_an_config()['assuntos'];
     $ja = db()->prepare("SELECT 1 FROM instalacoes WHERE os = ?");
-    $ins = db()->prepare("INSERT INTO instalacoes (cliente, contrato, os, assunto, abertura, fechamento, servico_id, lancado_por, ixc_cliente, obs) VALUES (?,?,?,?,?,?,?,?,?,?)");
+    $ins = db()->prepare("INSERT INTO instalacoes (cliente, contrato, os, assunto, abertura, fechamento, servico_id, lancado_por, ixc_cliente, ixc_tecnico, obs) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
     $insT = db()->prepare('INSERT OR IGNORE INTO inst_tec (inst_id, tecnico_id, valor) VALUES (?, ?, \'\')');
     $clientes = $tecnicos = [];
     $out = ['novas' => 0, 'ja' => 0, 'sem_tec' => 0];
@@ -341,15 +342,18 @@ function inst_imp_puxar(string $mes): array
                 if ($cid !== '' && !isset($clientes[$cid])) {
                     try { $clientes[$cid] = up((string)(ixc()->um('cliente', 'id', $cid)['razao'] ?? '')); } catch (Throwable) { $clientes[$cid] = ''; }
                 }
+                // técnico da O.S no IXC: só entra se for um técnico de instalação ativo no portal (lista de técnicos /
+                // Colaboradores do IXC). Funcionário do escritório que fechou a O.S não vira técnico.
                 $tid = so_digitos((string)($o['id_tecnico'] ?? ''));
                 if ($tid !== '' && $tid !== '0' && !isset($tecnicos[$tid])) {
-                    try { $f = ixc()->um('funcionarios', 'id', $tid); $tecnicos[$tid] = inst_tecnico_por_nome(up((string)($f['funcionario'] ?? ($f['nome'] ?? ''))), true); } catch (Throwable) { $tecnicos[$tid] = 0; }
+                    try { $f = ixc()->um('funcionarios', 'id', $tid); $nf = up((string)($f['funcionario'] ?? ($f['nome'] ?? ''))); } catch (Throwable) { $nf = ''; }
+                    $tecnicos[$tid] = [$nf, inst_imp_tecnico_ativo($nf)];
                 }
-                $tec = (int)($tecnicos[$tid] ?? 0);
+                [$nomeTec, $tec] = $tecnicos[$tid] ?? ['', 0];
                 $ct = so_digitos((string)($o['id_contrato_kit'] ?? ''));
                 db()->beginTransaction();
-                $ins->execute([($clientes[$cid] ?? '') ?: 'CLIENTE ' . $cid, $ct === '0' ? '' : $ct, $os, $nomesA[$aid], $ab, $fe, $sid, 'IXC (puxado)', $cid,
-                    $tec ? '' : 'Sem técnico no IXC: corrija e escolha quem fez.']);
+                $ins->execute([($clientes[$cid] ?? '') ?: 'CLIENTE ' . $cid, $ct === '0' ? '' : $ct, $os, $nomesA[$aid], $ab, $fe, $sid, 'IXC (puxado)', $cid, $nomeTec,
+                    $tec ? '' : inst_imp_aviso_tec($nomeTec)]);
                 if ($tec) $insT->execute([(int)db()->lastInsertId(), $tec]);
                 db()->commit();
                 $out['novas']++;
@@ -358,5 +362,86 @@ function inst_imp_puxar(string $mes): array
             if ($velhas === count($lista) || count($lista) < 500) break;
         }
     }
+    $out['limpas'] = inst_imp_limpar();
     return $out;
+}
+
+/** Id do técnico de instalação ATIVO com esse nome (sem acento), ou 0. Não cria. */
+function inst_imp_tecnico_ativo(string $nome): int
+{
+    if ($nome === '') return 0;
+    $alvo = up(sem_acento($nome));
+    foreach (inst_tecnicos(true) as $t) if (up(sem_acento($t['nome'])) === $alvo) return (int)$t['id'];
+    return 0;
+}
+
+function inst_imp_aviso_tec(string $nomeIxc): string
+{
+    return $nomeIxc === '' ? 'Sem técnico no IXC: escolha quem fez.'
+        : "No IXC a O.S está com $nomeIxc, que não é técnico de instalação no portal: escolha quem fez.";
+}
+
+/**
+ * Instalações puxadas do IXC, não pagas, com técnico que foi escondido da lista (ex.: funcionário do escritório que
+ * fechou a O.S e entrou como técnico antes desta regra): tira esse técnico e deixa o aviso para escolher quem fez.
+ */
+function inst_imp_limpar(): int
+{
+    $q = db()->query("SELECT i.id, i.ixc_tecnico, it.tecnico_id, t.nome FROM instalacoes i JOIN inst_tec it ON it.inst_id = i.id
+        JOIN inst_tecnicos t ON t.id = it.tecnico_id WHERE i.lancado_por = 'IXC (puxado)' AND i.pago_em = '' AND t.ativo = 0");
+    $del = db()->prepare('DELETE FROM inst_tec WHERE inst_id = ? AND tecnico_id = ?');
+    $obs = db()->prepare("UPDATE instalacoes SET conferido = 0, ixc_tecnico = CASE WHEN ixc_tecnico = '' THEN ? ELSE ixc_tecnico END,
+        obs = CASE WHEN (SELECT COUNT(*) FROM inst_tec WHERE inst_id = instalacoes.id) = 0 THEN ? ELSE obs END WHERE id = ?");
+    $n = 0;
+    foreach ($q->fetchAll() as $r) {
+        $del->execute([$r['id'], $r['tecnico_id']]);
+        $obs->execute([$r['nome'], inst_imp_aviso_tec($r['ixc_tecnico'] ?: $r['nome']), $r['id']]);
+        $n++;
+    }
+    return $n;
+}
+
+/**
+ * Ajudante da instalação (pedido do ALEX, 2026-11-24): 'N' = sem ajudante, ou o id de um técnico da lista.
+ * O ajudante entra como mais um técnico da O.S (fica em dupla na comissão); trocar o ajudante tira o anterior.
+ * Mudou a equipe: a O.S volta sem ✔ na comissão.
+ */
+function inst_ajudante_salvar(int $id, string $valor, string $quem, int $tecnico = 0): array
+{
+    $r = inst_um($id);
+    if (!$r) throw new RuntimeException('Essa instalação não existe mais.');
+    if ($r['pago_em'] !== '') throw new RuntimeException('A comissão dessa instalação já foi paga.');
+    if (!$r['tecs']) {
+        // O.S puxada sem técnico: escolhe aqui mesmo quem fez
+        if (!$tecnico) throw new RuntimeException('Escolha primeiro o técnico que fez a instalação.');
+        $q = db()->prepare('SELECT 1 FROM inst_tecnicos WHERE id = ?');
+        $q->execute([$tecnico]);
+        if (!$q->fetchColumn()) throw new RuntimeException('Técnico não encontrado. Escolha de novo.');
+        if ($tecnico === (int)$valor) throw new RuntimeException('O ajudante não pode ser o próprio técnico.');
+        db()->prepare("INSERT INTO inst_tec (inst_id, tecnico_id, valor) VALUES (?, ?, '')")->execute([$id, $tecnico]);
+        db()->prepare("UPDATE instalacoes SET obs = CASE WHEN lancado_por = 'IXC (puxado)' THEN '' ELSE obs END, conferido = 0 WHERE id = ?")->execute([$id]);
+        $r = inst_um($id);
+    }
+    $novo = $valor === 'N' ? 0 : (int)$valor;
+    if ($valor !== 'N' && !$novo) throw new RuntimeException('Escolha o ajudante ou "Sem ajudante".');
+    $tecIds = array_column($r['tecs'], 'id');
+    if ($novo) {
+        $q = db()->prepare('SELECT nome FROM inst_tecnicos WHERE id = ?');
+        $q->execute([$novo]);
+        if ($q->fetchColumn() === false) throw new RuntimeException('Ajudante não encontrado. Escolha de novo.');
+        if (in_array($novo, $tecIds, true) && $novo !== (int)$r['ajudante_id']) throw new RuntimeException('Essa pessoa já é o técnico da O.S.');
+    }
+    $db = db();
+    $db->beginTransaction();
+    $velho = (int)$r['ajudante_id'];
+    if ($velho && $velho !== $novo && count($tecIds) > 1) $db->prepare('DELETE FROM inst_tec WHERE inst_id = ? AND tecnico_id = ?')->execute([$id, $velho]);
+    if ($novo && !in_array($novo, $tecIds, true)) {
+        if (count($tecIds) >= INST_MAX_TEC) { $db->rollBack(); throw new RuntimeException('No máximo ' . INST_MAX_TEC . ' técnicos por O.S.'); }
+        $db->prepare("INSERT INTO inst_tec (inst_id, tecnico_id, valor) VALUES (?, ?, '')")->execute([$id, $novo]);
+    }
+    $mudou = $velho !== $novo;
+    $db->prepare("UPDATE instalacoes SET ajudante = ?, ajudante_id = ?, alterado_por = ?, conferido = CASE WHEN ? THEN 0 ELSE conferido END WHERE id = ?")
+        ->execute([$novo ? 'S' : 'N', $novo, $quem, $mudou ? 1 : 0, $id]);
+    $db->commit();
+    return inst_um($id);
 }
