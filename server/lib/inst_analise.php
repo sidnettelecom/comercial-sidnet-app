@@ -71,7 +71,9 @@ function inst_an_config_salvar(array $in): void
     $conta = array_map('strval', array_keys(array_filter((array)($in['conta'] ?? []))));
     $c['dias'] = $d;
     $c['desde'] = $desde;
-    $c['ignorar'] = array_values(array_diff(array_map('strval', array_keys($c['assuntos'])), $conta));
+    // só os assuntos marcados contam (pedido do ALEX, 2026-11-24); assunto novo no IXC não conta até ser marcado
+    $c['contam'] = !empty($in['limpar']) ? [] : array_values(array_intersect($conta, array_map('strval', array_keys($c['assuntos']))));
+    $c['ignorar'] = array_values(array_diff(array_map('strval', array_keys($c['assuntos'])), $c['contam']));
     inst_an_config_gravar($c);
 }
 
@@ -106,7 +108,15 @@ function inst_an_os_contam(array $r, ?array $cfg = null): array
 {
     $cfg ??= inst_an_config();
     $todas = json_decode((string)($r['an_os'] ?? '[]'), true) ?: [];
-    return array_values(array_filter($todas, fn($o) => !in_array((string)($o['assunto_id'] ?? ''), $cfg['ignorar'], true)));
+    return array_values(array_filter($todas, fn($o) => inst_an_assunto_conta((string)($o['assunto_id'] ?? ''), $cfg)));
+}
+
+/** O assunto de O.S segura a comissão? Com a lista 'contam' gravada, só os marcados; antes dela, todos menos os ignorados. */
+function inst_an_assunto_conta(string $aid, ?array $cfg = null): bool
+{
+    $cfg ??= inst_an_config();
+    if (isset($cfg['contam'])) return in_array($aid, array_map('strval', (array)$cfg['contam']), true);
+    return !in_array($aid, $cfg['ignorar'], true);
 }
 
 /**

@@ -571,8 +571,8 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 inst_an_config_salvar($_POST);
                 $c = inst_an_config();
-                registrar($quem, 'salvou regra da análise da instalação', "{$c['dias']} dias, desde {$c['desde']}, " . count($c['ignorar']) . ' assunto(s) não contam');
-                $msg = 'Regra da análise salva.';
+                registrar($quem, 'salvou regra da análise da instalação', "{$c['dias']} dias, desde {$c['desde']}, " . count($c['contam']) . ' assunto(s) contam');
+                $msg = 'Regra da análise salva. ' . ($c['contam'] ? count($c['contam']) . ' tipo(s) de O.S seguram a comissão; os outros não contam.' : 'Nenhum tipo de O.S marcado: nada segura a comissão. Marque os tipos que contam.');
             }
         } elseif ($a === 'rh_lanc_salvar') {
             $rhForm = (array)($_POST['l'] ?? []);
@@ -2088,11 +2088,13 @@ th.c,td.c{text-align:center}
     <h2>Regra da análise (só admin)</h2>
     <div class="row"><label>Dias de observação <input name="dias" type="number" min="1" max="180" value="<?= (int)$cfgA['dias'] ?>" style="width:80px"></label>
       <label>Vale para instalações fechadas a partir de <input name="desde" type="date" value="<?= h($cfgA['desde']) ?>"></label></div>
-    <p class="small" style="margin:10px 0 6px"><b>Assuntos de O.S que contam</b> (marcado = segura a comissão). Desmarque os que não têm a ver com a instalação, como financeiro, mudança de plano ou mudança de endereço.</p>
-    <?php if ($cfgA['assuntos']): ?><div style="columns:260px;column-gap:16px"><?php foreach ($cfgA['assuntos'] as $aid => $an): ?>
-      <label style="display:block;break-inside:avoid;padding:2px 0"><input type="checkbox" name="conta[<?= h((string)$aid) ?>]" value="1" <?= in_array((string)$aid, $cfgA['ignorar'], true) ? '' : 'checked' ?>> <?= h($an ?: '#' . $aid) ?></label>
+    <p class="small" style="margin:10px 0 6px"><b>Assuntos de O.S que contam</b> (marcado = segura a comissão). Marque só os tipos que mostram problema da instalação (ex.: sem conexão, lentidão, sinal alto). Os outros, como pós-venda, auditoria pós-instalação e financeiro, ficam de fora. Tipo novo no IXC não conta até ser marcado.</p>
+    <?php if ($cfgA['assuntos']): $assOrd = $cfgA['assuntos']; uksort($assOrd, fn($x, $y) => [!inst_an_assunto_conta((string)$x, $cfgA), $assOrd[$x]] <=> [!inst_an_assunto_conta((string)$y, $cfgA), $assOrd[$y]]); ?>
+    <p class="small" style="margin:0 0 6px">Hoje contam: <b><?= h(implode(', ', array_filter(array_map(fn($k) => inst_an_assunto_conta((string)$k, $cfgA) ? ($cfgA['assuntos'][$k] ?: '#' . $k) : '', array_keys($cfgA['assuntos'])))) ?: 'nenhum') ?></b></p>
+    <div style="columns:260px;column-gap:16px"><?php foreach ($assOrd as $aid => $an): ?>
+      <label style="display:block;break-inside:avoid;padding:2px 0"><input type="checkbox" name="conta[<?= h((string)$aid) ?>]" value="1" <?= inst_an_assunto_conta((string)$aid, $cfgA) ? 'checked' : '' ?>> <?= h($an ?: '#' . $aid) ?> <span class="small">(<?= h((string)$aid) ?>)</span></label>
     <?php endforeach ?></div><?php else: ?><p class="small">Nenhum assunto carregado ainda: por enquanto todas as O.S contam. Clique em "Carregar assuntos do IXC".</p><?php endif ?>
-    <div class="row" style="margin-top:10px"><button class="pri">Salvar regra</button>
+    <div class="row" style="margin-top:10px"><button class="pri">Salvar regra</button><?php if ($cfgA['assuntos']): ?><button name="limpar" value="1">Desmarcar todos</button><?php endif ?>
       <?php if (destino() === 'ixc'): ?><button name="acao" value="inst_an_assuntos" formnovalidate>Carregar assuntos do IXC</button><?php endif ?></div>
   </form>
   <?php endif ?>
