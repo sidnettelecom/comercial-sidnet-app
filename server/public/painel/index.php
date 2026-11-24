@@ -567,8 +567,8 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $mesI = (string)($_POST['mes'] ?? '');
             $r = inst_imp_puxar($mesI);
             registrar($quem, 'puxou instalações concluídas do IXC', mes_nome($mesI) . " ({$r['novas']} novas)");
-            $msg = $r['novas'] ? "{$r['novas']} instalação(ões) de " . mes_nome($mesI) . ' puxadas do IXC (só leitura) e colocadas na análise de 30 dias.' . ($r['sem_tec'] ? " {$r['sem_tec']} sem técnico no IXC: use Corrigir para escolher quem fez." : '') . ($r['ja'] ? " {$r['ja']} já estavam aqui." : '')
-                : 'Nenhuma O.S nova finalizada em ' . mes_nome($mesI) . ' com esses assuntos' . ($r['ja'] ? " ({$r['ja']} já estavam aqui)." : '.');
+            $msg = $r['novas'] ? "{$r['novas']} instalação(ões) de " . mes_nome($mesI) . ' puxadas do IXC (só leitura) e colocadas na análise de 30 dias.' . ($r['sem_tec'] ? " {$r['sem_tec']} sem técnico no IXC: use Corrigir para escolher quem fez." : '') . ($r['ja'] ? " {$r['ja']} já estavam aqui." : '') . ($r['ajudantes'] ? " Ajudante lido da O.S em {$r['ajudantes']}." : '')
+                : ($r['ajudantes'] ? "Ajudante lido da O.S (linha AJUDANTE:) em {$r['ajudantes']} instalação(ões). " : '') . 'Nenhuma O.S nova finalizada em ' . mes_nome($mesI) . ' com esses assuntos' . ($r['ja'] ? " ({$r['ja']} já estavam aqui)." : '.');
             if ($r['novas']) inst_an_atualizar(300, $mesI);
         } elseif ($a === 'inst_imp_cfg') {
             if (!$admin) throw new RuntimeException('Só o gestor admin escolhe os assuntos.');
