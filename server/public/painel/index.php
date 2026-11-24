@@ -127,7 +127,7 @@ const PERM_ACOES = [
     'plano_salvar' => 'cfg.planos', 'plano_novo' => 'cfg.planos', 'plano_ativo' => 'cfg.planos', 'plano_excluir' => 'cfg.planos', 'plano_mover' => 'cfg.planos', 'planos_ixc' => 'cfg.planos',
     'comissoes_salvar' => 'com.lista', 'comissoes_ixc' => 'com.lista', 'planilha_importar' => 'com.planilha', 'planilha_salvar' => 'com.planilha',
     'rec_salvar' => 'rec.lista', 'rec_excluir' => 'rec.lista', 'rec_buscar' => 'rec.lista', 'rec_mais' => 'rec.lista',
-    'rec_imp_puxar' => 'rec.lista', 'rec_marcar' => 'rec.lista', 'rec_imp_cfg' => 'rec.lista', 'rec_imp_assuntos' => 'rec.lista',
+    'rec_teste_salvar' => 'rec.teste', 'rec_imp_puxar' => 'rec.lista', 'rec_marcar' => 'rec.lista', 'rec_imp_cfg' => 'rec.lista', 'rec_imp_assuntos' => 'rec.lista',
     'rec_regra_salvar' => 'rec.com', 'rec_com_salvar' => 'rec.com', 'rec_pagar' => 'rec.com',
     'inst_salvar' => 'inst.lista', 'inst_excluir' => 'inst.lista', 'inst_buscar' => 'inst.lista', 'inst_mais' => 'inst.lista', 'inst_mais_tec' => 'inst.lista',
     'inst_servicos_salvar' => 'inst.com', 'inst_com_salvar' => 'inst.com', 'inst_pagar' => 'inst.com',
@@ -412,6 +412,13 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = ($antes && $antes['situacao'] !== 'ok' ? "Equipamentos de {$rr['cliente']} salvos ({$rr['qtd']} equip.): a O.S foi para Recolhidos." : ($id ? 'O.S corrigida.' : "O.S de {$rr['cliente']} lançada ({$rr['qtd']} equipamento" . ($rr['qtd'] == 1 ? '' : 's') . ').')) . ($aviso ? ' ' . $aviso : '');
             $recForm = null;
             $_GET['mes'] = substr($rr['fechamento'], 0, 7);
+        } elseif ($a === 'rec_teste_salvar') {
+            $rr = rec_teste_salvar($id, (array)($_POST['t'] ?? []), $quem);
+            $tsR = rec_testes($rr);
+            $nOk = count(array_filter($tsR, fn($x) => $x['r'] === 'ok'));
+            $faltaEst = count(array_filter($tsR, fn($x) => $x['r'] === 'ok' && !$x['est']));
+            registrar($quem, 'testou equipamentos do recolhimento', "#$id {$rr['cliente']} O.S {$rr['os']} ($nOk de " . count($tsR) . ' OK)');
+            $msg = "Teste da O.S de {$rr['cliente']} salvo: $nOk de " . count($tsR) . ' OK.' . ($faltaEst ? " Falta dar entrada de $faltaEst no estoque do IXC (à mão) e marcar aqui." : '');
         } elseif ($a === 'rec_imp_puxar') {
             $mesR = (string)($_POST['mes'] ?? '');
             $r = rec_imp_puxar($mesR);
@@ -452,8 +459,8 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             registrar($quem, 'escondeu/mostrou recolhedor', '#' . $id);
             $msg = 'Recolhedor alterado. As O.S antigas dele não mudam.';
         } elseif ($a === 'rec_regra_salvar') {
-            db()->prepare('UPDATE rec_regra SET valor_fin = ?, valor_tec = ?, base = ?, so_funcionando = ? WHERE id = 1')
-                ->execute([dinheiro((string)($_POST['valor_fin'] ?? '')), dinheiro((string)($_POST['valor_tec'] ?? '')), ($_POST['base'] ?? '') === 'os' ? 'os' : 'eq', empty($_POST['so_funcionando']) ? 0 : 1]);
+            db()->prepare('UPDATE rec_regra SET valor_fin = ?, valor_tec = ?, valor_teste = ?, base = ?, so_funcionando = ? WHERE id = 1')
+                ->execute([dinheiro((string)($_POST['valor_fin'] ?? '')), dinheiro((string)($_POST['valor_tec'] ?? '')), dinheiro((string)($_POST['valor_teste'] ?? '')), ($_POST['base'] ?? '') === 'os' ? 'os' : 'eq', empty($_POST['so_funcionando']) ? 0 : 1]);
             $mesR = preg_match('/^\d{4}-\d{2}$/', (string)($_POST['mes'] ?? '')) ? (string)$_POST['mes'] : date('Y-m');
             $n = rec_aplicar_regra($mesR, !empty($_POST['sobrescrever']));
             registrar($quem, 'salvou valor padrão do recolhimento', mes_nome($mesR) . " ($n O.S preenchidas)");
@@ -819,13 +826,13 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
 $p = !empty($gestor['trocar']) ? 'trocar' : ($_GET['p'] ?? '');
 $AREA_PAG = ['vendas' => 'vendas.lista', 'excluir' => 'vendas.lista', 'mes' => 'vendas.mes', 'dash' => 'dash', 'vendedores' => 'cfg.users', 'planos' => 'cfg.planos',
     'comissoes' => 'com.lista', 'planilha' => 'com.planilha', 'gestores' => 'cfg.gest', 'config' => 'admin', 'senha' => '', 'trocar' => '',
-    'recolhimentos' => 'rec.lista', 'rec_comissao' => 'rec.com', 'instalacoes' => 'inst.lista', 'inst_comissao' => 'inst.com', 'inst_analise' => 'inst.analise',
+    'recolhimentos' => 'rec.lista', 'rec_teste' => 'rec.teste', 'rec_comissao' => 'rec.com', 'instalacoes' => 'inst.lista', 'inst_comissao' => 'inst.com', 'inst_analise' => 'inst.analise',
     'rh_lancar' => 'rh.lanc', 'rh_fecha' => 'rh.fecha', 'rh_func' => 'rh.func', 'rh_cfg' => 'admin', 'recibos' => 'recibos', 'auditoria' => 'recibos.audit',
     'serv' => 'serv.saldo', 'serv_extrato' => 'serv.saldo', 'serv_lista' => 'serv.saldo', 'serv_lancar' => 'serv', 'serv_cad' => 'serv.cad', 'colab' => 'cfg.colab', 'rixc' => 'admin'];
 if (!isset($AREA_PAG[$p])) $p = 'vendas';
 if ($logado && $p !== 'trocar' && ($_GET['p'] ?? '') === '' && !$pode('vendas.lista')) {
     // tela inicial: a primeira opção liberada, na ordem do menu
-    foreach (['dash', 'mes', 'comissoes', 'planilha', 'recolhimentos', 'rec_comissao', 'instalacoes', 'inst_analise', 'inst_comissao', 'rh_lancar', 'rh_fecha', 'rh_func', 'serv', 'serv_lancar', 'serv_cad', 'recibos', 'auditoria', 'gestores', 'vendedores', 'planos', 'colab'] as $pg)
+    foreach (['dash', 'mes', 'comissoes', 'planilha', 'recolhimentos', 'rec_teste', 'rec_comissao', 'instalacoes', 'inst_analise', 'inst_comissao', 'rh_lancar', 'rh_fecha', 'rh_func', 'serv', 'serv_lancar', 'serv_cad', 'recibos', 'auditoria', 'gestores', 'vendedores', 'planos', 'colab'] as $pg)
         if ($pode($AREA_PAG[$pg])) { $p = $pg; break; }
 }
 if ($logado && $AREA_PAG[$p] !== '' && !($AREA_PAG[$p] === 'admin' ? $admin : $pode($AREA_PAG[$p]))) $p = 'sem';
@@ -864,6 +871,7 @@ $ICONES = [
     'gestores' => '<path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
     'recolhimento' => '<path d="M3 7l9-4 9 4-9 4z"/><path d="M3 7v10l9 4 9-4V7M12 11v10"/>',
     'recolhimentos' => '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+    'rec_teste' => '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 1.7 3h10.6a2 2 0 0 0 1.7-3l-5-9V3"/><path d="M7.5 15h9"/>',
     'rec_comissao' => '<circle cx="12" cy="12" r="9"/><path d="M15 9.5c-.5-1-1.6-1.5-3-1.5-1.8 0-3 .9-3 2.1 0 2.9 6 1.6 6 4.6 0 1.3-1.3 2.3-3 2.3-1.5 0-2.7-.6-3.2-1.7M12 6.5V8m0 9v1.5"/>',
     'instalacao' => '<path d="M3 10l9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
     'permissoes' => '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
@@ -1151,7 +1159,7 @@ th.c,td.c{text-align:center}
   <div class="marca"><img src="/app/logo-96.png" alt="" width="48" height="48"><div><b>Portal Sidnet</b><span>Comercial, financeiro e campo</span></div><a class="sair" href="?sair=1" title="Sair (<?= h($quem) ?>)">Sair</a></div>
   <nav aria-label="Seções"><?= ($pode('dash') ? $aba('dash', 'Dashboard') : '')
     . $grupo('vendas', 'Vendas', [['vendas', 'Vendas', $pode('vendas.lista'), ['vendas', 'excluir']], ['mes', 'Vendas do mês', $pode('vendas.mes')], ['comissoes', 'Comissões', $pode('com.lista')], ['planilha', 'Comissões planilha', $pode('com.planilha')] /* PLANILHA-TEMP */])
-    . $grupo('recolhimento', 'Recolhimento', [['recolhimentos', 'Recolhimentos', $pode('rec.lista')], ['rec_comissao', 'Comissão', $pode('rec.com')]])
+    . $grupo('recolhimento', 'Recolhimento', [['recolhimentos', 'Recolhimentos', $pode('rec.lista')], ['rec_teste', 'Teste de equipamentos', $pode('rec.teste')], ['rec_comissao', 'Comissão', $pode('rec.com')]])
     . $grupo('instalacao', 'Instalação', [['instalacoes', 'Instalações concluídas', $pode('inst.lista')], ['inst_analise', 'Análise da instalação', $pode('inst.analise')], ['inst_comissao', 'Comissões', $pode('inst.com')]])
     . $grupo('rh', 'RH', [['rh_lancar', 'Lançamentos', $pode('rh.lanc')], ['rh_fecha', 'Fechamento do mês', $pode('rh.fecha')], ['rh_func', 'Funcionários', $pode('rh.func')], ['rh_cfg', 'Feriados e valores', $admin]])
     . $grupo('serv', 'Serviços em execução', [['serv', 'Saldos', $pode('serv.saldo'), ['serv', 'serv_extrato']], ['serv_lancar', 'Lançar', $pode('serv.lanc') || $pode('serv.pag')], ['serv_lista', 'Serviços lançados', $pode('serv.saldo')], ['serv_cad', 'Equipes, obras e preços', $pode('serv.cad')]])
@@ -1893,7 +1901,7 @@ th.c,td.c{text-align:center}
       <td class="n"><?= h(rec_dt($r['abertura']) ?: '—') ?></td><td class="n"><?= h(rec_dt($r['fechamento'])) ?></td>
       <td><?= $r['funcionando'] === 'SIM' ? '<span class="pill ok">Sim</span>' : '<span class="pill er">Não</span>' ?></td>
       <td><?= h($r['tecnico']) ?></td><td class="small"><?= h($r['lancado_nome']) ?></td>
-      <td><div class="acoes"><?php if ($r['pago_em'] !== ''): ?><span class="tp pago">pago</span>
+      <td><div class="acoes"><?= $r['testes'] === '' ? '<span class="pill q">aguardando teste</span>' : ($r['testes'] !== '-' ? '<span class="pill ok">testado</span>' : '') ?><?php if ($r['pago_em'] !== ''): ?><span class="tp pago">pago</span>
         <?php else: ?><a class="bt" href="<?= $linkMes ?>&amp;editar=<?= (int)$r['id'] ?>#form-rec">Corrigir</a>
         <form method="post" action="<?= $linkMes ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$r['id'] ?>"><button class="del" name="acao" value="rec_excluir" title="Excluir esta O.S">Excluir</button></form><?php endif ?></div></td></tr>
     <?php endforeach ?>
@@ -1902,6 +1910,48 @@ th.c,td.c{text-align:center}
   </table></div>
   <?php endif ?>
 
+<?php elseif ($p === 'rec_teste'):
+    $abaT = ($_GET['aba'] ?? '') === 'feitos' ? 'feitos' : 'fila';
+    $mesesT = rec_meses();
+    $mesT = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) ? (string)$_GET['mes'] : date('Y-m');
+    $filaT = rec_para_teste(false);
+    $linT = $abaT === 'fila' ? $filaT : rec_para_teste(true, $mesT);
+    $linkT = '?p=rec_teste' . ($abaT === 'feitos' ? '&amp;aba=feitos&amp;mes=' . h($mesT) : '');
+    $abrirT = (int)($_GET['testar'] ?? 0);
+    // deu erro ao salvar: mostra de novo o que foi digitado
+    $postT = ($_POST['acao'] ?? '') === 'rec_teste_salvar' ? (array)($_POST['t'] ?? []) : null;
+    if ($postT !== null) $abrirT = (int)($_POST['id'] ?? 0);
+    $faltaEstT = 0;
+    foreach (rec_para_teste(true) as $r) foreach (rec_testes($r) as $x) if ($x['r'] === 'ok' && !$x['est']) $faltaEstT++;
+?>
+  <div class="topo"><div><h1>Teste de equipamentos</h1><p class="small">Os equipamentos recolhidos chegam aqui depois que o financeiro preenche a O.S. Teste cada um, marque o resultado e, quando der a entrada no estoque <b>no IXC (à mão)</b>, marque "voltou ao estoque". O portal não grava nada no IXC. Quem testa também recebe comissão.</p></div></div>
+  <nav class="abas" aria-label="Situação do teste">
+    <a href="?p=rec_teste" class="<?= $abaT === 'fila' ? 'on' : '' ?>">Aguardando teste<?= $filaT ? ' <span class="pill q">' . count($filaT) . '</span>' : '' ?></a>
+    <a href="?p=rec_teste&amp;aba=feitos" class="<?= $abaT === 'feitos' ? 'on' : '' ?>">Testados<?= $faltaEstT ? ' <span class="pill mu">' . $faltaEstT . ' fora do estoque</span>' : '' ?></a>
+  </nav>
+  <?php if ($abaT === 'feitos'): ?><form method="get" class="row"><input type="hidden" name="p" value="rec_teste"><input type="hidden" name="aba" value="feitos"><select name="mes" aria-label="Mês do fechamento" data-auto><?php foreach ($mesesT as $om): ?><option value="<?= h($om) ?>" <?= $om === $mesT ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select><noscript><button>Ver</button></noscript></form><?php endif ?>
+  <?php foreach ($linT as $r): $tsT = rec_testes($r);
+    if ($postT !== null && $abrirT === (int)$r['id']) foreach ($tsT as $n => $x) $tsT[$n] = ['r' => (string)($postT[$n]['r'] ?? ''), 'obs' => (string)($postT[$n]['obs'] ?? ''), 'est' => !empty($postT[$n]['est'])] + $x;
+    $aberto = $abrirT === (int)$r['id'] || ($abaT === 'fila' && !$abrirT && $r === $linT[0]); ?>
+  <form method="post" action="<?= $linkT ?>" class="card rec-teste" id="t<?= (int)$r['id'] ?>"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+    <div class="row" style="justify-content:space-between"><div><b><?= h($r['cliente']) ?></b> <span class="small">O.S <?= h($r['os'] ?: '—') ?> · contrato <?= h($r['contrato']) ?> · fechou <?= h(rec_dt($r['fechamento'])) ?> · recolheu <?= h($r['tecnico']) ?> · lançou <?= h($r['lancado_nome']) ?></span>
+      <?php if ($r['testado_por'] !== ''): ?><br><span class="small">testado por <?= h($r['testado_nome']) ?> em <?= h(rec_dt($r['testado_em']) . substr($r['testado_em'], 10, 6)) ?></span><?php endif ?></div>
+      <?php if (!$aberto): ?><a class="bt" href="<?= $linkT ?>&amp;testar=<?= (int)$r['id'] ?>#t<?= (int)$r['id'] ?>"><?= $r['testado_por'] !== '' ? 'Ver / corrigir' : 'Testar' ?></a><?php endif ?></div>
+    <table class="rec" style="margin-top:8px"><thead><tr><th>MAC</th><th>Modelo</th><th>Resultado</th><th>Defeito / observação</th><th>Voltou ao estoque no IXC</th></tr></thead>
+    <?php foreach ($tsT as $n => $x): $dis = !$aberto || $r['pago_em'] !== '' ? 'disabled' : ''; ?>
+      <tr><td><span class="mac"><?= h($x['mac']) ?></span></td><td><?= h($x['modelo'] ?: 'sem modelo') ?></td>
+        <td><?php if ($dis): ?><?= $x['r'] !== '' ? '<span class="pill ' . ($x['r'] === 'ok' ? 'ok' : 'er') . '">' . h(REC_TESTE_RES[$x['r']] ?? $x['r']) . '</span>' : '<span class="small">—</span>' ?>
+          <?php else: ?><select name="t[<?= $n ?>][r]" required aria-label="Resultado <?= h($x['mac']) ?>"><option value="">escolha</option><?php foreach (REC_TESTE_RES as $rk => $rn): ?><option value="<?= $rk ?>" <?= $x['r'] === $rk ? 'selected' : '' ?>><?= h($rn) ?></option><?php endforeach ?></select><?php endif ?></td>
+        <td><?php if ($dis): ?><span class="small"><?= h($x['obs'] ?: '—') ?></span><?php else: ?><input name="t[<?= $n ?>][obs]" value="<?= h($x['obs']) ?>" maxlength="200" placeholder="obrigatório se não for OK" aria-label="Observação <?= h($x['mac']) ?>"><?php endif ?></td>
+        <td class="c"><?php if ($dis): ?><?= $x['r'] === 'ok' ? ($x['est'] ? '<span class="pill ok">Sim</span>' : '<span class="pill q">Ainda não</span>') : '<span class="small">—</span>' ?><?php else: ?><input type="checkbox" name="t[<?= $n ?>][est]" value="1" <?= $x['est'] ? 'checked' : '' ?> aria-label="Voltou ao estoque <?= h($x['mac']) ?>"><?php endif ?></td></tr>
+    <?php endforeach ?></table>
+    <?php if ($aberto && $r['pago_em'] === ''): ?><div class="row" style="margin-top:8px"><button class="pri" name="acao" value="rec_teste_salvar">Salvar teste</button><?php if ($abrirT): ?><a href="<?= $linkT ?>">Fechar</a><?php endif ?>
+      <span class="small">"Voltou ao estoque" só vale para equipamento OK. Dar a entrada no estoque é feito à mão no IXC.</span></div>
+    <?php elseif ($r['pago_em'] !== ''): ?><p class="small">Comissão já paga: o teste não muda mais.</p><?php endif ?>
+  </form>
+  <?php endforeach ?>
+  <?php if (!$linT): ?><div class="card small"><?= $abaT === 'fila' ? 'Nenhum equipamento esperando teste.' : 'Nenhuma O.S testada com fechamento em ' . h(mes_nome($mesT)) . '.' ?></div><?php endif ?>
+
 <?php elseif ($p === 'rec_comissao'):
     $mesesR = rec_meses();
     $mesR = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) ? (string)$_GET['mes'] : date('Y-m');
@@ -1909,8 +1959,10 @@ th.c,td.c{text-align:center}
     $linR = rec_do_mes($mesR);
     $regraR = rec_regra();
     $pesR = rec_por_pessoa($linR);
-    $totR = array_sum(array_map(fn($r) => (float)($r['valor_fin'] ?: 0) + (float)($r['valor_tec'] ?: 0), $linR));
-    $faltaR = array_sum(array_map(fn($r) => $r['pago_em'] === '' ? (float)($r['valor_fin'] ?: 0) + (float)($r['valor_tec'] ?: 0) : 0, $linR));
+    $vR3 = fn($r) => (float)($r['valor_fin'] ?: 0) + (float)($r['valor_tec'] ?: 0) + (float)($r['valor_teste'] ?: 0);
+    $totR = array_sum(array_map($vR3, $linR));
+    $faltaR = array_sum(array_map(fn($r) => $r['pago_em'] === '' ? $vR3($r) : 0, $linR));
+    $semTesteR = count(array_filter($linR, fn($r) => $r['testes'] === ''));
     $confR = count(array_filter($linR, fn($r) => $r['conferido']));
     $semValor = count(array_filter($linR, fn($r) => $r['pago_em'] === '' && ($r['valor_fin'] === '' || $r['valor_tec'] === '')));
     $Rr = fn(float $v) => 'R$ ' . brl(number_format($v, 2, '.', ''));
@@ -1925,6 +1977,7 @@ th.c,td.c{text-align:center}
     <div class="row">
       <label>Financeiro (lançou a O.S) R$ <input name="valor_fin" value="<?= h(brl($regraR['valor_fin'])) ?>" size="7" inputmode="decimal"></label>
       <label>Recolhedor R$ <input name="valor_tec" value="<?= h(brl($regraR['valor_tec'])) ?>" size="7" inputmode="decimal"></label>
+      <label>Quem testou R$ <input name="valor_teste" value="<?= h(brl($regraR['valor_teste'] ?? '')) ?>" size="7" inputmode="decimal"></label>
       <select name="base" aria-label="Como conta"><option value="eq">por equipamento</option><option value="os" <?= $regraR['base'] === 'os' ? 'selected' : '' ?>>por O.S</option></select>
       <label><input type="checkbox" name="so_funcionando" value="1" <?= $regraR['so_funcionando'] ? 'checked' : '' ?>> recolhedor não recebe O.S sem funcionar</label>
       <label><input type="checkbox" name="sobrescrever" value="1"> trocar também os valores já digitados (não conferidos)</label>
@@ -1943,9 +1996,9 @@ th.c,td.c{text-align:center}
   <form method="post" action="<?= $linkMes ?>" class="card"><?= csrf_campo() ?><input type="hidden" name="mes" value="<?= h($mesR) ?>">
     <h2>Conferência linha por linha</h2>
     <div class="tw"><table class="rec">
-      <thead><tr><th>✔</th><th>Cliente</th><th>Equipamentos (modelo)</th><th>Fechou</th><th>Func.</th><th>Quem lançou</th><th>R$ quem lançou</th><th>Recolhedor</th><th>R$ recolhedor</th><th>Pago em</th></tr></thead>
+      <thead><tr><th>✔</th><th>Cliente</th><th>Equipamentos (modelo)</th><th>Fechou</th><th>Func.</th><th>Quem lançou</th><th>R$ quem lançou</th><th>Recolhedor</th><th>R$ recolhedor</th><th>Quem testou</th><th>R$ teste</th><th>Pago em</th></tr></thead>
       <?php foreach ($linR as $r): $i = (int)$r['id']; $dis = $r['pago_em'] !== '' ? 'disabled' : '';
-          [$sf, $st] = rec_sugestao($r, $regraR); ?>
+          [$sf, $st, $ste] = rec_sugestao($r, $regraR); ?>
       <tr><td class="ck"><?php if (!$dis): ?><input type="hidden" name="c[<?= $i ?>][ok]" value="0"><?php endif ?><input type="checkbox" name="c[<?= $i ?>][ok]" value="1" <?= $r['conferido'] ? 'checked' : '' ?> <?= $dis ?> aria-label="Conferido <?= h($r['cliente']) ?>"></td>
         <td><b><?= h($r['cliente']) ?></b><br><span class="small">contrato <?= h($r['contrato']) ?><?= $r['os'] !== '' ? ' · O.S ' . h($r['os']) : '' ?></span></td>
         <td><?php foreach (rec_equipamentos($r) as $e): ?><?= h($e['modelo'] ?: 'sem modelo') ?><br><?php endforeach ?><span class="small"><?= (int)$r['qtd'] ?> equip.</span></td><td class="n"><?= h(rec_dt($r['fechamento'])) ?></td>
@@ -1954,16 +2007,18 @@ th.c,td.c{text-align:center}
         <td><input class="val" name="c[<?= $i ?>][vf]" value="<?= h(brl($r['valor_fin'])) ?>" placeholder="<?= h(brl($sf)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor do financeiro"></td>
         <td class="small"><?= h($r['tecnico']) ?></td>
         <td><input class="val" name="c[<?= $i ?>][vt]" value="<?= h(brl($r['valor_tec'])) ?>" placeholder="<?= h(brl($st)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor do recolhedor"></td>
+        <td class="small"><?= $r['testes'] === '' ? '<span class="pill q">aguardando teste</span>' : ($r['testes'] === '-' ? '—' : h($r['testado_nome'])) ?></td>
+        <td><?php if ($r['testes'] !== '' && $r['testes'] !== '-'): ?><input class="val" name="c[<?= $i ?>][vte]" value="<?= h(brl($r['valor_teste'])) ?>" placeholder="<?= h(brl($ste)) ?>" inputmode="decimal" <?= $dis ?> aria-label="Valor de quem testou"><?php else: ?><input type="hidden" name="c[<?= $i ?>][vte]" value="<?= h(brl($r['valor_teste'])) ?>"><span class="small">—</span><?php endif ?></td>
         <td><?= $r['pago_em'] !== '' ? '<span class="tp pago">' . h(mes_nome($r['pago_em'])) . '</span>' : '<span class="small">—</span>' ?></td></tr>
       <?php endforeach ?>
-      <?php if (!$linR): ?><tr><td colspan="10" class="small">Nenhuma O.S fechada em <?= h(mes_nome($mesR)) ?>.</td></tr><?php endif ?>
+      <?php if (!$linR): ?><tr><td colspan="12" class="small">Nenhuma O.S fechada em <?= h(mes_nome($mesR)) ?>.</td></tr><?php endif ?>
     </table></div>
     <div class="row" style="margin-top:10px;justify-content:space-between">
       <button name="acao" value="rec_com_salvar">Salvar valores e conferência</button>
       <span class="row"><button class="pri" name="acao" value="rec_pagar">Salvar e marcar conferidas como pagas em</button>
         <select name="pago_em" aria-label="Mês do pagamento"><?php for ($k = -1; $k <= 2; $k++): $om = mes_soma(date('Y-m'), $k); ?><option value="<?= $om ?>" <?= $k === 0 ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endfor ?></select></span>
     </div>
-    <p class="small">Valor em cinza é a sugestão do valor padrão: só vale depois de salvo (use "Salvar e preencher" acima). Linha corrigida pelo financeiro depois de conferida volta sem ✔ se mudar equipamentos, recolhedor ou funcionando.</p>
+    <p class="small">Valor em cinza é a sugestão do valor padrão: só vale depois de salvo (use "Salvar e preencher" acima). Linha corrigida pelo financeiro depois de conferida volta sem ✔ se mudar equipamentos, recolhedor ou funcionando. O.S <b>aguardando teste</b> não é marcada como paga: ela espera o teste para pagar todo mundo junto<?= $semTesteR ? " ($semTesteR neste mês)" : '' ?>.</p>
   </form>
 
 <?php elseif ($p === 'instalacoes'):

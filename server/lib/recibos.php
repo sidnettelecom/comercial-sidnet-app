@@ -90,6 +90,7 @@ function recibos_partes(string $mes, array $origens): array
             if (!$r['conferido'] && $r['pago_em'] === '') continue;
             $add((string)$r['tecnico'], 'rec', $r['pago_em'] !== '', 'Recolheu (O.S)', (float)($r['valor_tec'] ?: 0));
             $add((string)$r['lancado_nome'], 'rec', $r['pago_em'] !== '', 'Lançou (O.S)', (float)($r['valor_fin'] ?: 0));
+            if ($r['testado_por'] !== '') $add((string)$r['testado_nome'], 'rec', $r['pago_em'] !== '', 'Testou equipamentos (O.S)', (float)($r['valor_teste'] ?: 0));
         }
     }
     if (in_array('inst', $origens, true)) {

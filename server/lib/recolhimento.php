@@ -57,7 +57,16 @@ function rec_tabela(): void
     if (!in_array('situacao', $cols, true)) db()->exec("ALTER TABLE recolhimentos ADD COLUMN situacao TEXT NOT NULL DEFAULT 'ok'");
     if (!in_array('diagnostico', $cols, true)) db()->exec("ALTER TABLE recolhimentos ADD COLUMN diagnostico TEXT NOT NULL DEFAULT ''");
     if (!in_array('ixc_cliente', $cols, true)) db()->exec("ALTER TABLE recolhimentos ADD COLUMN ixc_cliente TEXT NOT NULL DEFAULT ''");
+    // teste do equipamento depois de recolhido (pedido do ALEX, 2026-11-24): resultado de cada equipamento (JSON alinhado com os MACs),
+    // quem testou, quando e a comissão de quem testou. '-' = O.S de antes do teste existir (não precisa de teste).
+    if (!in_array('testes', $cols, true)) {
+        db()->exec("ALTER TABLE recolhimentos ADD COLUMN testes TEXT NOT NULL DEFAULT ''");
+        db()->exec("UPDATE recolhimentos SET testes = '-' WHERE situacao = 'ok'");
+    }
+    foreach (['testado_por' => "TEXT NOT NULL DEFAULT ''", 'testado_em' => "TEXT NOT NULL DEFAULT ''", 'valor_teste' => "TEXT NOT NULL DEFAULT ''"] as $c => $tp)
+        if (!in_array($c, $cols, true)) db()->exec("ALTER TABLE recolhimentos ADD COLUMN $c $tp");
     $colsR = array_column(db()->query('PRAGMA table_info(rec_regra)')->fetchAll(), 'name');
+    if (!in_array('valor_teste', $colsR, true)) db()->exec("ALTER TABLE rec_regra ADD COLUMN valor_teste TEXT NOT NULL DEFAULT ''");
     // assuntos de O.S do IXC que são recolhimento, separados por vírgula (NULL = padrão REC_IMP_PADRAO)
     if (!in_array('assuntos', $colsR, true)) db()->exec('ALTER TABLE rec_regra ADD COLUMN assuntos TEXT');
     db()->exec('CREATE INDEX IF NOT EXISTS rec_os ON recolhimentos (os)');
@@ -149,7 +158,7 @@ function rec_regra(): array
     return db()->query('SELECT * FROM rec_regra WHERE id = 1')->fetch() ?: ['valor_fin' => '', 'valor_tec' => '', 'base' => 'eq', 'so_funcionando' => 0];
 }
 
-/** Valores sugeridos pela regra padrão para uma O.S: [financeiro, técnico] em "0.00". */
+/** Valores sugeridos pela regra padrão para uma O.S: [financeiro, recolhedor, quem testou] em "0.00". */
 function rec_sugestao(array $r, array $regra): array
 {
     $porEq = ($regra['base'] ?? 'eq') === 'eq';
@@ -157,7 +166,8 @@ function rec_sugestao(array $r, array $regra): array
     $semFunc = !empty($regra['so_funcionando']) && $r['funcionando'] === 'NÃO';
     $fin = (float)($regra['valor_fin'] ?: 0) * ($porEq ? $qtd : 1);
     $tec = $semFunc ? 0.0 : (float)($regra['valor_tec'] ?: 0) * ($porEq ? $qtd : 1);
-    return [number_format($fin, 2, '.', ''), number_format($tec, 2, '.', '')];
+    $tes = rec_testada($r) && $r['testes'] !== '-' ? (float)(($regra['valor_teste'] ?? '') ?: 0) * ($porEq ? $qtd : 1) : 0.0;
+    return [number_format($fin, 2, '.', ''), number_format($tec, 2, '.', ''), number_format($tes, 2, '.', '')];
 }
 
 /** Lê e confere o formulário de uma O.S. Lança RuntimeException com o motivo se faltar algo. */
@@ -207,6 +217,8 @@ function rec_salvar(array $in, int $id, string $quem): array
         if ($pg !== '') throw new RuntimeException('Essa O.S já teve a comissão paga e não pode mais ser mudada.');
         // O.S puxada do IXC (ou fechada sem recolher) sendo preenchida: vira recolhida e quem preencheu é quem lançou
         db()->prepare("UPDATE recolhimentos SET lancado_por = CASE WHEN situacao <> 'ok' THEN ? ELSE lancado_por END, situacao = 'ok' WHERE id = ?")->execute([$quem, $id]);
+        // mudou os MACs de uma O.S já testada: o teste precisa ser feito de novo
+        db()->prepare("UPDATE recolhimentos SET testes = '', testado_por = '', testado_em = '', valor_teste = '' WHERE id = ? AND testes NOT IN ('', '-') AND macs <> ?")->execute([$id, $d['macs']]);
     }
     if ($d['os'] !== '') {
         $q = db()->prepare('SELECT situacao FROM recolhimentos WHERE os = ? AND id <> ?');
@@ -255,8 +267,8 @@ function rec_um(int $id): ?array
 /** O.S fechadas no mês (aaaa-mm), com o nome do técnico e de quem lançou. */
 function rec_do_mes(string $mes, string $busca = '', string $sit = 'ok'): array
 {
-    $sql = "SELECT r.*, t.nome AS tecnico, COALESCE(g.nome, r.lancado_por) AS lancado_nome
-        FROM recolhimentos r JOIN rec_tecnicos t ON t.id = r.tecnico_id LEFT JOIN gestores g ON g.usuario = r.lancado_por
+    $sql = "SELECT r.*, t.nome AS tecnico, COALESCE(g.nome, r.lancado_por) AS lancado_nome, COALESCE(g2.nome, r.testado_por) AS testado_nome
+        FROM recolhimentos r JOIN rec_tecnicos t ON t.id = r.tecnico_id LEFT JOIN gestores g ON g.usuario = r.lancado_por LEFT JOIN gestores g2 ON g2.usuario = r.testado_por
         WHERE r.situacao = ?" . ($mes !== '' ? ' AND substr(r.fechamento, 1, 7) = ?' : '');
     $par = $mes !== '' ? [$sit, $mes] : [$sit];
     $b = up(trim($busca));
@@ -285,14 +297,15 @@ function rec_meses(): array
  */
 function rec_comissao_salvar(array $linhas, string $quem): int
 {
-    $up = db()->prepare("UPDATE recolhimentos SET valor_fin = ?, valor_tec = ?, conferido = ?, alterado_por = ? WHERE id = ? AND pago_em = '' AND situacao = 'ok'
-        AND (valor_fin <> ? OR valor_tec <> ? OR conferido <> ?)");
+    $up = db()->prepare("UPDATE recolhimentos SET valor_fin = ?, valor_tec = ?, valor_teste = ?, conferido = ?, alterado_por = ? WHERE id = ? AND pago_em = '' AND situacao = 'ok'
+        AND (valor_fin <> ? OR valor_tec <> ? OR valor_teste <> ? OR conferido <> ?)");
     $n = 0;
     foreach ($linhas as $id => $l) {
         $vf = dinheiro((string)($l['vf'] ?? ''));
         $vt = dinheiro((string)($l['vt'] ?? ''));
+        $vte = dinheiro((string)($l['vte'] ?? ''));
         $ok = !empty($l['ok']) ? 1 : 0;
-        $up->execute([$vf, $vt, $ok, $quem, (int)$id, $vf, $vt, $ok]);
+        $up->execute([$vf, $vt, $vte, $ok, $quem, (int)$id, $vf, $vt, $vte, $ok]);
         $n += $up->rowCount();
     }
     return $n;
@@ -302,13 +315,15 @@ function rec_comissao_salvar(array $linhas, string $quem): int
 function rec_aplicar_regra(string $mes, bool $sobrescrever): int
 {
     $regra = rec_regra();
-    $up = db()->prepare("UPDATE recolhimentos SET valor_fin = ?, valor_tec = ? WHERE id = ?");
+    $up = db()->prepare("UPDATE recolhimentos SET valor_fin = ?, valor_tec = ?, valor_teste = ? WHERE id = ?");
     $n = 0;
     foreach (rec_do_mes($mes) as $r) {
         if ($r['pago_em'] !== '' || $r['conferido']) continue;
-        if (!$sobrescrever && $r['valor_fin'] !== '' && $r['valor_tec'] !== '') continue;
-        [$vf, $vt] = rec_sugestao($r, $regra);
-        $up->execute([$sobrescrever || $r['valor_fin'] === '' ? $vf : $r['valor_fin'], $sobrescrever || $r['valor_tec'] === '' ? $vt : $r['valor_tec'], $r['id']]);
+        $precisaTeste = rec_testada($r) && $r['testes'] !== '-';
+        if (!$sobrescrever && $r['valor_fin'] !== '' && $r['valor_tec'] !== '' && (!$precisaTeste || $r['valor_teste'] !== '')) continue;
+        [$vf, $vt, $vte] = rec_sugestao($r, $regra);
+        $up->execute([$sobrescrever || $r['valor_fin'] === '' ? $vf : $r['valor_fin'], $sobrescrever || $r['valor_tec'] === '' ? $vt : $r['valor_tec'],
+            !$precisaTeste ? $r['valor_teste'] : ($sobrescrever || $r['valor_teste'] === '' ? $vte : $r['valor_teste']), $r['id']]);
         $n++;
     }
     return $n;
@@ -318,7 +333,7 @@ function rec_aplicar_regra(string $mes, bool $sobrescrever): int
 function rec_pagar(string $mes, string $pagoEm, string $quem): int
 {
     if (!preg_match('/^\d{4}-\d{2}$/', $pagoEm)) throw new RuntimeException('Escolha o mês do pagamento.');
-    $q = db()->prepare("UPDATE recolhimentos SET pago_em = ?, alterado_por = ? WHERE substr(fechamento, 1, 7) = ? AND conferido = 1 AND pago_em = '' AND situacao = 'ok'");
+    $q = db()->prepare("UPDATE recolhimentos SET pago_em = ?, alterado_por = ? WHERE substr(fechamento, 1, 7) = ? AND conferido = 1 AND pago_em = '' AND situacao = 'ok' AND testes <> ''");
     $q->execute([$pagoEm, $quem, $mes]);
     return $q->rowCount();
 }
@@ -328,7 +343,9 @@ function rec_por_pessoa(array $linhas): array
 {
     $out = [];
     foreach ($linhas as $r) {
-        foreach ([['Financeiro', $r['lancado_nome'], 'valor_fin'], ['Recolhedor', $r['tecnico'], 'valor_tec']] as [$papel, $nome, $col]) {
+        $papeis = [['Financeiro', $r['lancado_nome'], 'valor_fin'], ['Recolhedor', $r['tecnico'], 'valor_tec']];
+        if ($r['testado_por'] !== '') $papeis[] = ['Teste', $r['testado_nome'], 'valor_teste'];
+        foreach ($papeis as [$papel, $nome, $col]) {
             $k = $papel . '|' . $nome;
             $o = &$out[$k];
             $o ??= ['papel' => $papel, 'nome' => $nome, 'os' => 0, 'eq' => 0, 'valor' => 0.0, 'falta' => 0.0];
@@ -541,4 +558,56 @@ function rec_contagem(): array
     $c = ['pendente' => 0, 'nao' => 0];
     foreach (db()->query("SELECT situacao, COUNT(*) n FROM recolhimentos WHERE situacao <> 'ok' GROUP BY situacao") as $l) $c[$l['situacao']] = (int)$l['n'];
     return $c;
+}
+
+/*
+ * Teste do equipamento (pedido do ALEX, 2026-11-24): depois que o financeiro preenche os equipamentos, quem testa
+ * marca o resultado de cada um e se já voltou ao estoque. A volta ao estoque é feita À MÃO no IXC; aqui só fica anotado.
+ * Quem testou também recebe comissão (coluna na Comissão do recolhimento). O.S só é paga depois do teste.
+ */
+const REC_TESTE_RES = ['ok' => 'OK, funcionando', 'defeito' => 'Com defeito', 'descarte' => 'Descartar'];
+
+/** A O.S já passou pelo teste (ou é de antes do teste existir) */
+function rec_testada(array $r): bool
+{
+    return ($r['testes'] ?? '') !== '';
+}
+
+/** Resultado do teste de cada equipamento: [['mac','modelo','r','obs','est'], ...] (vazio se não testada) */
+function rec_testes(array $r): array
+{
+    $t = ($r['testes'] ?? '') === '' || $r['testes'] === '-' ? [] : (json_decode((string)$r['testes'], true) ?: []);
+    $out = [];
+    foreach (rec_equipamentos($r) as $i => $e) $out[] = $e + ['r' => (string)($t[$i]['r'] ?? ''), 'obs' => (string)($t[$i]['obs'] ?? ''), 'est' => !empty($t[$i]['est'])];
+    return $out;
+}
+
+/** O.S recolhidas esperando teste ($testadas = false) ou já testadas no mês do fechamento ($mes) */
+function rec_para_teste(bool $testadas, string $mes = ''): array
+{
+    $l = rec_do_mes($testadas ? $mes : '', '', 'ok');
+    return array_values(array_filter($l, fn($r) => $testadas ? ($r['testes'] !== '' && $r['testes'] !== '-') : $r['testes'] === ''));
+}
+
+/** Grava o teste de uma O.S: $in = [n => ['r' => 'ok', 'obs' => '', 'est' => '1']] */
+function rec_teste_salvar(int $id, array $in, string $quem): array
+{
+    $r = rec_um($id);
+    if (!$r || $r['situacao'] !== 'ok') throw new RuntimeException('Essa O.S não está em Recolhidos.');
+    if ($r['pago_em'] !== '') throw new RuntimeException('Essa O.S já teve a comissão paga e não muda mais.');
+    $eqs = rec_equipamentos($r);
+    if (!$eqs) throw new RuntimeException('Essa O.S não tem equipamento.');
+    $out = [];
+    foreach ($eqs as $i => $e) {
+        $res = (string)($in[$i]['r'] ?? '');
+        if (!isset(REC_TESTE_RES[$res])) throw new RuntimeException('Escolha o resultado do teste do equipamento ' . ($e['mac'] ?: $i + 1) . '.');
+        $obs = mb_substr(trim((string)($in[$i]['obs'] ?? '')), 0, 200);
+        if ($res !== 'ok' && $obs === '') throw new RuntimeException('Escreva o defeito do equipamento ' . $e['mac'] . '.');
+        $out[] = ['r' => $res, 'obs' => $obs, 'est' => $res === 'ok' && !empty($in[$i]['est']) ? 1 : 0];
+    }
+    // quem testou primeiro continua sendo quem testou (outra pessoa só completa o estoque)
+    db()->prepare("UPDATE recolhimentos SET testes = ?, testado_por = CASE WHEN testado_por = '' THEN ? ELSE testado_por END,
+        testado_em = CASE WHEN testado_em = '' THEN datetime('now','localtime') ELSE testado_em END, alterado_por = ? WHERE id = ?")
+        ->execute([json_encode($out, JSON_UNESCAPED_UNICODE), $quem, $quem, $id]);
+    return rec_um($id);
 }
