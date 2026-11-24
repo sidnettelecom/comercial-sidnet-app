@@ -61,12 +61,113 @@ function colab_lista_ixc(): array
     return is_array($j) ? $j + ['em' => '', 'lista' => []] : ['em' => '', 'lista' => []];
 }
 
+/** Chave para achar a mesma pessoa com grafia um pouco diferente: sem acento, sem letra dobrada (HELLEN = HELEN, PASCOARELLI = PASCOARELI) */
+function colab_chave(string $nome): string
+{
+    return preg_replace('/([A-Z])\1+/', '$1', recibo_chave($nome));
+}
+
+/** Onde cada lista é usada: papel => [[tabela, coluna, chave primária junto (ou '')], ...] */
+const COLAB_REFS = [
+    'inst' => [['inst_tec', 'tecnico_id', 'inst_id'], ['instalacoes', 'ajudante_id', '']],
+    'agenda' => [['instalacoes', 'agendador_id', '']],
+    'rec' => [['recolhimentos', 'tecnico_id', '']],
+    'rh' => [['rh_lancamentos', 'funcionario_id', ''], ['rh_pagamentos', 'funcionario_id', 'mes'], ['rh_compl_feito', 'funcionario_id', 'mes']],
+];
+
+/** Parece a mesma pessoa? mesma chave, até 2 letras diferentes, ou mesmo primeiro e último nome */
+function colab_parece(string $a, string $b): bool
+{
+    $a = colab_chave($a);
+    $b = colab_chave($b);
+    if ($a === $b) return true;
+    if (min(strlen($a), strlen($b)) >= 8 && levenshtein($a, $b) <= 2) return true;
+    $pa = explode(' ', $a);
+    $pb = explode(' ', $b);
+    return count($pa) > 1 && count($pb) > 1 && $pa[0] === $pb[0] && end($pa) === end($pb);
+}
+
+/** Cadastros que parecem repetidos em cada lista: [[papel, [id, nome, ativo, usos], [id, nome, ativo, usos]], ...] */
+function colab_repetidos(): array
+{
+    $doIxc = [];
+    foreach (colab_lista_ixc()['lista'] as $o) $doIxc[up($o['nome'])] = 1;
+    $out = [];
+    foreach (COLAB_PAPEIS as $p => [$tab]) {
+        $l = db()->query("SELECT id, nome, ativo FROM $tab ORDER BY nome")->fetchAll();
+        foreach ($l as $r) {
+            $n = 0;
+            foreach (COLAB_REFS[$p] as [$t, $c]) { $q = db()->prepare("SELECT COUNT(*) FROM $t WHERE $c = ?"); $q->execute([$r['id']]); $n += (int)$q->fetchColumn(); }
+            $usos[$p][$r['id']] = $n;
+        }
+        for ($i = 0; $i < count($l); $i++) for ($j = $i + 1; $j < count($l); $j++) {
+            if (!colab_parece($l[$i]['nome'], $l[$j]['nome'])) continue;
+            $x = $l[$i] + ['usos' => $usos[$p][$l[$i]['id']], 'ixc' => isset($doIxc[up($l[$i]['nome'])])];
+            $y = $l[$j] + ['usos' => $usos[$p][$l[$j]['id']], 'ixc' => isset($doIxc[up($l[$j]['nome'])])];
+            $out[] = [$p, $x, $y];
+        }
+    }
+    return $out;
+}
+
+/**
+ * Junta dois cadastros da mesma pessoa numa lista: tudo que era de $sai passa para $fica e $sai é apagado.
+ * No RH, os campos vazios de quem fica (CPF, salário...) recebem os de quem sai. Devolve o nome que ficou.
+ */
+function colab_unir(string $papel, int $fica, int $sai): string
+{
+    if (!isset(COLAB_PAPEIS[$papel]) || $fica === $sai) throw new RuntimeException('Escolha dois cadastros diferentes.');
+    $tab = COLAB_PAPEIS[$papel][0];
+    $q = db()->prepare("SELECT * FROM $tab WHERE id = ?");
+    $q->execute([$fica]); $f = $q->fetch();
+    $q->execute([$sai]); $s = $q->fetch();
+    if (!$f || !$s) throw new RuntimeException('Esse cadastro não existe mais.');
+    $pdo = db();
+    $pdo->beginTransaction();
+    try {
+        foreach (COLAB_REFS[$papel] as [$t, $c, $pk]) {
+            if ($pk !== '') {
+                // os dois na mesma O.S / no mesmo mês
+                $dup = $pdo->prepare("SELECT $pk FROM $t WHERE $c = ? AND $pk IN (SELECT $pk FROM $t WHERE $c = ?)");
+                $dup->execute([$sai, $fica]);
+                $iguais = $dup->fetchAll(PDO::FETCH_COLUMN);
+                if ($iguais && $t === 'rh_pagamentos') throw new RuntimeException("{$s['nome']} e {$f['nome']} têm pagamento do RH no mesmo mês. Confira no RH antes de juntar.");
+                foreach ($iguais as $v) $pdo->prepare("DELETE FROM $t WHERE $c = ? AND $pk = ?")->execute([$sai, $v]);
+            }
+            $pdo->prepare("UPDATE $t SET $c = ? WHERE $c = ?")->execute([$fica, $sai]);
+        }
+        $sets = [];
+        $vals = [];
+        foreach ($f as $col => $v) {
+            if (in_array($col, ['id', 'nome'], true)) continue;
+            if ($col === 'ativo') { if ($s['ativo'] && !$f['ativo']) { $sets[] = 'ativo = 1'; } continue; }
+            if ((string)$v === '' && (string)($s[$col] ?? '') !== '') { $sets[] = "$col = ?"; $vals[] = $s[$col]; }
+        }
+        if ($sets) $pdo->prepare("UPDATE $tab SET " . implode(', ', $sets) . ' WHERE id = ?')->execute([...$vals, $fica]);
+        $pdo->prepare("DELETE FROM $tab WHERE id = ?")->execute([$sai]);
+        // CPF dos recibos com o nome antigo: passa para o nome que ficou, se ele ainda não tem
+        $kS = recibo_chave($s['nome']);
+        $kF = recibo_chave($f['nome']);
+        if ($kS !== $kF) {
+            $c = $pdo->prepare('SELECT cpf FROM recibos_cpf WHERE chave = ?');
+            $c->execute([$kS]);
+            $cpf = (string)$c->fetchColumn();
+            if ($cpf !== '') $pdo->prepare("INSERT INTO recibos_cpf (chave, nome, cpf) VALUES (?, ?, ?) ON CONFLICT(chave) DO UPDATE SET cpf = CASE WHEN cpf = '' THEN excluded.cpf ELSE cpf END")->execute([$kF, $f['nome'], $cpf]);
+        }
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+    return $f['nome'];
+}
+
 /** [chave do nome => [papel => ativo 0/1]] de quem já está em cada área */
 function colab_cadastrados(): array
 {
     $out = [];
     foreach (COLAB_PAPEIS as $p => [$tab]) {
-        foreach (db()->query("SELECT nome, ativo FROM $tab") as $r) $out[recibo_chave($r['nome'])][$p] = (int)$r['ativo'];
+        foreach (db()->query("SELECT nome, ativo FROM $tab") as $r) $out[colab_chave($r['nome'])][$p] = max((int)$r['ativo'], $out[colab_chave($r['nome'])][$p] ?? 0);
     }
     return $out;
 }
@@ -106,7 +207,7 @@ function colab_salvar(array $linhas): array
         foreach ($linhas as $id => $l) {
             $o = $ixc[(string)$id] ?? null;
             if (!$o || !is_array($l)) continue;
-            $k = recibo_chave($o['nome']);
+            $k = colab_chave($o['nome']);
             if (!empty($l['ign'])) {
                 $pdo->prepare('INSERT OR IGNORE INTO colab_ignorados (ixc_id, nome) VALUES (?,?)')->execute([$o['id'], $o['nome']]);
                 $n['ign']++;
@@ -127,16 +228,16 @@ function colab_salvar(array $linhas): array
                 } elseif ($quer !== (bool)$tem && $tem !== null) {
                     // acha o registro pelo nome sem acento (pode ter sido digitado com outra grafia)
                     foreach ($pdo->query("SELECT id, nome FROM $tab")->fetchAll() as $r) {
-                        if (recibo_chave($r['nome']) !== $k) continue;
+                        if (colab_chave($r['nome']) !== $k) continue;
                         $pdo->prepare("UPDATE $tab SET ativo = ? WHERE id = ?")->execute([(int)$quer, $r['id']]);
                         $quer ? $n['novos']++ : $n['escondidos']++;
                     }
                 }
             }
             if ($cpf !== '' && ($marcou || !empty($cad[$k]))) {
-                $cpfs[$k] = ['nome' => $o['nome'], 'cpf' => $cpf];
+                $cpfs[recibo_chave($o['nome'])] = ['nome' => $o['nome'], 'cpf' => $cpf];
                 foreach ($pdo->query('SELECT id, nome, cpf FROM rh_funcionarios')->fetchAll() as $r) {
-                    if (recibo_chave($r['nome']) === $k && $r['cpf'] === '') $pdo->prepare('UPDATE rh_funcionarios SET cpf = ? WHERE id = ?')->execute([$cpf, $r['id']]);
+                    if (colab_chave($r['nome']) === $k && $r['cpf'] === '') $pdo->prepare('UPDATE rh_funcionarios SET cpf = ? WHERE id = ?')->execute([$cpf, $r['id']]);
                 }
             }
         }

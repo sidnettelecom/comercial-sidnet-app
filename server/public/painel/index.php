@@ -134,7 +134,7 @@ const PERM_ACOES = [
     'inst_imp_puxar' => 'inst.lista', 'inst_imp_cfg' => 'inst.lista', 'inst_ajudante' => 'inst.analise', 'inst_an_decidir' => 'inst.analise', 'inst_an_consultar' => 'inst.analise', 'inst_an_cfg' => 'inst.analise', 'inst_an_assuntos' => '',
     'rh_lanc_salvar' => 'rh.lanc', 'rh_lanc_excluir' => 'rh.lanc', 'rh_func_salvar' => 'rh.func', 'rh_func_ativo' => 'rh.func', 'rh_pagar' => 'rh.fecha', 'rh_sobre_salvar' => 'rh.lanc',
     'recibos_cpf' => 'recibos', 'recibos_ixc' => 'recibos.ixc', 'audit_ok' => 'recibos.audit',
-    'colab_buscar' => 'cfg.colab', 'colab_salvar' => 'cfg.colab', 'colab_mostrar' => 'cfg.colab',
+    'colab_buscar' => 'cfg.colab', 'colab_salvar' => 'cfg.colab', 'colab_unir' => 'cfg.colab', 'colab_mostrar' => 'cfg.colab',
     'serv_servico' => 'serv.lanc', 'serv_pagamento' => 'serv.pag', 'serv_excluir' => 'serv',
     'serv_equipe_salvar' => 'serv.cad', 'serv_equipe_ativo' => 'serv.cad', 'serv_obra_salvar' => 'serv.cad', 'serv_obra_concluir' => 'serv.cad', 'serv_precos_salvar' => 'serv.cad',
 ];
@@ -794,6 +794,11 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $rc = colab_salvar((array)($_POST['c'] ?? []));
             registrar($quem, 'cadastrou colaboradores do IXC', "{$rc['novos']} cadastro(s), {$rc['escondidos']} escondido(s), {$rc['cpf']} CPF(s), {$rc['ign']} não colaborador(es)");
             $msg = "Pronto: {$rc['novos']} cadastro(s) nas áreas" . ($rc['escondidos'] ? ", {$rc['escondidos']} tirado(s) da lista da área" : '') . ($rc['cpf'] ? ", {$rc['cpf']} CPF(s) gravado(s)" : '') . ($rc['ign'] ? ", {$rc['ign']} marcado(s) como não colaborador" : '') . '.';
+        } elseif ($a === 'colab_unir') {
+            $pU = (string)($_POST['papel'] ?? '');
+            $ficouU = colab_unir($pU, (int)($_POST['fica'] ?? 0), (int)($_POST['sai'] ?? 0));
+            registrar($quem, 'juntou cadastro repetido', (COLAB_PAPEIS[$pU][1] ?? $pU) . ": ficou $ficouU");
+            $msg = "Pronto: ficou um cadastro só, $ficouU (" . (COLAB_PAPEIS[$pU][1] ?? $pU) . '). Tudo que era do outro passou para ele.';
         } elseif ($a === 'colab_mostrar') {
             colab_mostrar((string)($_POST['ixc_id'] ?? ''));
             $msg = 'Voltou para a lista.';
@@ -2776,13 +2781,23 @@ th.c,td.c{text-align:center}
     $verC = in_array($_GET['ver'] ?? '', ['todos', 'escondidos'], true) ? $_GET['ver'] : 'ativos';
     $linhasC = array_values(array_filter($lstC['lista'], fn($o) => $verC === 'escondidos' ? isset($ignC[$o['id']]) : (!isset($ignC[$o['id']]) && ($verC === 'todos' || $o['ativo']))));
     usort($linhasC, fn($x, $y) => strcmp($x['nome'], $y['nome']));
-    $jaC = fn($o) => !empty(array_filter($cadC[recibo_chave($o['nome'])] ?? []));
+    $jaC = fn($o) => !empty(array_filter($cadC[colab_chave($o['nome'])] ?? []));
+    $repC = colab_repetidos();
 ?>
   <div class="topo"><div><h1>Colaboradores do IXC</h1><p class="small">Busca a lista de funcionários do IXC (só leitura, nada é gravado lá). Marque em que área cada colaborador recebe e salve: o portal cadastra nas listas de Instalação, Recolhimento e RH, e grava o CPF para os recibos. Desmarcar tira da lista da área, sem apagar o histórico. Quem não é colaborador de verdade, marque "Não é colaborador" para sumir desta tela.</p></div></div>
   <form method="post" action="?p=colab&amp;ver=<?= h($verC) ?>" class="card row"><?= csrf_campo() ?><input type="hidden" name="acao" value="colab_buscar">
     <button class="pri"><?= $lstC['em'] ? 'Buscar de novo no IXC' : 'Buscar colaboradores no IXC' ?></button>
     <span class="small"><?= $lstC['em'] ? 'Última busca: ' . h($lstC['em']) . ' · ' . count($lstC['lista']) . ' no IXC' : 'Ainda não buscou.' ?></span>
   </form>
+  <?php if ($repC): ?>
+  <div class="card" id="repetidos"><h2>Cadastros que parecem repetidos (<?= count($repC) ?>)</h2>
+    <p class="small" style="margin:0 0 8px">A mesma pessoa cadastrada duas vezes com o nome um pouco diferente (ex.: um digitado à mão e outro vindo do IXC). Escolha qual nome fica: tudo que era do outro (O.S, lançamentos, pagamentos) passa para ele e o outro some. Se não for a mesma pessoa, é só deixar como está.</p>
+    <div class="tw"><table class="rec"><thead><tr><th>Lista</th><th>Cadastro 1</th><th>Cadastro 2</th><th>Qual fica?</th></tr></thead>
+    <?php foreach ($repC as [$pR, $xR, $yR]): $descR = fn($z) => '<b>' . h($z['nome']) . '</b><br><span class="small">' . $z['usos'] . ' uso' . ($z['usos'] === 1 ? '' : 's') . ($z['ixc'] ? ' · nome do IXC' : '') . ($z['ativo'] ? '' : ' · escondido') . '</span>'; ?>
+      <tr><td><?= h(COLAB_PAPEIS[$pR][1]) ?></td><td><?= $descR($xR) ?></td><td><?= $descR($yR) ?></td>
+        <td><div class="acoes"><?php foreach ([[$xR, $yR], [$yR, $xR]] as [$fR, $sR]): ?><form method="post" action="?p=colab&amp;ver=<?= h($verC) ?>#repetidos" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="colab_unir"><input type="hidden" name="papel" value="<?= h($pR) ?>"><input type="hidden" name="fica" value="<?= (int)$fR['id'] ?>"><input type="hidden" name="sai" value="<?= (int)$sR['id'] ?>"><button<?= $fR['ixc'] && !$sR['ixc'] ? ' class="pri"' : '' ?>>Ficar <?= h($fR['nome']) ?></button></form><?php endforeach ?></div></td></tr>
+    <?php endforeach ?></table></div></div>
+  <?php endif ?>
   <?php if ($lstC['em']): ?>
   <div class="row noprint" style="margin:0 0 10px">
     <?php foreach (['ativos' => 'Ativos no IXC', 'todos' => 'Todos (com inativos)', 'escondidos' => 'Não colaboradores (' . count($ignC) . ')'] as $kv => $tv): ?><a class="bt<?= $verC === $kv ? ' pri' : '' ?>" href="?p=colab&amp;ver=<?= $kv ?>"><?= h($tv) ?></a><?php endforeach ?>
@@ -2797,9 +2812,9 @@ th.c,td.c{text-align:center}
     <p class="small"><?= count($linhasC) ?> na lista · <?= count(array_filter($linhasC, $jaC)) ?> já cadastrados em alguma área. Vendedor não é criado aqui (precisa de usuário e senha do app, em Configurações → Usuários): a coluna só mostra quem já é.</p>
     <div class="tw"><table class="rec">
       <thead><tr><th>Nome no IXC</th><th>CPF</th><?php foreach (COLAB_PAPEIS as [, $tp]): ?><th class="c"><?= h($tp) ?></th><?php endforeach ?><th>Vendedor</th><th class="c">Não é colaborador</th></tr></thead>
-      <?php foreach ($linhasC as $o): $kC = recibo_chave($o['nome']); $iC = h($o['id']); $vd = $vendId[$o['id']] ?? ($vendNome[$kC] ?? ''); ?>
+      <?php foreach ($linhasC as $o): $kC = colab_chave($o['nome']); $iC = h($o['id']); $vd = $vendId[$o['id']] ?? ($vendNome[recibo_chave($o['nome'])] ?? ''); ?>
       <tr data-colab><td><b><?= h($o['nome']) ?></b><?= $o['ativo'] ? '' : ' <span class="pill er">inativo no IXC</span>' ?><input type="hidden" name="c[<?= $iC ?>][x]" value="1"></td>
-        <td><input name="c[<?= $iC ?>][cpf]" value="<?= h(rh_cpf($cpfC[$kC] ?? $o['cpf'])) ?>" inputmode="numeric" placeholder="000.000.000-00" size="14" aria-label="CPF de <?= h($o['nome']) ?>"></td>
+        <td><input name="c[<?= $iC ?>][cpf]" value="<?= h(rh_cpf($cpfC[recibo_chave($o["nome"])] ?? $o["cpf"])) ?>" inputmode="numeric" placeholder="000.000.000-00" size="14" aria-label="CPF de <?= h($o['nome']) ?>"></td>
         <?php foreach (COLAB_PAPEIS as $pp => [, $tp]): ?><td class="c"><input type="checkbox" name="c[<?= $iC ?>][p][<?= $pp ?>]" value="1" <?= !empty($cadC[$kC][$pp]) ? 'checked' : '' ?> aria-label="<?= h($tp) ?>: <?= h($o['nome']) ?>"></td><?php endforeach ?>
         <td><?= $vd !== '' ? '<span class="pill ok">' . h($vd) . '</span>' : '<span class="small">—</span>' ?></td>
         <td class="c"><input type="checkbox" name="c[<?= $iC ?>][ign]" value="1" aria-label="Não é colaborador: <?= h($o['nome']) ?>"></td></tr>
