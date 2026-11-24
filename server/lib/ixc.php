@@ -71,11 +71,11 @@ final class Ixc
     }
 
     /** Consulta: devolve a lista de registros. */
-    public function listar(string $tabela, string $campo, string $valor, string $oper = '=', int $quantos = 50, string $ordem = 'desc'): array
+    public function listar(string $tabela, string $campo, string $valor, string $oper = '=', int $quantos = 50, string $ordem = 'desc', int $pagina = 1): array
     {
         $j = $this->chamar($tabela, [
             'qtype' => $tabela . '.' . $campo, 'query' => $valor, 'oper' => $oper,
-            'page' => '1', 'rp' => (string)$quantos, 'sortname' => $tabela . '.id', 'sortorder' => $ordem,
+            'page' => (string)max(1, $pagina), 'rp' => (string)$quantos, 'sortname' => $tabela . '.id', 'sortorder' => $ordem,
         ], true);
         if (($j['type'] ?? '') === 'error') {
             throw new ErroCrm('IXC (' . $tabela . '): ' . self::texto($j['message'] ?? 'erro na consulta'));

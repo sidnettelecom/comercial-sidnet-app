@@ -130,7 +130,7 @@ const PERM_ACOES = [
     'rec_regra_salvar' => 'rec.com', 'rec_com_salvar' => 'rec.com', 'rec_pagar' => 'rec.com',
     'inst_salvar' => 'inst.lista', 'inst_excluir' => 'inst.lista', 'inst_buscar' => 'inst.lista', 'inst_mais' => 'inst.lista', 'inst_mais_tec' => 'inst.lista',
     'inst_servicos_salvar' => 'inst.com', 'inst_com_salvar' => 'inst.com', 'inst_pagar' => 'inst.com',
-    'inst_an_decidir' => 'inst.analise', 'inst_an_consultar' => 'inst.analise', 'inst_an_cfg' => 'inst.analise', 'inst_an_assuntos' => 'inst.analise',
+    'inst_imp_puxar' => 'inst.lista', 'inst_imp_cfg' => 'inst.lista', 'inst_an_decidir' => 'inst.analise', 'inst_an_consultar' => 'inst.analise', 'inst_an_cfg' => 'inst.analise', 'inst_an_assuntos' => '',
     'rh_lanc_salvar' => 'rh.lanc', 'rh_lanc_excluir' => 'rh.lanc', 'rh_func_salvar' => 'rh.func', 'rh_func_ativo' => 'rh.func', 'rh_pagar' => 'rh.fecha', 'rh_sobre_salvar' => 'rh.lanc',
     'recibos_cpf' => 'recibos', 'recibos_ixc' => 'recibos.ixc', 'audit_ok' => 'recibos.audit',
     'colab_buscar' => 'cfg.colab', 'colab_salvar' => 'cfg.colab', 'colab_mostrar' => 'cfg.colab',
@@ -532,6 +532,18 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 registrar($quem, 'pagou comissão da instalação', mes_nome($mesI) . " ($n O.S, pago em " . mes_nome($pg) . ')');
                 $msg = $n ? "$n O.S conferidas marcadas como pagas em " . mes_nome($pg) . '.' : 'Nenhuma O.S conferida (✔) e ainda não paga neste mês.';
             }
+        } elseif ($a === 'inst_imp_puxar') {
+            $mesI = (string)($_POST['mes'] ?? '');
+            $r = inst_imp_puxar($mesI);
+            registrar($quem, 'puxou instalações concluídas do IXC', mes_nome($mesI) . " ({$r['novas']} novas)");
+            $msg = $r['novas'] ? "{$r['novas']} instalação(ões) de " . mes_nome($mesI) . ' puxadas do IXC (só leitura) e colocadas na análise de 30 dias.' . ($r['sem_tec'] ? " {$r['sem_tec']} sem técnico no IXC: use Corrigir para escolher quem fez." : '') . ($r['ja'] ? " {$r['ja']} já estavam aqui." : '')
+                : 'Nenhuma O.S nova finalizada em ' . mes_nome($mesI) . ' com esses assuntos' . ($r['ja'] ? " ({$r['ja']} já estavam aqui)." : '.');
+            if ($r['novas']) inst_an_atualizar(300, $mesI);
+        } elseif ($a === 'inst_imp_cfg') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin escolhe os assuntos.');
+            $n = inst_imp_config_salvar((array)($_POST['imp'] ?? []));
+            registrar($quem, 'escolheu assuntos de instalação para puxar do IXC', (string)$n);
+            $msg = "$n assunto(s) de O.S marcados como instalação.";
         } elseif ($a === 'inst_an_decidir') {
             $dec = (string)($_POST['decisao'] ?? '');
             inst_an_decidir($id, $dec, (string)($_POST['motivo'] ?? ''), $quem);
@@ -1927,6 +1939,21 @@ th.c,td.c{text-align:center}
     <div class="kpi"><span>Feitas em dupla</span><b><?= $duplaI ?></b><small>2 ou mais técnicos</small></div>
     <div class="kpi"><span>Equipamentos recolhidos</span><b><?= $eqI ?></b><small>nas instalações</small></div>
   </div>
+  <?php if (destino() === 'ixc'): $impI = inst_imp_assuntos(); $cfgAI = inst_an_config(); $servPorId = array_column($servI, 'nome', 'id'); ?>
+  <div class="card"><h2>Puxar do IXC</h2>
+    <p class="small" style="margin:0 0 8px">Traz todas as O.S <b>finalizadas</b> em <?= h(mes_nome($mesI)) ?> com os assuntos abaixo (só leitura, nada é gravado no IXC). As que já estão aqui não repetem. Cada uma entra na Análise da instalação (30 dias). O sistema também puxa sozinho o mês atual a cada 6 horas. Quem agendou e o 2º técnico você completa em "Corrigir".</p>
+    <div class="row"><span class="small">Assuntos:</span><?php foreach ($impI as $aid => $sid): ?><span class="pill mu"><?= h(($cfgAI['assuntos'][(string)$aid] ?? '') ?: 'assunto ' . $aid) ?> → <?= h($sid ? ($servPorId[$sid] ?? '?') : 'serviço pelo nome') ?></span><?php endforeach ?><?= $impI ? '' : '<span class="small er">nenhum escolhido</span>' ?>
+      <form method="post" action="<?= $linkMes ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="mes" value="<?= h($mesI) ?>"><button class="pri" name="acao" value="inst_imp_puxar" <?= $impI ? '' : 'disabled' ?>>Puxar O.S concluídas de <?= h(mes_nome($mesI)) ?></button></form></div>
+    <?php if ($admin): ?><details style="margin-top:10px"><summary>Escolher os assuntos que são instalação</summary>
+      <form method="post" action="<?= $linkMes ?>" style="margin-top:8px"><?= csrf_campo() ?><input type="hidden" name="acao" value="inst_imp_cfg">
+        <?php if ($cfgAI['assuntos']): ?><div style="columns:340px;column-gap:16px"><?php foreach ($cfgAI['assuntos'] as $aid => $an): $on = isset($impI[(int)$aid]) || isset($impI[(string)$aid]); $sid = (int)($impI[$aid] ?? 0); ?>
+          <div style="break-inside:avoid;display:flex;gap:8px;align-items:center;padding:2px 0"><label style="flex:1"><input type="checkbox" name="imp[<?= h((string)$aid) ?>][on]" value="1" <?= $on ? 'checked' : '' ?>> <?= h($an ?: '#' . $aid) ?> <span class="small">(<?= h((string)$aid) ?>)</span></label>
+            <select name="imp[<?= h((string)$aid) ?>][servico]" aria-label="Serviço de <?= h($an) ?>"><option value="0">serviço pelo nome</option><?php foreach ($servI as $sv): ?><option value="<?= (int)$sv['id'] ?>" <?= $sid === (int)$sv['id'] ? 'selected' : '' ?>><?= h($sv['nome']) ?></option><?php endforeach ?></select></div>
+        <?php endforeach ?></div><?php else: ?><p class="small">Carregue a lista de assuntos do IXC primeiro. Enquanto isso valem os assuntos 11 e 31.</p><?php endif ?>
+        <div class="row" style="margin-top:8px"><button class="pri" <?= $cfgAI['assuntos'] ? '' : 'disabled' ?>>Salvar assuntos</button><button name="acao" value="inst_an_assuntos" formnovalidate>Carregar assuntos do IXC</button></div>
+      </form></details><?php endif ?>
+  </div>
+  <?php endif ?>
   <?php if ($abrirForm): ?>
   <form method="post" action="<?= $linkMes ?>" class="card" id="form-inst"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$edit['id'] ?>">
     <button name="acao" value="inst_salvar" tabindex="-1" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px">Salvar</button><?php /* Enter salva (não busca) */ ?>

@@ -26,6 +26,11 @@ if (destino() === 'ixc' && (!is_file($marca) || time() - (int)filemtime($marca) 
     try {
         require_once __DIR__ . '/../lib/instalacao.php';
         inst_tabela();
+        // instalações concluídas: puxa do IXC as O.S finalizadas do mês (e do mês passado nos primeiros dias)
+        foreach (array_unique([date('Y-m'), date('Y-m', strtotime('-5 day'))]) as $mI) {
+            $r = inst_imp_puxar($mI);
+            if ($r['novas']) echo date('Y-m-d H:i:s') . " instalações: {$r['novas']} O.S de $mI puxadas do IXC" . PHP_EOL;
+        }
         if ($n = inst_an_atualizar(300)) echo date('Y-m-d H:i:s') . " análise da instalação: $n instalação(ões) consultadas no IXC" . PHP_EOL;
     } catch (Throwable $e) {
         echo date('Y-m-d H:i:s') . ' análise da instalação: ' . $e->getMessage() . PHP_EOL;
