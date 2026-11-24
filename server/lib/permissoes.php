@@ -14,7 +14,7 @@ const PERM_ARVORE = [
     'dash' => ['Dashboard', []],
     'vendas' => ['Vendas', ['vendas.lista' => ['Vendas', []], 'vendas.mes' => ['Vendas do mês', []]]],
     'com' => ['Comissões', ['com.lista' => ['Comissões', []], 'com.planilha' => ['Comissões planilha', []]]],
-    'rec' => ['Recolhimento', ['rec.lista' => ['Recolhimentos (lançar O.S)', []], 'rec.com' => ['Comissão do recolhimento', []]]],
+    'rec' => ['Recolhimento', ['rec.lista' => ['Recolhimentos (lançar O.S)', []], 'rec.teste' => ['Teste de equipamentos', []], 'rec.com' => ['Comissão do recolhimento', []]]],
     'inst' => ['Instalação', ['inst.lista' => ['Instalações concluídas (lançar O.S)', []], 'inst.com' => ['Comissões da instalação', []], 'inst.analise' => ['Análise da instalação (O.S depois da instalação; decidir pagar ou não)', []]]],
     'rh' => ['RH', [
         'rh.lanc' => ['Lançamentos', [
