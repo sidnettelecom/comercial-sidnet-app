@@ -328,7 +328,8 @@ function inst_imp_puxar(string $mes): array
     $ins = db()->prepare("INSERT INTO instalacoes (cliente, contrato, os, assunto, abertura, fechamento, servico_id, lancado_por, ixc_cliente, ixc_tecnico, obs) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
     $insT = db()->prepare('INSERT OR IGNORE INTO inst_tec (inst_id, tecnico_id, valor) VALUES (?, ?, \'\')');
     $clientes = $tecnicos = [];
-    $out = ['novas' => 0, 'ja' => 0, 'sem_tec' => 0];
+    $out = ['novas' => 0, 'ja' => 0, 'sem_tec' => 0, 'ajudantes' => 0];
+    $semAj = db()->prepare("SELECT id FROM instalacoes WHERE os = ? AND ajudante = '' AND pago_em = ''");
     foreach ($imp as $aid => $sid) {
         $aid = (string)$aid;
         if (!isset($nomesA[$aid])) {
@@ -347,7 +348,13 @@ function inst_imp_puxar(string $mes): array
                 $os = so_digitos((string)($o['id'] ?? ''));
                 if ($os === '') continue;
                 $ja->execute([$os]);
-                if ($ja->fetchColumn()) { $out['ja']++; continue; }
+                if ($ja->fetchColumn()) {
+                    $out['ja']++;
+                    // já estava: se o ajudante ainda não foi informado, tenta pela linha "AJUDANTE:" da O.S
+                    $semAj->execute([$os]);
+                    if (($iid = (int)$semAj->fetchColumn()) && inst_imp_ajudante_aplicar($iid, $o)) $out['ajudantes']++;
+                    continue;
+                }
                 $cid = so_digitos((string)($o['id_cliente'] ?? ''));
                 if ($cid !== '' && !isset($clientes[$cid])) {
                     try { $clientes[$cid] = up((string)(ixc()->um('cliente', 'id', $cid)['razao'] ?? '')); } catch (Throwable) { $clientes[$cid] = ''; }
@@ -364,8 +371,10 @@ function inst_imp_puxar(string $mes): array
                 db()->beginTransaction();
                 $ins->execute([($clientes[$cid] ?? '') ?: 'CLIENTE ' . $cid, $ct === '0' ? '' : $ct, $os, $nomesA[$aid], $ab, $fe, $sid, 'IXC (puxado)', $cid, $nomeTec,
                     $tec ? '' : inst_imp_aviso_tec($nomeTec)]);
-                if ($tec) $insT->execute([(int)db()->lastInsertId(), $tec]);
+                $iid = (int)db()->lastInsertId();
+                if ($tec) $insT->execute([$iid, $tec]);
                 db()->commit();
+                if (inst_imp_ajudante_aplicar($iid, $o)) $out['ajudantes']++;
                 $out['novas']++;
                 if (!$tec) $out['sem_tec']++;
             }
@@ -374,6 +383,47 @@ function inst_imp_puxar(string $mes): array
     }
     $out['limpas'] = inst_imp_limpar();
     return $out;
+}
+
+/**
+ * Ajudante escrito na O.S do IXC (pedido do ALEX, 2026-11-24): uma linha "AJUDANTE: NOME" ou "AJUDANTE: NÃO"
+ * na observação/mensagem da O.S ou na mensagem de fechamento. Devolve null (sem a linha), 'N' (sem ajudante) ou o nome.
+ */
+function inst_imp_ajudante_texto(array $o): ?string
+{
+    $txt = '';
+    foreach (['mensagem_resposta', 'mensagem', 'obs', 'observacao'] as $c) $txt .= "\n" . (string)($o[$c] ?? '');
+    $txt = html_entity_decode(strip_tags(str_ireplace(['<br>', '<br/>', '<br />', '</p>'], "\n", $txt)), ENT_QUOTES, 'UTF-8');
+    if (!preg_match_all('/AJUDANTE\s*[:=\-]\s*([^\r\n;|]+)/iu', $txt, $m)) return null;
+    $v = up(trim(end($m[1]), " .,-\t")); // vale a última linha escrita
+    if ($v === '') return null;
+    return preg_match('/^(N[AÃ]O|NENHUM|SEM|SOZINHO|-)\b/u', $v) ? 'N' : $v;
+}
+
+/** Aplica o ajudante escrito na O.S do IXC na instalação $id (só se ainda não informado). Devolve true se gravou. */
+function inst_imp_ajudante_aplicar(int $id, array $o): bool
+{
+    $v = inst_imp_ajudante_texto($o);
+    if ($v === null) return false;
+    $r = inst_um($id);
+    if (!$r || $r['ajudante'] !== '' || $r['pago_em'] !== '') return false;
+    if ($v === 'N') { db()->prepare("UPDATE instalacoes SET ajudante = 'N', ajudante_id = 0 WHERE id = ?")->execute([$id]); return true; }
+    $aj = inst_imp_tecnico_ativo($v);
+    if (!$aj) { // só o primeiro nome ou parte do nome: vale se um técnico só começa assim
+        $alvo = up(sem_acento($v));
+        $acha = array_values(array_filter(inst_tecnicos(true), fn($t) => str_starts_with(up(sem_acento($t['nome'])) . ' ', $alvo . ' ')));
+        if (count($acha) === 1) $aj = (int)$acha[0]['id'];
+    }
+    $aviso = '';
+    if (!$aj) $aviso = "Ajudante no IXC: $v (não está na lista de técnicos): escolha o ajudante.";
+    elseif (!$r['tecs']) $aviso = "Ajudante no IXC: $v. Escolha o técnico que fez para gravar o ajudante.";
+    elseif (in_array($aj, array_column($r['tecs'], 'id'), true)) $aviso = "No IXC o ajudante ($v) é o mesmo técnico da O.S: confira.";
+    if ($aviso !== '') {
+        if (!str_contains($r['obs'], $aviso)) db()->prepare("UPDATE instalacoes SET obs = TRIM(obs || ' ' || ?) WHERE id = ?")->execute([$aviso, $id]);
+        return false;
+    }
+    try { inst_ajudante_salvar($id, (string)$aj, 'IXC (puxado)'); } catch (Throwable) { return false; }
+    return true;
 }
 
 /** Id do técnico de instalação ATIVO com esse nome (sem acento), ou 0. Não cria. */
