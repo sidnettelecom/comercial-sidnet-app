@@ -256,3 +256,107 @@ function inst_an_por_tecnico(array $linhas): array
     usort($out, fn($a, $b) => [$b['com_os'], $a['nome']] <=> [$a['com_os'], $b['nome']]);
     return $out;
 }
+
+/*
+ * Puxar do IXC as instalações concluídas (pedido do ALEX, 2026-11-24): todas as O.S finalizadas no mês com os assuntos
+ * escolhidos (ex.: instalação, mudança de endereço) entram em Instalações concluídas e na análise de 30 dias.
+ * Só leitura no IXC. Cada assunto escolhido vira um tipo de serviço do portal (config 'importar' => [assunto_id => servico_id]).
+ * O técnico vem do IXC (id_tecnico); quem agendou e o 2º técnico o gestor completa em "Corrigir".
+ */
+
+/** Assuntos do IXC que são instalação, informados pelo ALEX em 2026-11-24 (padrão até alguém mudar na tela) */
+const INST_IMP_PADRAO = ['11' => 0, '31' => 0];
+
+/** Assuntos escolhidos para puxar: [assunto_id => servico_id] (0 = escolhe pelo nome do assunto) */
+function inst_imp_assuntos(): array
+{
+    $c = inst_an_config();
+    return array_map('intval', array_key_exists('importar', $c) ? (array)$c['importar'] : INST_IMP_PADRAO);
+}
+
+/** Serviço do portal para um assunto sem serviço escolhido: "mudança" -> MUDANÇA DE ENDEREÇO, senão INSTALAÇÃO NOVA (ou um com o nome do assunto). */
+function inst_imp_servico_padrao(string $assunto): int
+{
+    $a = up(sem_acento($assunto));
+    $alvo = str_contains($a, 'MUDANCA') ? 'MUDANÇA DE ENDEREÇO' : (str_contains($a, 'PONTO') ? '2º PONTO' : 'INSTALAÇÃO NOVA');
+    return inst_lista_por_nome('servico', $alvo) ?: inst_lista_por_nome('servico', $assunto ?: $alvo, true);
+}
+
+/** Salva os assuntos marcados para puxar: $in = [assunto_id => ['on' => 1, 'servico' => id]] */
+function inst_imp_config_salvar(array $in): int
+{
+    $c = inst_an_config();
+    $imp = [];
+    foreach ($in as $aid => $l) {
+        if (empty($l['on']) || !isset($c['assuntos'][(string)$aid])) continue;
+        $sid = (int)($l['servico'] ?? 0);
+        if (!$sid) { require_once __DIR__ . '/ixc.php'; $sid = inst_imp_servico_padrao((string)$c['assuntos'][(string)$aid]); }
+        $imp[(string)$aid] = $sid;
+    }
+    $c['importar'] = $imp;
+    inst_an_config_gravar($c);
+    return count($imp);
+}
+
+/**
+ * Puxa do IXC as O.S finalizadas no mês (aaaa-mm) com os assuntos escolhidos e lança as que ainda não estão no portal.
+ * Devolve ['novas' => n, 'ja' => n, 'sem_tec' => n].
+ */
+function inst_imp_puxar(string $mes): array
+{
+    if (destino() !== 'ixc') throw new RuntimeException('Puxar instalações só funciona com o IXC.');
+    if (!preg_match('/^\d{4}-\d{2}$/', $mes)) throw new RuntimeException('Escolha o mês.');
+    $imp = inst_imp_assuntos();
+    if (!$imp) throw new RuntimeException('Escolha antes quais assuntos de O.S são instalação (ex.: instalação, mudança de endereço).');
+    require_once __DIR__ . '/ixc.php';
+    $ini = $mes . '-01';
+    $fim = (new DateTimeImmutable($ini))->modify('last day of this month')->format('Y-m-d');
+    $parada = (new DateTimeImmutable($ini))->modify('-120 day')->format('Y-m-d'); // O.S abertas bem antes do mês não fecham nele
+    $nomesA = inst_an_config()['assuntos'];
+    $ja = db()->prepare("SELECT 1 FROM instalacoes WHERE os = ?");
+    $ins = db()->prepare("INSERT INTO instalacoes (cliente, contrato, os, assunto, abertura, fechamento, servico_id, lancado_por, ixc_cliente, obs) VALUES (?,?,?,?,?,?,?,?,?,?)");
+    $insT = db()->prepare('INSERT OR IGNORE INTO inst_tec (inst_id, tecnico_id, valor) VALUES (?, ?, \'\')');
+    $clientes = $tecnicos = [];
+    $out = ['novas' => 0, 'ja' => 0, 'sem_tec' => 0];
+    foreach ($imp as $aid => $sid) {
+        $aid = (string)$aid;
+        if (!isset($nomesA[$aid])) {
+            try { $nomesA[$aid] = up((string)(ixc()->um('su_oss_assunto', 'id', $aid)['assunto'] ?? '')); } catch (Throwable) { $nomesA[$aid] = ''; }
+        }
+        if (!$sid) $sid = inst_imp_servico_padrao($nomesA[$aid]);
+        for ($pg = 1; $pg <= 20; $pg++) {
+            $lista = ixc()->listar('su_oss_chamado', 'id_assunto', (string)$aid, '=', 500, 'desc', $pg);
+            if (!$lista) break;
+            $velhas = 0;
+            foreach ($lista as $o) {
+                $ab = rec_data_ixc($o['data_abertura'] ?? '');
+                if ($ab !== '' && $ab < $parada) { $velhas++; continue; }
+                $fe = rec_data_ixc($o['data_fechamento'] ?? '');
+                if (($o['status'] ?? '') !== 'F' || $fe < $ini || $fe > $fim) continue;
+                $os = so_digitos((string)($o['id'] ?? ''));
+                if ($os === '') continue;
+                $ja->execute([$os]);
+                if ($ja->fetchColumn()) { $out['ja']++; continue; }
+                $cid = so_digitos((string)($o['id_cliente'] ?? ''));
+                if ($cid !== '' && !isset($clientes[$cid])) {
+                    try { $clientes[$cid] = up((string)(ixc()->um('cliente', 'id', $cid)['razao'] ?? '')); } catch (Throwable) { $clientes[$cid] = ''; }
+                }
+                $tid = so_digitos((string)($o['id_tecnico'] ?? ''));
+                if ($tid !== '' && $tid !== '0' && !isset($tecnicos[$tid])) {
+                    try { $f = ixc()->um('funcionarios', 'id', $tid); $tecnicos[$tid] = inst_tecnico_por_nome(up((string)($f['funcionario'] ?? ($f['nome'] ?? ''))), true); } catch (Throwable) { $tecnicos[$tid] = 0; }
+                }
+                $tec = (int)($tecnicos[$tid] ?? 0);
+                $ct = so_digitos((string)($o['id_contrato_kit'] ?? ''));
+                db()->beginTransaction();
+                $ins->execute([($clientes[$cid] ?? '') ?: 'CLIENTE ' . $cid, $ct === '0' ? '' : $ct, $os, $nomesA[$aid], $ab, $fe, $sid, 'IXC (puxado)', $cid,
+                    $tec ? '' : 'Sem técnico no IXC: corrija e escolha quem fez.']);
+                if ($tec) $insT->execute([(int)db()->lastInsertId(), $tec]);
+                db()->commit();
+                $out['novas']++;
+                if (!$tec) $out['sem_tec']++;
+            }
+            if ($velhas === count($lista) || count($lista) < 500) break;
+        }
+    }
+    return $out;
+}
