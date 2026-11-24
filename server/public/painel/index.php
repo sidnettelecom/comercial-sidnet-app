@@ -127,6 +127,7 @@ const PERM_ACOES = [
     'plano_salvar' => 'cfg.planos', 'plano_novo' => 'cfg.planos', 'plano_ativo' => 'cfg.planos', 'plano_excluir' => 'cfg.planos', 'plano_mover' => 'cfg.planos', 'planos_ixc' => 'cfg.planos',
     'comissoes_salvar' => 'com.lista', 'comissoes_ixc' => 'com.lista', 'planilha_importar' => 'com.planilha', 'planilha_salvar' => 'com.planilha',
     'rec_salvar' => 'rec.lista', 'rec_excluir' => 'rec.lista', 'rec_buscar' => 'rec.lista', 'rec_mais' => 'rec.lista',
+    'rec_imp_puxar' => 'rec.lista', 'rec_marcar' => 'rec.lista', 'rec_imp_cfg' => 'rec.lista', 'rec_imp_assuntos' => 'rec.lista',
     'rec_regra_salvar' => 'rec.com', 'rec_com_salvar' => 'rec.com', 'rec_pagar' => 'rec.com',
     'inst_salvar' => 'inst.lista', 'inst_excluir' => 'inst.lista', 'inst_buscar' => 'inst.lista', 'inst_mais' => 'inst.lista', 'inst_mais_tec' => 'inst.lista',
     'inst_servicos_salvar' => 'inst.com', 'inst_com_salvar' => 'inst.com', 'inst_pagar' => 'inst.com',
@@ -404,12 +405,35 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($a === 'rec_salvar') {
             $recForm = (array)($_POST['r'] ?? []);
             $recForm['id'] = $id;
+            $antes = $id ? rec_um($id) : null;
             [$rid, $aviso] = rec_salvar($recForm, $id, $quem);
             $rr = rec_um($rid);
             registrar($quem, $id ? 'corrigiu O.S de recolhimento' : 'lançou O.S de recolhimento', "#$rid {$rr['cliente']} contrato {$rr['contrato']} ({$rr['qtd']} equip.)");
-            $msg = ($id ? 'O.S corrigida.' : "O.S de {$rr['cliente']} lançada ({$rr['qtd']} equipamento" . ($rr['qtd'] == 1 ? '' : 's') . ').') . ($aviso ? ' ' . $aviso : '');
+            $msg = ($antes && $antes['situacao'] !== 'ok' ? "Equipamentos de {$rr['cliente']} salvos ({$rr['qtd']} equip.): a O.S foi para Recolhidos." : ($id ? 'O.S corrigida.' : "O.S de {$rr['cliente']} lançada ({$rr['qtd']} equipamento" . ($rr['qtd'] == 1 ? '' : 's') . ').')) . ($aviso ? ' ' . $aviso : '');
             $recForm = null;
             $_GET['mes'] = substr($rr['fechamento'], 0, 7);
+        } elseif ($a === 'rec_imp_puxar') {
+            $mesR = (string)($_POST['mes'] ?? '');
+            $r = rec_imp_puxar($mesR);
+            registrar($quem, 'puxou O.S de recolhimento do IXC', mes_nome($mesR) . " ({$r['novas']} novas)");
+            $msg = $r['novas'] ? "{$r['novas']} O.S de recolhimento fechadas em " . mes_nome($mesR) . ' puxadas do IXC (só leitura). As recolhidas estão em "A preencher": falta colocar os equipamentos.' . ($r['ja'] ? " {$r['ja']} já estavam aqui." : '') . ($r['nao'] ? " {$r['nao']} delas fecharam como não recolhido e foram para \"Fechadas sem recolher\"." : '')
+                : 'Nenhuma O.S de recolhimento nova fechada em ' . mes_nome($mesR) . ($r['ja'] ? " ({$r['ja']} já estavam aqui)." : '.');
+        } elseif ($a === 'rec_marcar') {
+            $sit = (string)($_POST['sit'] ?? '');
+            $rr = rec_marcar($id, $sit, (string)($_POST['motivo'] ?? ''), $quem);
+            registrar($quem, $sit === 'nao' ? 'marcou O.S de recolhimento como fechada sem recolher' : 'voltou O.S de recolhimento para a preencher', "#$id {$rr['cliente']} O.S {$rr['os']}");
+            $msg = $sit === 'nao' ? "O.S de {$rr['cliente']} foi para \"Fechadas sem recolher\". Se o equipamento chegar depois, use Preencher." : "O.S de {$rr['cliente']} voltou para \"A preencher\".";
+        } elseif ($a === 'rec_imp_cfg' || $a === 'rec_imp_assuntos') {
+            if (!$admin) throw new RuntimeException('Só o gestor admin escolhe os assuntos.');
+            if ($a === 'rec_imp_assuntos') {
+                $n = inst_an_assuntos_ixc();
+                registrar($quem, 'carregou assuntos de O.S do IXC (recolhimento)', (string)$n);
+                $msg = "$n assuntos de O.S carregados do IXC. Marque os que são recolhimento e salve.";
+            } else {
+                $n = rec_imp_config_salvar(array_keys(array_filter((array)($_POST['ass'] ?? []))));
+                registrar($quem, 'escolheu assuntos de recolhimento para puxar do IXC', (string)$n);
+                $msg = "$n assunto(s) de O.S marcados como recolhimento.";
+            }
         } elseif ($a === 'rec_excluir') {
             $rr = rec_um($id);
             rec_excluir($id);
@@ -1055,6 +1079,7 @@ td.dlt{font-weight:800;white-space:nowrap}
 .rec-form input,.rec-form select,.rec-form textarea{width:100%;min-width:0;font:inherit;color:var(--ink);padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--bg)}
 .rec-form .larga{grid-column:1/-1}.rec-form textarea{min-height:64px;font-family:var(--mono);font-size:13px;text-transform:uppercase}
 .rec-form .comb{display:flex;gap:6px}.rec-form .comb input{flex:1}
+.abas{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}.abas a{padding:9px 14px;border-radius:12px;border:1px solid var(--line);color:var(--muted);text-decoration:none;font-weight:700;font-size:14px}.abas a.on{background:var(--surface);color:var(--ink);border-color:var(--brand)}
 .rec-eqs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 12px;margin:6px 0 4px;max-width:760px}.rec-eqs input{font-family:var(--mono);text-transform:uppercase}
 .mac{display:inline-block;font:600 12px/1.2 var(--mono);background:var(--bg);border-radius:6px;padding:3px 6px;margin:1px 2px 1px 0;white-space:nowrap}
 .rec tfoot td{font-weight:800;border-bottom:0}.rec td{vertical-align:middle}
@@ -1758,7 +1783,9 @@ th.c,td.c{text-align:center}
     $mesR = preg_match('/^\d{4}-\d{2}$/', (string)($_GET['mes'] ?? '')) ? (string)$_GET['mes'] : date('Y-m');
     if (!in_array($mesR, $mesesR, true)) { $mesesR[] = $mesR; rsort($mesesR); }
     $buscaR = trim((string)($_GET['q'] ?? ''));
-    $linR = rec_do_mes($mesR, $buscaR);
+    $abaR = in_array($_GET['aba'] ?? '', ['pendente', 'nao'], true) ? (string)$_GET['aba'] : 'ok';
+    $linR = rec_do_mes($abaR === 'ok' ? $mesR : '', $buscaR, $abaR);
+    $contR = rec_contagem();
     $tecsR = rec_tecnicos();
     $edit = $recForm;
     if ($edit === null && ($eid = (int)($_GET['editar'] ?? 0)) && ($er = rec_um($eid)) && $er['pago_em'] === '') {
@@ -1777,10 +1804,30 @@ th.c,td.c{text-align:center}
     $eqR = array_sum(array_map(fn($r) => (int)$r['qtd'], $linR));
     $eqF = array_sum(array_map(fn($r) => $r['funcionando'] === 'SIM' ? (int)$r['qtd'] : 0, $linR));
     $vR = fn(string $k) => h((string)($edit[$k] ?? ''));
-    $linkMes = '?p=recolhimentos&amp;mes=' . h($mesR);
+    $linkMes = '?p=recolhimentos&amp;mes=' . h($mesR) . ($abaR !== 'ok' ? '&amp;aba=' . $abaR : '');
+    $preencher = !empty($edit['id']) && ($edit['situacao'] ?? 'ok') !== 'ok';
+    if ($preencher && $recForm === null && count(rec_tecnicos(true)) > 1) $edit['tecnico_id'] = 0; // mais de um recolhedor: o financeiro escolhe
 ?>
-  <div class="topo"><div><h1>Recolhimentos</h1><p class="small">O financeiro lança aqui as O.S de recolhimento que já fez no IXC, como na planilha do mês. O sistema não abre nem fecha O.S e não grava nada no IXC: serve só para a comissão.</p></div>
+  <div class="topo"><div><h1>Recolhimentos</h1><p class="small">As O.S de recolhimento fechadas no IXC chegam sozinhas em "A preencher" (o sistema confere a cada 6 horas). O financeiro só coloca os equipamentos recolhidos. O sistema não abre nem fecha O.S e não grava nada no IXC: serve só para a comissão.</p></div>
     <a class="bt" href="<?= $linkMes ?>&amp;novo=1#form-rec" style="background:var(--g-cta);border:0;color:#1c1203;height:46px;display:inline-flex;align-items:center;padding:0 18px;border-radius:14px;font-weight:800">+ Lançar O.S de recolhimento</a></div>
+  <nav class="abas" aria-label="Situação">
+    <?php foreach (REC_SIT as $sk => $sn): $nS = $sk === 'ok' ? null : $contR[$sk]; ?><a href="?p=recolhimentos&amp;mes=<?= h($mesR) ?><?= $sk !== 'ok' ? '&amp;aba=' . $sk : '' ?>" class="<?= $abaR === $sk ? 'on' : '' ?>"><?= h($sn) ?><?= $nS ? ' <span class="pill ' . ($sk === 'pendente' ? 'q' : 'mu') . '">' . $nS . '</span>' : '' ?></a><?php endforeach ?>
+  </nav>
+  <?php if ($abaR === 'pendente'): $impR = rec_imp_assuntos(); $nomesAR = inst_an_config()['assuntos']; ?>
+  <div class="card"><h2>Puxar do IXC</h2>
+    <p class="small" style="margin:0 0 8px">Traz as O.S de recolhimento <b>finalizadas</b> no mês (só leitura, nada é gravado no IXC). As que já estão aqui não repetem. O sistema também puxa sozinho o mês atual a cada 6 horas.</p>
+    <div class="row"><span class="small">Assuntos:</span><?php foreach ($impR as $aid): ?><span class="pill mu"><?= h(($nomesAR[(string)$aid] ?? '') ?: 'assunto ' . $aid) ?></span><?php endforeach ?><?= $impR ? '' : '<span class="small er">nenhum achado: ' . ($admin ? 'escolha abaixo' : 'peça ao admin para escolher') . '</span>' ?>
+      <?php if (destino() === 'ixc'): ?><form method="post" action="<?= $linkMes ?>" class="in"><?= csrf_campo() ?><select name="mes" aria-label="Mês do fechamento"><?php foreach (array_unique([date('Y-m'), date('Y-m', strtotime('first day of last month'))]) as $om): ?><option value="<?= h($om) ?>"><?= h(mes_nome($om)) ?></option><?php endforeach ?></select><button class="pri" name="acao" value="rec_imp_puxar">Puxar agora</button></form><?php endif ?></div>
+    <?php if ($admin): ?><details style="margin-top:10px"><summary>Escolher os assuntos que são recolhimento</summary>
+      <form method="post" action="<?= $linkMes ?>" style="margin-top:8px"><?= csrf_campo() ?><input type="hidden" name="acao" value="rec_imp_cfg">
+        <?php if ($nomesAR): ?><div style="columns:300px;column-gap:16px"><?php foreach ($nomesAR as $aid => $an): ?>
+          <label style="display:block;break-inside:avoid;padding:2px 0"><input type="checkbox" name="ass[<?= h((string)$aid) ?>]" value="1" <?= in_array((string)$aid, $impR, true) ? 'checked' : '' ?>> <?= h($an ?: '#' . $aid) ?> <span class="small">(<?= h((string)$aid) ?>)</span></label>
+        <?php endforeach ?></div><?php else: ?><p class="small">Carregue a lista de assuntos do IXC primeiro.</p><?php endif ?>
+        <div class="row" style="margin-top:8px"><button class="pri" <?= $nomesAR ? '' : 'disabled' ?>>Salvar assuntos</button><button name="acao" value="rec_imp_assuntos" formnovalidate>Carregar assuntos do IXC</button></div>
+      </form></details><?php endif ?>
+  </div>
+  <?php endif ?>
+  <?php if ($abaR === 'ok'): ?>
   <form method="get" class="row"><input type="hidden" name="p" value="recolhimentos">
     <select name="mes" aria-label="Mês do fechamento" data-auto><?php foreach ($mesesR as $om): ?><option value="<?= h($om) ?>" <?= $om === $mesR ? 'selected' : '' ?>><?= h(mes_nome($om)) ?></option><?php endforeach ?></select>
     <input name="q" value="<?= h($buscaR) ?>" placeholder="Buscar nome, contrato, O.S, MAC ou modelo" aria-label="Buscar"><button>Buscar</button>
@@ -1791,10 +1838,12 @@ th.c,td.c{text-align:center}
     <div class="kpi"><span>Funcionando</span><b class="ok"><?= $eqF ?></b><small>equipamentos</small></div>
     <div class="kpi"><span>Sem funcionar</span><b class="er"><?= $eqR - $eqF ?></b><small>equipamentos</small></div>
   </div>
+  <?php endif ?>
   <?php if ($abrirForm): ?>
   <form method="post" action="<?= $linkMes ?>" class="card" id="form-rec"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$edit['id'] ?>">
     <button name="acao" value="rec_salvar" tabindex="-1" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px">Salvar</button><?php /* Enter salva (não busca o nome) */ ?>
-    <h2><?= $edit['id'] ? 'Corrigir O.S de recolhimento' : 'Lançar O.S de recolhimento' ?></h2>
+    <h2><?= $preencher ? 'Preencher os equipamentos da O.S ' . h((string)$edit['os']) : ($edit['id'] ? 'Corrigir O.S de recolhimento' : 'Lançar O.S de recolhimento') ?></h2>
+    <?php if ($preencher): ?><p class="small" style="margin:0 0 8px">Cliente, contrato e datas vieram do IXC. Coloque o MAC e o modelo de cada equipamento recolhido, confira quem recolheu e salve: a O.S vai para Recolhidos e entra na comissão.</p><?php endif ?>
     <?php if (!$tecsR): ?><div class="msg">Ainda não tem recolhedor cadastrado. <?= $admin ? 'Cadastre em Configurações → Permissões, no fim da página.' : 'Peça ao admin para cadastrar em Configurações.' ?></div><?php endif ?>
     <div class="rec-form">
       <label>Nº da O.S no IXC<span class="comb"><input name="r[os]" value="<?= $vR('os') ?>" inputmode="numeric" placeholder="ex.: 104532">
@@ -1814,10 +1863,27 @@ th.c,td.c{text-align:center}
         <button id="eq-fim" name="acao" value="rec_mais" formnovalidate formaction="<?= $linkMes ?>#eq-fim">+ Adicionar equipamento</button></div>
       <label class="larga">Observação<input name="r[obs]" value="<?= $vR('obs') ?>" maxlength="300"></label>
     </div>
-    <div class="row" style="margin-top:10px"><button class="pri" name="acao" value="rec_salvar"><?= $edit['id'] ? 'Salvar correção' : 'Salvar O.S' ?></button><a href="<?= $linkMes ?>">Cancelar</a>
+    <div class="row" style="margin-top:10px"><button class="pri" name="acao" value="rec_salvar"><?= $preencher ? 'Salvar como recolhido' : ($edit['id'] ? 'Salvar correção' : 'Salvar O.S') ?></button><a href="<?= $linkMes ?>">Cancelar</a>
       <span class="small">Quem lançou fica gravado. Depois que a comissão é paga, a O.S não muda mais.</span></div>
   </form>
   <?php endif ?>
+  <?php if ($abaR !== 'ok'): ?>
+  <div class="card tw"><h2><?= $abaR === 'pendente' ? 'O.S fechadas no IXC esperando os equipamentos' : 'O.S fechadas sem recolher o equipamento' ?></h2>
+    <p class="small" style="margin:0 0 8px"><?= $abaR === 'pendente' ? 'Use "Preencher" para colocar os equipamentos. Se a O.S fechou sem recolher nada, use "Sem recolher" e escreva o motivo.' : 'O.S que fecharam no IXC com diagnóstico de não recolhido (ou que o financeiro marcou). Não entram na comissão. Se o equipamento chegar depois, use "Preencher".' ?></p>
+    <table class="rec">
+    <thead><tr><th>Cliente</th><th>Contrato</th><th>O.S</th><th>Abertura O.S</th><th>Fechamento O.S</th><th>Diagnóstico no IXC</th><th><?= $abaR === 'nao' ? 'Motivo' : 'Veio de' ?></th><th></th></tr></thead>
+    <?php foreach ($linR as $r): ?>
+    <tr><td><b><?= h($r['cliente']) ?></b></td><td class="n"><?= h($r['contrato']) ?></td><td class="n"><?= h($r['os']) ?></td>
+      <td class="n"><?= h(rec_dt($r['abertura']) ?: '—') ?></td><td class="n"><?= h(rec_dt($r['fechamento'])) ?></td>
+      <td class="small"><?= h($r['diagnostico'] ?: '—') ?></td>
+      <td class="small"><?= $abaR === 'nao' ? h($r['obs'] ?: '—') . ($r['alterado_por'] !== '' ? '<br>marcado por ' . h($r['alterado_por']) : '') : h($r['lancado_nome']) ?></td>
+      <td><div class="acoes"><a class="bt pri" href="?p=recolhimentos&amp;mes=<?= h(substr($r['fechamento'], 0, 7)) ?>&amp;aba=<?= $abaR ?>&amp;editar=<?= (int)$r['id'] ?>#form-rec">Preencher</a>
+        <?php if ($abaR === 'pendente'): ?><form method="post" action="<?= $linkMes ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$r['id'] ?>"><input type="hidden" name="sit" value="nao"><input name="motivo" placeholder="motivo (ex.: cliente não entregou)" aria-label="Motivo" maxlength="300" required><button name="acao" value="rec_marcar">Sem recolher</button></form>
+        <?php else: ?><form method="post" action="<?= $linkMes ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$r['id'] ?>"><input type="hidden" name="sit" value="pendente"><button name="acao" value="rec_marcar" title="Volta para A preencher">Voltar</button></form><?php endif ?></div></td></tr>
+    <?php endforeach ?>
+    <?php if (!$linR): ?><tr><td colspan="8" class="small"><?= $abaR === 'pendente' ? 'Nenhuma O.S esperando. As novas chegam sozinhas quando fecham no IXC.' : 'Nenhuma O.S fechada sem recolher.' ?></td></tr><?php endif ?>
+  </table></div>
+  <?php else: ?>
   <div class="card tw"><table class="rec">
     <thead><tr><th>Cliente</th><th>Contrato</th><th>Nº equip.</th><th>MAC e modelo</th><th>Abertura O.S</th><th>Fechamento O.S</th><th>Funcionando</th><th>Recolhedor</th><th>Lançado por</th><th></th></tr></thead>
     <?php foreach ($linR as $r): ?>
@@ -1834,6 +1900,7 @@ th.c,td.c{text-align:center}
     <?php if (!$linR): ?><tr><td colspan="10" class="small">Nenhuma O.S <?= $buscaR !== '' ? 'nessa busca' : 'fechada em ' . h(mes_nome($mesR)) ?>.</td></tr><?php endif ?>
     <tfoot><tr><td colspan="2">TOTAL</td><td class="n"><?= $eqR ?></td><td colspan="7" class="small">equipamentos nas O.S listadas</td></tr></tfoot>
   </table></div>
+  <?php endif ?>
 
 <?php elseif ($p === 'rec_comissao'):
     $mesesR = rec_meses();

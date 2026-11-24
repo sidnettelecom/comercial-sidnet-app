@@ -26,6 +26,16 @@ if (destino() === 'ixc' && (!is_file($marca) || time() - (int)filemtime($marca) 
     try {
         require_once __DIR__ . '/../lib/instalacao.php';
         inst_tabela();
+        // recolhimentos: O.S de recolhimento fechadas no IXC vão para "A preencher" (pedido do ALEX, 2026-11-24)
+        try {
+            rec_tabela();
+            foreach (array_unique([date('Y-m'), date('Y-m', strtotime('-5 day'))]) as $mR) {
+                $r = rec_imp_puxar($mR);
+                if ($r['novas']) echo date('Y-m-d H:i:s') . " recolhimentos: {$r['novas']} O.S de $mR puxadas do IXC" . PHP_EOL;
+            }
+        } catch (Throwable $e) {
+            echo date('Y-m-d H:i:s') . ' recolhimentos: ' . $e->getMessage() . PHP_EOL;
+        }
         // instalações concluídas: puxa do IXC as O.S finalizadas do mês (e do mês passado nos primeiros dias)
         foreach (array_unique([date('Y-m'), date('Y-m', strtotime('-5 day'))]) as $mI) {
             $r = inst_imp_puxar($mI);
