@@ -14,6 +14,7 @@ require_once __DIR__ . '/../../lib/dashboard.php';
 require_once __DIR__ . '/../../lib/permissoes.php';
 require_once __DIR__ . '/../../lib/recolhimento.php';
 require_once __DIR__ . '/../../lib/instalacao.php';
+require_once __DIR__ . '/../../lib/inst_rank.php';
 require_once __DIR__ . '/../../lib/rh.php';
 require_once __DIR__ . '/../../lib/recibos.php';
 require_once __DIR__ . '/../../lib/servicos.php';
@@ -853,13 +854,13 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
 $p = !empty($gestor['trocar']) ? 'trocar' : ($_GET['p'] ?? '');
 $AREA_PAG = ['vendas' => 'vendas.lista', 'excluir' => 'vendas.lista', 'mes' => 'vendas.mes', 'dash' => 'dash', 'vendedores' => 'cfg.users', 'planos' => 'cfg.planos',
     'comissoes' => 'com.lista', 'planilha' => 'com.planilha', 'gestores' => 'cfg.gest', 'config' => 'admin', 'senha' => '', 'trocar' => '',
-    'recolhimentos' => 'rec.lista', 'rec_teste' => 'rec.teste', 'rec_comissao' => 'rec.com', 'instalacoes' => 'inst.lista', 'inst_comissao' => 'inst.com', 'inst_analise' => 'inst.analise',
+    'recolhimentos' => 'rec.lista', 'rec_teste' => 'rec.teste', 'rec_comissao' => 'rec.com', 'instalacoes' => 'inst.lista', 'inst_comissao' => 'inst.com', 'inst_analise' => 'inst.analise', 'inst_rank' => 'inst.rank',
     'rh_lancar' => 'rh.lanc', 'rh_fecha' => 'rh.fecha', 'rh_func' => 'rh.func', 'rh_cfg' => 'admin', 'recibos' => 'recibos', 'auditoria' => 'recibos.audit',
     'serv' => 'serv.saldo', 'serv_extrato' => 'serv.saldo', 'serv_lista' => 'serv.saldo', 'serv_lancar' => 'serv', 'serv_cad' => 'serv.cad', 'colab' => 'cfg.colab', 'rixc' => 'admin', 'aluguel' => 'aluguel.ver'];
 if (!isset($AREA_PAG[$p])) $p = 'vendas';
 if ($logado && $p !== 'trocar' && ($_GET['p'] ?? '') === '' && !$pode('vendas.lista')) {
     // tela inicial: a primeira opção liberada, na ordem do menu
-    foreach (['dash', 'mes', 'comissoes', 'planilha', 'recolhimentos', 'rec_teste', 'rec_comissao', 'instalacoes', 'inst_analise', 'inst_comissao', 'rh_lancar', 'rh_fecha', 'rh_func', 'serv', 'serv_lancar', 'serv_cad', 'aluguel', 'recibos', 'auditoria', 'gestores', 'vendedores', 'planos', 'colab'] as $pg)
+    foreach (['dash', 'mes', 'comissoes', 'planilha', 'recolhimentos', 'rec_teste', 'rec_comissao', 'instalacoes', 'inst_analise', 'inst_rank', 'inst_comissao', 'rh_lancar', 'rh_fecha', 'rh_func', 'serv', 'serv_lancar', 'serv_cad', 'aluguel', 'recibos', 'auditoria', 'gestores', 'vendedores', 'planos', 'colab'] as $pg)
         if ($pode($AREA_PAG[$pg])) { $p = $pg; break; }
 }
 if ($logado && $AREA_PAG[$p] !== '' && !($AREA_PAG[$p] === 'admin' ? $admin : $pode($AREA_PAG[$p]))) $p = 'sem';
@@ -1101,6 +1102,15 @@ main>*{min-width:0}
 .dh-prog{display:flex;align-items:center;gap:8px;min-width:170px}.dh-prog .dh-bar{flex:1;margin:0;height:12px}.dh-prog b{font-size:12.5px;min-width:42px;text-align:right}
 .dh-metas table{min-width:860px}.dh-metas td{vertical-align:middle}.dh-metas input{width:76px;text-align:center;font-weight:700}
 .dh-chip{display:inline-block;white-space:nowrap;font-size:11.5px;font-weight:800;padding:3px 8px;border-radius:8px}.dh-chip.ok{background:var(--ok-bg);color:var(--ok)}.dh-chip.q{background:#fef3c7;color:#92400e}.dh-chip.er{background:var(--er-bg);color:var(--er)}
+.rk-podio{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:12px;margin:14px 0}
+.rk-p{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px 16px;display:grid;gap:6px;position:relative}
+.rk-p1{border-color:#f59e0b;box-shadow:0 0 0 2px #fde68a inset}.rk-p2{border-color:#94a3b8}.rk-p3{border-color:#fb923c}
+.rk-med{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:15px;background:#e2e8f0;color:#334155}
+.rk-p1 .rk-med{background:#fde68a;color:#78350f}.rk-p3 .rk-med{background:#fed7aa;color:#7c2d12}
+.rk-nm{font-size:16px}.rk-big{font-size:28px;font-weight:800;line-height:1.1}.rk-big small{font-size:13px;color:var(--muted);font-weight:700}
+.rk-det{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12.5px;font-weight:700;color:var(--muted)}
+.rk-chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.rk-mes td,.rk-mes th{text-align:center}.rk-mes td:first-child,.rk-mes th:first-child{text-align:left}
 td.dlt{font-weight:800;white-space:nowrap}
 .perm{min-width:760px}.perm td,.perm th{vertical-align:middle}.perm th:not(:first-child),.perm td:not(:first-child){text-align:center}.perm .ck input{width:20px;height:20px;cursor:pointer}
 .lado .status a+a{margin-top:-2px}
@@ -1190,7 +1200,7 @@ th.c,td.c{text-align:center}
   <nav aria-label="Seções"><?= ($pode('dash') ? $aba('dash', 'Dashboard') : '')
     . $grupo('vendas', 'Vendas', [['vendas', 'Vendas', $pode('vendas.lista'), ['vendas', 'excluir']], ['mes', 'Vendas do mês', $pode('vendas.mes')], ['comissoes', 'Comissões', $pode('com.lista')], ['planilha', 'Comissões planilha', $pode('com.planilha')] /* PLANILHA-TEMP */])
     . $grupo('recolhimento', 'Recolhimento', [['recolhimentos', 'Recolhimentos', $pode('rec.lista')], ['rec_teste', 'Teste de equipamentos', $pode('rec.teste')], ['rec_comissao', 'Comissão', $pode('rec.com')]])
-    . $grupo('instalacao', 'Instalação', [['instalacoes', 'Instalações concluídas', $pode('inst.lista')], ['inst_analise', 'Análise da instalação', $pode('inst.analise')], ['inst_comissao', 'Comissões', $pode('inst.com')]])
+    . $grupo('instalacao', 'Instalação', [['instalacoes', 'Instalações concluídas', $pode('inst.lista')], ['inst_analise', 'Análise da instalação', $pode('inst.analise')], ['inst_rank', 'Melhores técnicos', $pode('inst.rank')], ['inst_comissao', 'Comissões', $pode('inst.com')]])
     . $grupo('rh', 'RH', [['rh_lancar', 'Lançamentos', $pode('rh.lanc')], ['rh_fecha', 'Fechamento do mês', $pode('rh.fecha')], ['rh_func', 'Funcionários', $pode('rh.func')], ['rh_cfg', 'Feriados e valores', $admin]])
     . $grupo('serv', 'Serviços em execução', [['serv', 'Saldos', $pode('serv.saldo'), ['serv', 'serv_extrato']], ['serv_lancar', 'Lançar', $pode('serv.lanc') || $pode('serv.pag')], ['serv_lista', 'Serviços lançados', $pode('serv.saldo')], ['serv_cad', 'Equipes, obras e preços', $pode('serv.cad')]])
     . ($pode('aluguel.ver') ? $aba('aluguel', 'Controle de aluguel') : '')
@@ -2258,6 +2268,125 @@ th.c,td.c{text-align:center}
     <div class="row" style="margin-top:10px"><button class="pri">Salvar regra</button><?php if ($cfgA['assuntos']): ?><button name="limpar" value="1">Desmarcar todos</button><?php endif ?>
       <?php if (destino() === 'ixc'): ?><button name="acao" value="inst_an_assuntos" formnovalidate>Carregar assuntos do IXC</button><?php endif ?></div>
   </form>
+  <?php endif ?>
+
+<?php elseif ($p === 'inst_rank'):
+    // ---- melhores técnicos: ranking com instalações, retornos (análise) e comissão ----
+    $mesHoje = date('Y-m');
+    $mesesI = inst_meses();
+    $perR = (string)($_GET['per'] ?? $mesHoje);
+    if (!in_array($perR, ['3m', '6m'], true) && !(preg_match('/^\d{4}-\d{2}$/', $perR) && $perR <= $mesHoje)) $perR = $mesHoje;
+    if (preg_match('/^\d{4}-\d{2}$/', $perR) && !in_array($perR, $mesesI, true)) { $mesesI[] = $perR; rsort($mesesI); }
+    $porR = in_array($_GET['por'] ?? '', ['pontos', 'inst', 'qual', 'valor'], true) ? (string)$_GET['por'] : 'pontos';
+    $verValR = $pode('inst.com');
+    if ($porR === 'valor' && !$verValR) $porR = 'pontos';
+    $mesesR = rank_meses($perR);
+    $linR = [];
+    foreach ($mesesR as $m) array_push($linR, ...inst_do_mes($m));
+    $tecR = rank_tecnicos($linR);
+    foreach (rank_recolhimentos($mesesR, $tecR) as $tid => $n) $tecR[$tid]['rec'] = $n;
+    $listaR = rank_ordenar($tecR, $porR);
+    // 6 meses até o fim do período, para o quadro mês a mês
+    $mesesG = array_map(fn($i) => mes_soma(end($mesesR), $i), range(-5, 0));
+    $porMesR = [];
+    foreach ($mesesG as $m) foreach (rank_tecnicos(inst_do_mes($m)) as $tid => $t) { $porMesR[$tid][$m] = $t['inst']; $porMesR[$tid]['nome'] = $t['nome']; }
+    $nomePer = $perR === '3m' ? 'últimos 3 meses' : ($perR === '6m' ? 'últimos 6 meses' : mes_nome($perR));
+    $totInst = count($linR);
+    $finR = $retR = $obsR = 0;
+    foreach ($linR as $r) {
+        $s = $r['an']['sit'] ?? 'fora';
+        if (in_array($s, ['aprovada', 'analisar', 'pagar', 'nao_pagar'], true)) $finR++;
+        if (in_array($s, ['analisar', 'nao_pagar'], true)) $retR++;
+        if (in_array($s, ['observacao', 'verificar'], true)) $obsR++;
+    }
+    $valR = array_sum(array_column($tecR, 'valor'));
+    $servR = [];
+    foreach ($tecR as $t) foreach ($t['serv'] as $sv => $n) $servR[$sv] = ($servR[$sv] ?? 0) + $n;
+    arsort($servR);
+    $Rr = fn(float $v) => 'R$ ' . brl(number_format($v, 2, '.', ''));
+    $pctR = fn(?float $v) => $v === null ? '—' : round($v * 100) . '%';
+    $corQ = fn(?float $v) => $v === null ? 'mu' : ($v >= .9 ? 'ok' : ($v >= .75 ? 'q' : 'er'));
+    $lnkR = fn(array $mais) => '?' . h(http_build_query(array_merge(['p' => 'inst_rank', 'per' => $perR, 'por' => $porR], $mais)));
+    $valorDe = fn(array $t) => match ($porR) { 'inst' => $t['inst'], 'valor' => $t['valor'], 'qual' => $t['sem_ret'] ?? 0, default => max(0, $t['pontos']) };
+    $mxR = max([0.0001, ...array_map(fn($t) => (float)$valorDe($t), $listaR)]);
+    $numR = fn(array $t) => match ($porR) { 'inst' => (string)$t['inst'], 'valor' => $Rr($t['valor']), 'qual' => $pctR($t['sem_ret']), default => (string)$t['pontos'] };
+    $rotR = ['pontos' => 'pontos', 'inst' => 'instalações', 'qual' => 'sem retorno', 'valor' => 'de comissão'][$porR];
+    $mxMes = max([1, ...array_map(fn($x) => max([0, ...array_filter($x, 'is_int')]), $porMesR)]);
+?>
+  <div class="topo">
+    <div><h1>Melhores técnicos</h1><p class="small">Ranking pelas instalações concluídas (lançadas ou puxadas do IXC) e pela Análise da instalação. <b>Pontos = 1 por instalação − <?= RANK_PESO_RETORNO ?> por retorno.</b> Retorno é a instalação que teve O.S que conta nos <?= (int)inst_an_config()['dias'] ?> dias seguintes e que você não liberou com "Pagar comissão". Em dupla, conta para os dois.</p></div>
+    <form method="get" class="row"><input type="hidden" name="p" value="inst_rank"><input type="hidden" name="por" value="<?= h($porR) ?>">
+      <select name="per" aria-label="Período" data-auto><?php foreach ($mesesI as $om): ?><option value="<?= h($om) ?>" <?= $om === $perR ? 'selected' : '' ?>><?= h(mes_nome($om)) ?><?= $om === $mesHoje ? ' (até hoje)' : '' ?></option><?php endforeach ?>
+        <option value="3m" <?= $perR === '3m' ? 'selected' : '' ?>>Últimos 3 meses</option><option value="6m" <?= $perR === '6m' ? 'selected' : '' ?>>Últimos 6 meses</option></select>
+      <noscript><button>Ver</button></noscript></form>
+  </div>
+
+  <section class="dh-kpis" aria-label="Resumo do período">
+    <div class="kpi forte"><span>Instalações</span><b><?= $totInst ?></b><small><?= h(implode(' · ', array_map(fn($k, $v) => "$v " . mb_strtolower($k), array_keys(array_slice($servR, 0, 3, true)), array_slice($servR, 0, 3)))) ?: h($nomePer) ?></small></div>
+    <div class="kpi"><span>Técnicos que instalaram</span><b><?= count($tecR) ?></b><small class="small"><?= count($tecR) ? round($totInst / count($tecR), 1) . ' instalações por técnico' : '—' ?></small></div>
+    <div class="kpi"><span>Sem retorno</span><b class="<?= $corQ($finR ? ($finR - $retR) / $finR : null) ?>"><?= $pctR($finR ? ($finR - $retR) / $finR : null) ?></b><small class="small"><?= $finR ?> com resultado · <?= $obsR ?> ainda em observação</small></div>
+    <div class="kpi"><span>Retornos</span><b class="<?= $retR ? 'er' : 'ok' ?>"><?= $retR ?></b><small class="small">teve O.S e não foi liberada</small></div>
+    <?php if ($verValR): ?><div class="kpi"><span>Comissão dos técnicos</span><b class="dh-r"><?= $Rr($valR) ?></b><small class="small">valores lançados em Comissões</small></div><?php endif ?>
+  </section>
+
+  <?php if ($listaR): ?>
+  <section class="rk-podio" aria-label="Pódio">
+    <?php foreach (array_slice($listaR, 0, 3) as $i => $t): ?>
+    <div class="rk-p rk-p<?= $i + 1 ?>"><div class="rk-med"><?= $i + 1 ?>º</div>
+      <b class="rk-nm"><?= h($t['nome']) ?></b>
+      <div class="rk-big"><?= h($numR($t)) ?> <small><?= h($rotR) ?></small></div>
+      <div class="rk-det"><span><?= $t['inst'] ?> instalaç<?= $t['inst'] === 1 ? 'ão' : 'ões' ?></span><span class="dh-chip <?= $corQ($t['sem_ret']) ?>"><?= $pctR($t['sem_ret']) ?> sem retorno</span><?= $t['retorno'] ? '<span class="dh-chip er">' . $t['retorno'] . ' retorno' . ($t['retorno'] === 1 ? '' : 's') . '</span>' : '' ?><?= $verValR && $porR !== 'valor' ? '<span>' . $Rr($t['valor']) . '</span>' : '' ?></div></div>
+    <?php endforeach ?>
+  </section>
+  <?php endif ?>
+
+  <section class="card dh-card">
+    <h2>Ranking · <?= h($nomePer) ?>
+      <span class="dh-seg"><?php foreach (['pontos' => 'Geral (pontos)', 'inst' => 'Mais instalações', 'qual' => 'Menos retorno'] + ($verValR ? ['valor' => 'Comissão'] : []) as $k => $tx): ?><a href="<?= $lnkR(['por' => $k]) ?>"<?= $porR === $k ? ' aria-current="true"' : '' ?>><?= $tx ?></a><?php endforeach ?></span></h2>
+    <div class="dh-rank">
+    <?php foreach ($listaR as $i => $t): $det = [];
+        foreach (array_slice($t['serv'], 0, 3, true) as $sv => $n) $det[] = "$n " . mb_strtolower($sv);
+        if ($t['dupla']) $det[] = $t['dupla'] . ' em dupla';
+        if ($t['ajudante']) $det[] = $t['ajudante'] . ' como ajudante';
+        if ($t['rec']) $det[] = $t['rec'] . ' recolhimento' . ($t['rec'] === 1 ? '' : 's');
+        $clB = $porR === 'qual' ? $corQ($t['sem_ret']) : 'v'; ?>
+      <div class="dh-rk"><div class="pos"><?= $i + 1 ?>º</div>
+        <div><div class="nm"><?= h($t['nome']) ?><?= $t['ativo'] ? '' : ' <span class="pill mu">inativo</span>' ?> <small><?= h(implode(' · ', $det)) ?></small></div>
+          <div class="dh-bar <?= $clB === 'q' ? 'mid' : ($clB === 'er' ? 'low' : $clB) ?>"><i style="width:<?= round(max(0, (float)$valorDe($t)) / $mxR * 100) ?>%"></i></div>
+          <div class="rk-chips"><span class="dh-chip <?= $corQ($t['sem_ret']) ?>"><?= $pctR($t['sem_ret']) ?> sem retorno</span>
+            <?= $t['retorno'] ? '<span class="dh-chip er">' . $t['retorno'] . ' retorno' . ($t['retorno'] === 1 ? '' : 's') . ($t['nao_pagar'] ? ' · ' . $t['nao_pagar'] . ' não pago' . ($t['nao_pagar'] === 1 ? '' : 's') : '') . '</span>' : '' ?>
+            <?= $t['pagar'] ? '<span class="dh-chip ok">' . $t['pagar'] . ' O.S liberada' . ($t['pagar'] === 1 ? '' : 's') . '</span>' : '' ?>
+            <?= $t['obs'] ? '<span class="dh-chip q">' . $t['obs'] . ' em observação</span>' : '' ?></div></div>
+        <div class="num"><b><?= h($numR($t)) ?></b><span class="small"><?= h($rotR) ?></span></div></div>
+    <?php endforeach ?>
+    <?php if (!$listaR): ?><p class="small">Nenhuma instalação com técnico em <?= h($nomePer) ?>.</p><?php endif ?>
+    </div>
+  </section>
+
+  <?php if ($listaR): ?>
+  <div class="card"><h2>Números de cada técnico · <?= h($nomePer) ?></h2>
+    <div class="tw"><table class="rec">
+      <thead><tr><th>#</th><th>Técnico</th><th>Pontos</th><th>Instalações</th><?php foreach (array_keys($servR) as $sv): ?><th><?= h(mb_convert_case(mb_strtolower($sv), MB_CASE_TITLE)) ?></th><?php endforeach ?><th>Em dupla</th><th>Como ajudante</th><th>Aprovadas</th><th>Retornos</th><th>Em observação</th><th>Sem retorno</th><th>Recolhimentos</th><?= $verValR ? '<th>Comissão</th>' : '' ?></tr></thead>
+      <?php foreach ($listaR as $i => $t): ?>
+      <tr><td class="n"><?= $i + 1 ?>º</td><td><b><?= h($t['nome']) ?></b></td><td class="n"><b><?= $t['pontos'] ?></b></td><td class="n"><?= $t['inst'] ?></td>
+        <?php foreach (array_keys($servR) as $sv): ?><td class="n"><?= $t['serv'][$sv] ?? 0 ?></td><?php endforeach ?>
+        <td class="n"><?= $t['dupla'] ?></td><td class="n"><?= $t['ajudante'] ?></td><td class="n"><?= $t['aprovada'] ?></td><td class="n"><?= $t['retorno'] ? '<b class="er">' . $t['retorno'] . '</b>' : '0' ?></td><td class="n"><?= $t['obs'] ?></td>
+        <td class="n"><span class="dh-chip <?= $corQ($t['sem_ret']) ?>"><?= $pctR($t['sem_ret']) ?></span></td><td class="n"><?= $t['rec'] ?></td><?= $verValR ? '<td class="n">' . $Rr($t['valor']) . '</td>' : '' ?></tr>
+      <?php endforeach ?>
+    </table></div>
+    <p class="small">"Sem retorno" conta só as instalações que já passaram pela análise (aprovadas ou com O.S). As que ainda estão nos <?= (int)inst_an_config()['dias'] ?> dias de observação entram nos pontos e não pesam até sair o resultado. Recolhimentos só aparecem aqui, não dão pontos.</p>
+  </div>
+
+  <div class="card"><h2>Instalações mês a mês</h2>
+    <div class="tw"><table class="rec rk-mes">
+      <thead><tr><th>Técnico</th><?php foreach ($mesesG as $m): ?><th><?= h(substr(MESES_PT[(int)substr($m, 5)], 0, 3) . '/' . substr($m, 2, 2)) ?><?= $m === $mesHoje ? '*' : '' ?></th><?php endforeach ?><th>Total</th></tr></thead>
+      <?php $ordM = $porMesR; uasort($ordM, fn($a, $b) => [array_sum(array_filter($b, 'is_int')), $a['nome']] <=> [array_sum(array_filter($a, 'is_int')), $b['nome']]);
+        foreach ($ordM as $x): ?>
+      <tr><td><b><?= h($x['nome']) ?></b></td><?php foreach ($mesesG as $m): $n = $x[$m] ?? 0; ?><td class="n" style="background:rgba(37,99,235,<?= $n ? round(.08 + .5 * $n / $mxMes, 2) : 0 ?>)"><?= $n ?: '' ?></td><?php endforeach ?><td class="n"><b><?= array_sum(array_filter($x, 'is_int')) ?></b></td></tr>
+      <?php endforeach ?>
+    </table></div>
+    <?php if (in_array($mesHoje, $mesesG, true)): ?><p class="small">* mês atual, até hoje.</p><?php endif ?>
+  </div>
   <?php endif ?>
 
 <?php elseif ($p === 'inst_comissao'):
