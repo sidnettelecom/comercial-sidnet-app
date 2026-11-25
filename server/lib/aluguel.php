@@ -10,7 +10,8 @@
  *
  * Reforma, dois jeitos:
  *  - diluir: a Sidnet pagou a reforma; o valor é dividido pelos meses do contrato (custo da loja por mês).
- *  - abate: o dono do imóvel desconta a reforma do aluguel, um tanto por mês, até somar o valor gasto.
+ *  - abate: o dono do imóvel desconta a reforma do aluguel até somar o valor gasto. Sem valor por mês, o desconto
+ *    é o aluguel inteiro (já corrigido pelo IPCA): a loja não paga aluguel até a reforma acabar.
  * Só o admin vê, até ele liberar em Configurações → Permissões.
  */
 declare(strict_types=1);
@@ -21,7 +22,7 @@ require_once __DIR__ . '/rh.php';        // rh_rs()
 
 const ALUGUEL_REFORMA_MODOS = [
     'diluir' => 'A Sidnet pagou: dividir pelos meses do contrato',
-    'abate' => 'O dono desconta do aluguel todo mês',
+    'abate' => 'O dono desconta do aluguel até acabar o valor',
 ];
 
 function aluguel_tabela(): void
@@ -36,7 +37,7 @@ function aluguel_tabela(): void
         valor TEXT NOT NULL DEFAULT '',        -- aluguel do primeiro ano
         reforma TEXT NOT NULL DEFAULT '',
         reforma_modo TEXT NOT NULL DEFAULT 'diluir',
-        reforma_abate TEXT NOT NULL DEFAULT '',-- abate por mês (vazio = reforma ÷ meses)
+        reforma_abate TEXT NOT NULL DEFAULT '',-- abate por mês (vazio = o aluguel inteiro do mês)
         ipca_est TEXT NOT NULL DEFAULT '4.50', -- % usado nos anos que ainda não têm IPCA
         obs TEXT NOT NULL DEFAULT ''
     );
@@ -168,7 +169,7 @@ function aluguel_calculo(array $c, ?string $hoje = null): array
     $meses = (int)$c['meses'];
     $reforma = (float)($c['reforma'] ?: 0);
     $abate = $c['reforma_modo'] === 'abate';
-    $abMes = $abate ? ((float)($c['reforma_abate'] ?: 0) ?: $reforma / $meses) : 0.0;
+    $abMes = $abate ? (float)($c['reforma_abate'] ?: 0) : 0.0; // 0 = desconta o aluguel inteiro
     $dilui = $reforma / $meses; // no modo diluir: quanto da reforma "vale" cada mês
     $dia = str_pad((string)(int)$c['dia_venc'], 2, '0', STR_PAD_LEFT);
     $valor = (float)$c['valor'];
@@ -192,7 +193,7 @@ function aluguel_calculo(array $c, ?string $hoje = null): array
         $ym = mes_soma($c['inicio'], $n);
         $venc = $ym . '-' . $dia;
         $passou = $venc <= $hoje;
-        $ab = $abate ? min($abMes, $valor, max(0, $reforma - $abatido)) : 0.0;
+        $ab = $abate ? min($abMes ?: $valor, $valor, max(0, $reforma - $abatido)) : 0.0;
         $abatido += $ab;
         $caixa = $valor - $ab;
         $ref = $abate ? $ab : $dilui;
@@ -204,7 +205,8 @@ function aluguel_calculo(array $c, ?string $hoje = null): array
         $a['reforma'] += $ref;
         if ($passou) { $a['pagos']++; $a['pago'] += $caixa; $a['reforma_ok'] += $ref; } else $a['falta'] += $caixa;
         unset($a);
-        $lista[] = ['n' => $n + 1, 'ym' => $ym, 'venc' => $venc, 'ano' => $ano, 'valor' => $valor, 'abate' => $ab, 'caixa' => $caixa, 'reforma' => $ref, 'passou' => $passou];
+        $lista[] = ['n' => $n + 1, 'ym' => $ym, 'venc' => $venc, 'ano' => $ano, 'valor' => $valor, 'abate' => $ab, 'caixa' => $caixa, 'reforma' => $ref, 'passou' => $passou,
+            'saldo_reforma' => $abate ? max(0, $reforma - $abatido) : null];
     }
     foreach ($anos as &$a) {
         $a['situacao'] = $a['pagos'] === $a['meses'] ? 'pago' : ($a['pagos'] > 0 ? 'andamento' : 'futuro');
@@ -214,6 +216,10 @@ function aluguel_calculo(array $c, ?string $hoje = null): array
     $tot = fn(string $k) => array_sum(array_column($anos, $k));
     $pagos = count(array_filter($lista, fn($m) => $m['passou']));
     $atual = $lista[max(0, min($meses - 1, $pagos))] ?? null; // próximo mês a vencer (ou o último, se acabou)
+    $comAbate = array_values(array_filter($lista, fn($m) => $m['abate'] > 0.004));
+    $ultAbate = $comAbate ? end($comAbate) : null;           // último mês com desconto da reforma
+    $primPago = null;                                         // primeiro mês em que a loja paga aluguel de verdade
+    foreach ($lista as $m) if ($m['caixa'] > 0.004) { $primPago = $m; break; }
     $proxIpca = null; // próximo reajuste ainda sem IPCA de verdade
     foreach ($anos as $a) if ($a['estimado']) { $proxIpca = $a; break; }
     return [
@@ -222,6 +228,8 @@ function aluguel_calculo(array $c, ?string $hoje = null): array
         'reforma' => $reforma, 'reforma_ok' => $tot('reforma_ok'), 'abate_mes' => $abMes, 'dilui_mes' => $dilui,
         'agora' => $atual, 'fim' => mes_soma($c['inicio'], $meses - 1), 'prox_ipca' => $proxIpca,
         'tem_estimado' => (bool)$proxIpca,
+        'reforma_meses' => count($comAbate), 'reforma_ult' => $ultAbate, 'prim_pago' => $primPago,
+        'reforma_sobra' => $abate ? max(0, $reforma - array_sum(array_column($lista, 'abate'))) : 0.0,
     ];
 }
 
