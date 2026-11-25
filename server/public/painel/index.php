@@ -20,12 +20,14 @@ require_once __DIR__ . '/../../lib/servicos.php';
 require_once __DIR__ . '/../../lib/colaboradores.php';
 require_once __DIR__ . '/../../lib/recibos_ixc.php';
 require_once __DIR__ . '/../../lib/auditoria.php';
+require_once __DIR__ . '/../../lib/aluguel.php';
 dash_tabela();
 perm_tabela();
 rec_tabela();
 inst_tabela();
 rh_tabela();
 serv_tabela();
+aluguel_tabela();
 recibos_tabela();
 rh_compl_auto(date('Y-m')); // complemento fixo do mês entra sozinho
 colab_tabela();
@@ -137,6 +139,7 @@ const PERM_ACOES = [
     'colab_buscar' => 'cfg.colab', 'colab_salvar' => 'cfg.colab', 'colab_unir' => 'cfg.colab', 'colab_mostrar' => 'cfg.colab',
     'serv_servico' => 'serv.lanc', 'serv_pagamento' => 'serv.pag', 'serv_excluir' => 'serv',
     'serv_equipe_salvar' => 'serv.cad', 'serv_equipe_ativo' => 'serv.cad', 'serv_obra_salvar' => 'serv.cad', 'serv_obra_concluir' => 'serv.cad', 'serv_precos_salvar' => 'serv.cad',
+    'aluguel_salvar' => 'aluguel.cad', 'aluguel_ipca' => 'aluguel.cad', 'aluguel_bc' => 'aluguel.cad',
 ];
 $recForm = null; // formulário de O.S de recolhimento para mostrar de novo (erro ou "Buscar nome")
 $instForm = null; // o mesmo para a O.S de instalação
@@ -785,6 +788,25 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $n = serv_precos_salvar((array)($_POST['pr'] ?? []), (array)($_POST['novo'] ?? []));
             registrar($quem, 'salvou tabela de preços de serviços', "$n linha(s)");
             $msg = 'Tabela de preços salva.';
+        } elseif ($a === 'aluguel_salvar') {
+            $cidA = aluguel_salvar((array)($_POST['c'] ?? []), $id);
+            $cA = aluguel_contratos()[$cidA];
+            registrar($quem, $id ? 'corrigiu contrato de aluguel' : 'cadastrou contrato de aluguel', "#$cidA {$cA['nome']} R$ " . brl($cA['valor']));
+            $msg = ($id ? 'Contrato corrigido: ' : 'Contrato cadastrado: ') . $cA['nome'] . '.';
+            $_GET['c'] = $cidA;
+        } elseif ($a === 'aluguel_ipca') {
+            $cA = aluguel_contratos()[$id] ?? throw new RuntimeException('Contrato não encontrado.');
+            $n = aluguel_ipca_salvar($id, (array)($_POST['ipca'] ?? []));
+            registrar($quem, 'salvou IPCA do aluguel', "#$id {$cA['nome']} ($n reajuste(s))");
+            $msg = 'IPCA salvo. Os anos sem IPCA continuam com o estimado (' . aluguel_pct_txt((float)$cA['ipca_est']) . ').';
+            $_GET['c'] = $id;
+        } elseif ($a === 'aluguel_bc') {
+            $cA = aluguel_contratos()[$id] ?? throw new RuntimeException('Contrato não encontrado.');
+            $_GET['c'] = $id;
+            $feito = aluguel_ipca_bc($cA);
+            registrar($quem, 'buscou IPCA do aluguel no Banco Central', "#$id " . json_encode($feito));
+            $msg = $feito ? 'IPCA do Banco Central gravado: ' . implode(', ', array_map(fn($ano, $p) => 'reajuste de ' . aluguel_mes_curto(mes_soma($cA['inicio'], 12 * ($ano - 1))) . ' ' . aluguel_pct_txt((float)$p), array_keys($feito), $feito)) . '.'
+                : 'O Banco Central ainda não tem os 12 meses de IPCA do próximo reajuste. Os anos futuros continuam com o estimado.';
         } elseif ($a === 'colab_buscar') {
             if (destino() !== 'ixc') throw new RuntimeException('O portal não está ligado ao IXC (destino no config.php).');
             $nc = colab_buscar_ixc();
@@ -833,11 +855,11 @@ $AREA_PAG = ['vendas' => 'vendas.lista', 'excluir' => 'vendas.lista', 'mes' => '
     'comissoes' => 'com.lista', 'planilha' => 'com.planilha', 'gestores' => 'cfg.gest', 'config' => 'admin', 'senha' => '', 'trocar' => '',
     'recolhimentos' => 'rec.lista', 'rec_teste' => 'rec.teste', 'rec_comissao' => 'rec.com', 'instalacoes' => 'inst.lista', 'inst_comissao' => 'inst.com', 'inst_analise' => 'inst.analise',
     'rh_lancar' => 'rh.lanc', 'rh_fecha' => 'rh.fecha', 'rh_func' => 'rh.func', 'rh_cfg' => 'admin', 'recibos' => 'recibos', 'auditoria' => 'recibos.audit',
-    'serv' => 'serv.saldo', 'serv_extrato' => 'serv.saldo', 'serv_lista' => 'serv.saldo', 'serv_lancar' => 'serv', 'serv_cad' => 'serv.cad', 'colab' => 'cfg.colab', 'rixc' => 'admin'];
+    'serv' => 'serv.saldo', 'serv_extrato' => 'serv.saldo', 'serv_lista' => 'serv.saldo', 'serv_lancar' => 'serv', 'serv_cad' => 'serv.cad', 'colab' => 'cfg.colab', 'rixc' => 'admin', 'aluguel' => 'aluguel.ver'];
 if (!isset($AREA_PAG[$p])) $p = 'vendas';
 if ($logado && $p !== 'trocar' && ($_GET['p'] ?? '') === '' && !$pode('vendas.lista')) {
     // tela inicial: a primeira opção liberada, na ordem do menu
-    foreach (['dash', 'mes', 'comissoes', 'planilha', 'recolhimentos', 'rec_teste', 'rec_comissao', 'instalacoes', 'inst_analise', 'inst_comissao', 'rh_lancar', 'rh_fecha', 'rh_func', 'serv', 'serv_lancar', 'serv_cad', 'recibos', 'auditoria', 'gestores', 'vendedores', 'planos', 'colab'] as $pg)
+    foreach (['dash', 'mes', 'comissoes', 'planilha', 'recolhimentos', 'rec_teste', 'rec_comissao', 'instalacoes', 'inst_analise', 'inst_comissao', 'rh_lancar', 'rh_fecha', 'rh_func', 'serv', 'serv_lancar', 'serv_cad', 'aluguel', 'recibos', 'auditoria', 'gestores', 'vendedores', 'planos', 'colab'] as $pg)
         if ($pode($AREA_PAG[$pg])) { $p = $pg; break; }
 }
 if ($logado && $AREA_PAG[$p] !== '' && !($AREA_PAG[$p] === 'admin' ? $admin : $pode($AREA_PAG[$p]))) $p = 'sem';
@@ -882,6 +904,7 @@ $ICONES = [
     'permissoes' => '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
     'recibos' => '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/>',
     'serv' => '<path d="M2 21h20M5 21V9l3-2v14M16 21V9l3-2v14M8 10h8M8 14h8"/>',
+    'aluguel' => '<path d="M3 9l1.5-5h15L21 9M3 9v11h18V9M3 9c0 1.7 1.3 3 3 3s3-1.3 3-3c0 1.7 1.3 3 3 3s3-1.3 3-3c0 1.7 1.3 3 3 3s3-1.3 3-3M10 20v-5h4v5"/>',
     'rh' => '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .7 3.2 2.4 3.6 5.2"/>',
 ];
 $svg = fn(string $k) => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $ICONES[$k] . '</svg>';
@@ -1142,6 +1165,8 @@ td.r,th.r{text-align:right}
   @page{size:A4;margin:0}.rfolhas{display:block;overflow:visible}.rfolha{box-shadow:none;zoom:1!important;break-after:page}.rfolha:last-child{break-after:auto}}
 .serv-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:14px}
 .serv-eq{display:grid;gap:10px}.serv-eq .quem{font-size:15px}.serv-eq .tot{font-size:26px;font-weight:800}.serv-eq .tot.er{color:var(--er)}.serv-eq .tot.ok{color:var(--ok)}
+.al-linha{display:grid;gap:8px}.al-barra{height:12px;border-radius:6px;background:var(--line);overflow:hidden}.al-barra i{display:block;height:100%;background:linear-gradient(90deg,#2563eb,#0891b2)}
+.al-anos tr.al-agora td,.rec tr.al-agora td{background:color-mix(in srgb,#2563eb 8%,var(--surface))}.al-tot td{border-top:2px solid var(--line)}td.ok-t{color:var(--ok)}td.nw{white-space:nowrap}
 .serv-cad{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(380px,100%),1fr));gap:14px}
 td.ok{color:var(--ok)}a.bt.pri{background:var(--g-btn);color:#fff;border:0}a.bt.cta{background:var(--g-cta);color:#1c1203;border:0}
 .o-serv{background:#ffedd5;color:#9a3412}
@@ -1168,6 +1193,7 @@ th.c,td.c{text-align:center}
     . $grupo('instalacao', 'Instalação', [['instalacoes', 'Instalações concluídas', $pode('inst.lista')], ['inst_analise', 'Análise da instalação', $pode('inst.analise')], ['inst_comissao', 'Comissões', $pode('inst.com')]])
     . $grupo('rh', 'RH', [['rh_lancar', 'Lançamentos', $pode('rh.lanc')], ['rh_fecha', 'Fechamento do mês', $pode('rh.fecha')], ['rh_func', 'Funcionários', $pode('rh.func')], ['rh_cfg', 'Feriados e valores', $admin]])
     . $grupo('serv', 'Serviços em execução', [['serv', 'Saldos', $pode('serv.saldo'), ['serv', 'serv_extrato']], ['serv_lancar', 'Lançar', $pode('serv.lanc') || $pode('serv.pag')], ['serv_lista', 'Serviços lançados', $pode('serv.saldo')], ['serv_cad', 'Equipes, obras e preços', $pode('serv.cad')]])
+    . ($pode('aluguel.ver') ? $aba('aluguel', 'Controle de aluguel') : '')
     . $grupo('recibos', 'Recibos', [['recibos', 'Gerar recibos', (bool)array_filter(array_keys(RECIBO_ORIGENS), fn($o) => $pode('recibos.' . $o))], ['auditoria', 'Auditoria', $pode('recibos.audit')]])
     . $grupo('config', 'Configurações', [['config', 'Permissões', $admin], ['gestores', 'Gestores', $pode('cfg.gest')], ['vendedores', 'Usuários', $pode('cfg.users')], ['planos', 'Planos', $pode('cfg.planos')], ['colab', 'Colaboradores do IXC', $pode('cfg.colab')], ['rixc', 'Contas a pagar no IXC', $admin && destino() === 'ixc']]) ?></nav>
   <div class="status"><div><i></i>Servidor no ar</div><span>Último envio ao <?= $DEST ?>: <?= h($ultimo ?: 'nenhum ainda') ?></span><a href="?p=senha">Trocar minha senha</a><a href="?sair=1">Sair (<?= h($quem) ?>)</a></div>
@@ -3032,6 +3058,90 @@ th.c,td.c{text-align:center}
     </table></div>
     <div class="row" style="margin-top:10px"><button class="pri">Salvar tabela de preços</button></div>
   </form>
+
+<?php elseif ($p === 'aluguel'):
+    $ctsA = aluguel_contratos();
+    $cidA = (int)($_GET['c'] ?? 0);
+    if (!isset($ctsA[$cidA])) $cidA = (int)array_key_first($ctsA);
+    $cA = $ctsA[$cidA] ?? null;
+    $editA = isset($_GET['editar']) || !$cA ? ($cA && !isset($_GET['novo']) ? $cA : null) : false;
+    $podeCadA = $pode('aluguel.cad');
+?>
+  <div class="topo"><div><h1>Controle de aluguel</h1><p class="small">Quanto já foi pago e quanto falta até o fim do contrato, ano a ano. Anda sozinho: cada mês com vencimento passado conta como pago. O aluguel sobe pelo IPCA em todo aniversário do contrato.</p></div>
+    <div class="row noprint"><?php if (count($ctsA) > 1): ?><form method="get" class="row"><input type="hidden" name="p" value="aluguel"><select name="c" aria-label="Imóvel" data-auto><?php foreach ($ctsA as $id => $c): ?><option value="<?= (int)$id ?>" <?= $id === $cidA ? 'selected' : '' ?>><?= h($c['nome']) ?></option><?php endforeach ?></select><noscript><button>Ver</button></noscript></form><?php endif ?>
+      <?php if ($podeCadA && $cA && $editA === false): ?><a class="bt" href="?p=aluguel&amp;c=<?= $cidA ?>&amp;editar=1#form-al">Corrigir contrato</a><a class="bt" href="?p=aluguel&amp;novo=1&amp;editar=1#form-al">+ Outro imóvel</a><?php endif ?></div></div>
+  <?php if (!$cA && !$podeCadA): ?><div class="msg">Nenhum contrato de aluguel cadastrado ainda. Peça ao admin para cadastrar.</div><?php endif ?>
+  <?php if ($cA && $editA === false):
+    $rA = aluguel_calculo($cA);
+    $pctPassou = $rA['total'] ? round(100 * $rA['pagos'] / $rA['total']) : 0;
+    $agoraA = $rA['agora'];
+    $acabou = $rA['pagos'] >= $rA['total'];
+    $abateA = $cA['reforma_modo'] === 'abate';
+    $temRef = $rA['reforma'] > 0;
+  ?>
+  <div class="kpis">
+    <div class="kpi forte"><span>Falta pagar até <?= h(aluguel_mes_curto($rA['fim'])) ?></span><b><?= rh_rs($rA['falta']) ?></b><small><?= $rA['total'] - $rA['pagos'] ?> mês(es)<?= $rA['tem_estimado'] ? ', com IPCA estimado nos anos futuros' : '' ?></small></div>
+    <div class="kpi"><span>Aluguel <?= $acabou ? 'no último mês' : 'deste ano' ?></span><b><?= rh_rs($agoraA['caixa'] ?? 0) ?></b><small><?= $abateA && ($agoraA['abate'] ?? 0) > 0 ? rh_rs($agoraA['valor']) . ' menos ' . rh_rs($agoraA['abate']) . ' da reforma' : 'vence todo dia ' . (int)$cA['dia_venc'] ?></small></div>
+    <div class="kpi"><span>Já pago</span><b class="ok"><?= rh_rs($rA['pago']) ?></b><small><?= $rA['pagos'] ?> de <?= $rA['total'] ?> meses</small></div>
+    <?php if ($temRef): ?><div class="kpi"><span>Reforma <?= $abateA ? 'já descontada' : 'já paga pelo uso' ?></span><b><?= rh_rs($rA['reforma_ok']) ?></b><small>de <?= rh_rs($rA['reforma']) ?> · falta <?= rh_rs(max(0, $rA['reforma'] - $rA['reforma_ok'])) ?></small></div><?php endif ?>
+  </div>
+  <div class="card al-linha">
+    <div class="row" style="justify-content:space-between"><b><?= h($cA['nome']) ?></b><span class="small"><?= h(aluguel_mes_curto($cA['inicio'])) ?> até <?= h(aluguel_mes_curto($rA['fim'])) ?> · <?= (int)$cA['meses'] ?> meses</span></div>
+    <div class="al-barra" role="img" aria-label="<?= $pctPassou ?>% do contrato já passou"><i style="width:<?= $pctPassou ?>%"></i></div>
+    <div class="row small" style="justify-content:space-between"><span><?= $pctPassou ?>% do contrato já passou</span><span><?= $acabou ? 'Contrato encerrado' : 'Próximo vencimento: ' . h(date('d/m/Y', strtotime($agoraA['venc']))) . ' · ' . rh_rs($agoraA['caixa']) ?></span></div>
+    <?php if ($rA['prox_ipca'] && $rA['prox_ipca']['de'] <= date('Y-m')): ?><p class="small er" style="margin:6px 0 0">O reajuste de <?= h(aluguel_mes_curto($rA['prox_ipca']['de'])) ?> já chegou e ainda está com IPCA estimado. Coloque o IPCA de verdade abaixo.</p><?php endif ?>
+  </div>
+  <div class="card"><h2>Ano a ano</h2><p class="small" style="margin:0 0 8px">Cada ano do contrato vai de <?= h(MESES_PT[(int)substr($cA['inicio'], 5, 2)]) ?> a <?= h(MESES_PT[(int)substr(mes_soma($cA['inicio'], 11), 5, 2)]) ?>. "Falta" é o que ainda vai vencer; os anos com IPCA estimado mudam um pouco quando o IPCA de verdade sair.</p>
+    <div class="tw"><table class="rec al-anos"><thead><tr><th>Ano</th><th>Período</th><th class="r">Reajuste IPCA</th><th class="r">Aluguel por mês</th><?php if ($abateA): ?><th class="r">Desconto reforma</th><?php endif ?><th class="r">Total do ano</th><th class="r">Pago</th><th class="r">Falta</th><?php if ($temRef && !$abateA): ?><th class="r">Reforma no ano</th><?php endif ?><th>Situação</th></tr></thead>
+    <?php foreach ($rA['anos'] as $a): ?>
+      <tr class="<?= $a['situacao'] === 'andamento' ? 'al-agora' : '' ?>"><td><b><?= $a['ano'] ?>º</b></td><td class="nw"><?= h(aluguel_mes_curto($a['de'])) ?> a <?= h(aluguel_mes_curto($a['ate'])) ?></td>
+        <td class="n r"><?= $a['ano'] === 1 ? '<span class="small">valor inicial</span>' : aluguel_pct_txt($a['pct']) . ($a['estimado'] ? ' <span class="pill q">estimado</span>' : ($a['origem'] === 'bc' ? ' <span class="pill ok">Banco Central</span>' : ' <span class="pill ok">digitado</span>')) ?></td>
+        <td class="n r"><?= rh_rs($a['valor']) ?></td><?php if ($abateA): ?><td class="n r"><?= $a['abate'] > 0 ? '− ' . rh_rs($a['abate']) : '—' ?></td><?php endif ?>
+        <td class="n r"><?= rh_rs($a['caixa']) ?></td><td class="n r ok-t"><?= rh_rs($a['pago']) ?></td><td class="n r"><b><?= rh_rs($a['falta']) ?></b></td>
+        <?php if ($temRef && !$abateA): ?><td class="n r"><?= rh_rs($a['reforma']) ?></td><?php endif ?>
+        <td><?= ['pago' => '<span class="pill ok">pago</span>', 'andamento' => '<span class="pill q">' . $a['pagos'] . ' de ' . $a['meses'] . ' pagos</span>', 'futuro' => '<span class="pill mu">a vencer</span>'][$a['situacao']] ?></td></tr>
+    <?php endforeach ?>
+      <tr class="al-tot"><td colspan="<?= $abateA ? 5 : 4 ?>"><b>Contrato inteiro</b></td><td class="n r"><b><?= rh_rs($rA['contrato']) ?></b></td><td class="n r ok-t"><b><?= rh_rs($rA['pago']) ?></b></td><td class="n r"><b><?= rh_rs($rA['falta']) ?></b></td><?php if ($temRef && !$abateA): ?><td class="n r"><b><?= rh_rs($rA['reforma']) ?></b></td><?php endif ?><td></td></tr>
+    </table></div>
+    <?php if ($temRef): ?><p class="small" style="margin:10px 0 0"><?= $abateA
+      ? 'Reforma de ' . rh_rs($rA['reforma']) . ': o dono desconta ' . rh_rs($rA['abate_mes']) . ' por mês do aluguel até fechar o valor.'
+      : 'Reforma de ' . rh_rs($rA['reforma']) . ' dividida pelos ' . (int)$cA['meses'] . ' meses: ' . rh_rs($rA['dilui_mes']) . ' por mês. Custo de verdade da loja hoje: aluguel ' . rh_rs($agoraA['valor'] ?? 0) . ' + reforma ' . rh_rs($rA['dilui_mes']) . ' = <b>' . rh_rs(($agoraA['valor'] ?? 0) + $rA['dilui_mes']) . ' por mês</b>.' ?></p><?php endif ?>
+  </div>
+  <details class="card"><summary><b>Mês a mês</b> <span class="small">(<?= $rA['total'] ?> meses)</span></summary>
+    <div class="tw" style="margin-top:8px"><table class="rec"><thead><tr><th>Nº</th><th>Mês</th><th>Vencimento</th><th class="r">Aluguel</th><?php if ($abateA): ?><th class="r">Desconto reforma</th><th class="r">Paga</th><?php endif ?><th>Situação</th></tr></thead>
+    <?php foreach ($rA['meses'] as $m): ?><tr class="<?= !$m['passou'] && $m['n'] === $rA['pagos'] + 1 ? 'al-agora' : '' ?>"><td class="n"><?= $m['n'] ?></td><td><?= h(aluguel_mes_curto($m['ym'])) ?></td><td class="n"><?= h(date('d/m/Y', strtotime($m['venc']))) ?></td><td class="n r"><?= rh_rs($m['valor']) ?></td>
+      <?php if ($abateA): ?><td class="n r"><?= $m['abate'] > 0 ? '− ' . rh_rs($m['abate']) : '—' ?></td><td class="n r"><b><?= rh_rs($m['caixa']) ?></b></td><?php endif ?>
+      <td><?= $m['passou'] ? '<span class="pill ok">pago</span>' : ($m['n'] === $rA['pagos'] + 1 ? '<span class="pill q">próximo</span>' : '<span class="pill mu">a vencer</span>') ?><?= $rA['anos'][$m['ano']]['estimado'] && !$m['passou'] && ($m['n'] - 1) % 12 === 0 ? ' <span class="small">reajuste estimado</span>' : '' ?></td></tr><?php endforeach ?>
+    </table></div></details>
+  <?php if ($podeCadA && $cA['meses'] > 12): $ipA = aluguel_ipcas($cidA); ?>
+  <form method="post" action="?p=aluguel&amp;c=<?= $cidA ?>" class="card noprint"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= $cidA ?>">
+    <h2>Reajustes pelo IPCA</h2><p class="small" style="margin:0 0 8px">Em cada aniversário o aluguel sobe o IPCA acumulado dos 12 meses anteriores. Deixe em branco o que ainda não saiu: o sistema usa o estimado (<?= h(aluguel_pct_txt((float)$cA['ipca_est'])) ?>) até você colocar o de verdade. "Buscar no Banco Central" preenche sozinho os anos que já têm os 12 meses publicados.</p>
+    <div class="tw"><table class="rec" style="min-width:0"><thead><tr><th>Reajuste</th><th>IPCA dos meses</th><th class="r">IPCA %</th><th>De onde veio</th></tr></thead>
+    <?php for ($ano = 2; $ano <= (int)ceil($cA['meses'] / 12); $ano++): [$deI, $ateI] = aluguel_janela_ipca($cA, $ano); $i = $ipA[$ano] ?? null; ?>
+      <tr><td><b><?= h(aluguel_mes_curto(mes_soma($cA['inicio'], 12 * ($ano - 1)))) ?></b> <span class="small">(<?= $ano ?>º ano)</span></td><td class="small"><?= h(aluguel_mes_curto($deI)) ?> a <?= h(aluguel_mes_curto($ateI)) ?></td>
+        <td class="r"><input class="val" name="ipca[<?= $ano ?>]" value="<?= $i ? h(str_replace('.', ',', $i['pct'])) : '' ?>" inputmode="decimal" placeholder="<?= h(str_replace('.', ',', $cA['ipca_est'])) ?>" aria-label="IPCA do reajuste <?= $ano ?>"></td>
+        <td><?= $i ? ($i['origem'] === 'bc' ? '<span class="pill ok">Banco Central</span>' : '<span class="pill ok">digitado</span>') : '<span class="pill q">estimado</span>' ?></td></tr>
+    <?php endfor ?></table></div>
+    <div class="row" style="margin-top:10px"><button class="pri" name="acao" value="aluguel_ipca">Salvar IPCA</button><button name="acao" value="aluguel_bc">Buscar no Banco Central</button></div>
+  </form>
+  <?php endif ?>
+  <?php endif ?>
+  <?php if ($podeCadA && $editA !== false): $vA = fn(string $k, string $pad = '') => h((string)($editA[$k] ?? $pad)); ?>
+  <form method="post" action="?p=aluguel" class="card rec-form" id="form-al"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)($editA['id'] ?? 0) ?>">
+    <h2 class="larga" style="margin:0"><?= $editA ? 'Corrigir contrato: ' . h($editA['nome']) : 'Cadastrar contrato de aluguel' ?></h2>
+    <label class="larga">Imóvel<input name="c[nome]" value="<?= $vA('nome') ?>" maxlength="80" placeholder="ex.: Loja do centro" required></label>
+    <label>Primeiro mês de aluguel<input type="month" name="c[inicio]" value="<?= $vA('inicio', '2026-04') ?>" required></label>
+    <label>Prazo (meses)<input type="number" name="c[meses]" value="<?= $vA('meses', '60') ?>" min="1" max="240" required></label>
+    <label>Vence todo dia<input type="number" name="c[dia_venc]" value="<?= $vA('dia_venc', '10') ?>" min="1" max="28" required></label>
+    <label>Aluguel do 1º ano (R$ por mês)<input name="c[valor]" value="<?= h(brl((string)($editA['valor'] ?? ''))) ?>" inputmode="decimal" placeholder="0,00" required></label>
+    <label>Gasto com reforma (R$)<input name="c[reforma]" value="<?= h(brl((string)($editA['reforma'] ?? ''))) ?>" inputmode="decimal" placeholder="0,00"></label>
+    <label>A reforma<select name="c[reforma_modo]"><?php foreach (ALUGUEL_REFORMA_MODOS as $k => $t): ?><option value="<?= $k ?>" <?= $k === ($editA['reforma_modo'] ?? 'diluir') ? 'selected' : '' ?>><?= h($t) ?></option><?php endforeach ?></select></label>
+    <label>Desconto por mês (se o dono desconta)<input name="c[reforma_abate]" value="<?= h(brl((string)($editA['reforma_abate'] ?? ''))) ?>" inputmode="decimal" placeholder="vazio = reforma ÷ meses"></label>
+    <label>IPCA estimado para os anos futuros (%)<input name="c[ipca_est]" value="<?= h(str_replace('.', ',', (string)($editA['ipca_est'] ?? '4.50'))) ?>" inputmode="decimal"></label>
+    <label class="larga">Observação<input name="c[obs]" value="<?= $vA('obs') ?>" maxlength="300" placeholder="ex.: dono, contato, cláusula do reajuste"></label>
+    <div class="larga row"><button class="pri" name="acao" value="aluguel_salvar"><?= $editA ? 'Salvar' : 'Cadastrar contrato' ?></button><?php if ($cA): ?><a href="?p=aluguel&amp;c=<?= $cidA ?>">Cancelar</a><?php endif ?></div>
+  </form>
+  <?php endif ?>
 
 <?php elseif ($p === 'sem'): ?>
   <div class="msg">Você não tem acesso a esta área. Peça ao gestor admin para liberar em Configurações.</div>

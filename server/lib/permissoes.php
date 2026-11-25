@@ -32,6 +32,10 @@ const PERM_ARVORE = [
         'serv.pag' => ['Lançar pagamento', []],
         'serv.cad' => ['Equipes, obras e preços', []],
     ]],
+    'aluguel' => ['Controle de aluguel', [
+        'aluguel.ver' => ['Ver o aluguel (quanto falta, ano a ano)', []],
+        'aluguel.cad' => ['Cadastrar contrato e IPCA', []],
+    ]],
     'recibos' => ['Recibos', [
         'recibos.vendas' => ['Comissão de vendas', []],
         'recibos.rec' => ['Recolhimento', []],
