@@ -66,6 +66,11 @@ function serv_tabela(): void
     );
     CREATE INDEX IF NOT EXISTS serv_lanc_eq ON serv_lanc (equipe_id, data);
     SQL);
+    // auditoria: AS200/AS80 em metros e tocos/postes de eucalipto em unidades (NULL = ainda não separado à mão: vale a sugestão pelo texto)
+    $cols = array_column(db()->query('PRAGMA table_info(serv_lanc)')->fetchAll(), 'name');
+    foreach (['as200' => 'REAL', 'as80' => 'REAL', 'tocos' => 'REAL', 'audit' => "TEXT NOT NULL DEFAULT ''", 'audit_obs' => "TEXT NOT NULL DEFAULT ''",
+        'audit_por' => "TEXT NOT NULL DEFAULT ''", 'audit_em' => "TEXT NOT NULL DEFAULT ''"] as $c => $t)
+        if (!in_array($c, $cols, true)) db()->exec("ALTER TABLE serv_lanc ADD COLUMN $c $t");
     if ($novo) {
         $q = db()->prepare('INSERT OR IGNORE INTO serv_precos (nome, unidade) VALUES (?,?)');
         foreach (SERV_PRECOS_INICIAIS as $p) $q->execute($p);
@@ -331,4 +336,100 @@ function serv_pagamentos_do_mes(string $mes): array
     $q = db()->prepare("SELECT l.*, e.nome FROM serv_lanc l JOIN serv_equipes e ON e.id = l.equipe_id WHERE l.k = 'p' AND substr(l.data, 1, 7) = ? ORDER BY l.data, l.id");
     $q->execute([$mes]);
     return $q->fetchAll();
+}
+
+// ---------- auditoria (conferir com a medição da terceirizada) ----------
+
+const SERV_AUDIT = ['' => ['Falta conferir', 'q'], 'ok' => ['Conferido', 'ok'], 'div' => ['Diverge', 'er']];
+const SERV_TIPOS = ['as200' => ['Cabo AS200', 'm'], 'as80' => ['Cabo AS80', 'm'], 'tocos' => ['Tocos / postes de eucalipto', 'un']];
+
+/**
+ * Sugere a separação pelo texto: "300 METROS AS200 + 400 MT AS80" -> as200 300, as80 400;
+ * só "AS200" no texto -> todos os metros em AS200; serviço cobrado por poste -> tocos.
+ * @return array{as200: float, as80: float, tocos: float}
+ */
+function serv_tipo_sugerir(array $l): array
+{
+    $r = ['as200' => 0.0, 'as80' => 0.0, 'tocos' => 0.0];
+    if (($l['k'] ?? 's') !== 's') return $r;
+    $qtd = (float)$l['qtd'];
+    $un = mb_strtolower((string)($l['unidade'] ?? ''));
+    $txt = mb_strtoupper(($l['servico'] ?? '') . ' ' . ($l['descricao'] ?? ''));
+    if (str_starts_with($un, 'poste') || str_starts_with($un, 'toco')) {
+        $r['tocos'] = $qtd;
+        return $r;
+    }
+    if (!str_starts_with($un, 'metro')) return $r;
+    $tem = ['as200' => (bool)preg_match('/\bAS\s*-?\s*200\b/u', $txt), 'as80' => (bool)preg_match('/\bAS\s*-?\s*80\b/u', $txt)];
+    // número colado no tipo: "400MT AS200", "300 METROS DE AS80"
+    preg_match_all('/(\d{1,3}(?:\.\d{3})+|\d+)\s*(?:M|MT|MTS|METRO|METROS)?\s*(?:DE\s+)?(?:CABO\s+)?AS\s*-?\s*(200|80)\b/u', $txt, $m, PREG_SET_ORDER);
+    foreach ($m as [, $n, $t]) $r['as' . $t] += serv_qtd_ler($n);
+    if ($m) return $r;
+    if ($tem['as200'] && !$tem['as80']) $r['as200'] = $qtd;
+    elseif ($tem['as80'] && !$tem['as200']) $r['as80'] = $qtd;
+    return $r;
+}
+
+/**
+ * Separação valendo para o serviço: a gravada na auditoria ou, se não tem, a sugestão pelo texto.
+ * Também devolve 'manual' (true = gravada à mão) e 'sem' (metros sem tipo).
+ */
+function serv_tipos(array $l): array
+{
+    $manual = $l['as200'] !== null || $l['as80'] !== null || $l['tocos'] !== null;
+    $r = $manual ? ['as200' => (float)$l['as200'], 'as80' => (float)$l['as80'], 'tocos' => (float)$l['tocos']] : serv_tipo_sugerir($l);
+    $metros = str_starts_with(mb_strtolower((string)$l['unidade']), 'metro') ? (float)$l['qtd'] : 0.0;
+    $r['sem'] = max(0.0, round($metros - $r['as200'] - $r['as80'], 2));
+    $r['manual'] = $manual;
+    return $r;
+}
+
+/** Totais da lista: [tipo => ['qtd', 'valor', 'conf']] (valor rateado pela quantidade quando o serviço mistura tipos) */
+function serv_tipos_totais(array $ls): array
+{
+    $t = [];
+    foreach ([...array_keys(SERV_TIPOS), 'sem'] as $k) $t[$k] = ['qtd' => 0.0, 'valor' => 0.0, 'conf' => 0.0, 'n' => 0];
+    foreach ($ls as $l) {
+        if ($l['k'] !== 's') continue;
+        $tp = serv_tipos($l);
+        $base = (float)$l['qtd'] > 0 ? (float)$l['valor'] / (float)$l['qtd'] : 0.0;
+        foreach (['as200', 'as80', 'tocos', 'sem'] as $k) {
+            if ($tp[$k] <= 0) continue;
+            $t[$k]['qtd'] += $tp[$k];
+            $t[$k]['valor'] += $k === 'tocos' && !str_starts_with(mb_strtolower((string)$l['unidade']), 'poste') ? 0 : $tp[$k] * $base;
+            if ($l['audit'] === 'ok') $t[$k]['conf'] += $tp[$k];
+            $t[$k]['n']++;
+        }
+    }
+    return $t;
+}
+
+/** Grava a auditoria de um serviço. $in: as200, as80, tocos (em branco = volta para a sugestão), audit ('', ok, div), obs. */
+function serv_audit_salvar(int $id, array $in, string $quem): array
+{
+    $l = serv_lanc_um($id);
+    if (!$l || $l['k'] !== 's') throw new RuntimeException('Serviço não encontrado.');
+    $num = function (string $c) use ($in): ?float {
+        $v = trim((string)($in[$c] ?? ''));
+        return $v === '' ? null : serv_qtd_ler($v);
+    };
+    $v = ['as200' => $num('as200'), 'as80' => $num('as80'), 'tocos' => $num('tocos')];
+    if (count(array_filter($v, fn($x) => $x !== null)) > 0) $v = array_map(fn($x) => $x ?? 0.0, $v); // preencheu um: os outros valem zero
+    $a = array_key_exists($in['audit'] ?? '', SERV_AUDIT) ? (string)$in['audit'] : '';
+    $obs = serv_texto((string)($in['obs'] ?? ''), 300);
+    if ($a === 'div' && $obs === '') throw new RuntimeException('Escreva o que diverge da medição da terceirizada.');
+    db()->prepare('UPDATE serv_lanc SET as200 = ?, as80 = ?, tocos = ?, audit = ?, audit_obs = ?, audit_por = ?, audit_em = ? WHERE id = ?')
+        ->execute([$v['as200'], $v['as80'], $v['tocos'], $a, $obs, $a === '' ? '' : $quem, $a === '' ? '' : date('Y-m-d H:i:s'), $id]);
+    return serv_lanc_um($id);
+}
+
+/** Marca/desmarca conferido com um clique (guarda a separação sugerida, para não mudar depois) */
+function serv_audit_ok(int $id, string $quem): array
+{
+    $ls = array_values(array_filter(serv_lancamentos(), fn($x) => (int)$x['id'] === $id));
+    $l = $ls[0] ?? null;
+    if (!$l || $l['k'] !== 's') throw new RuntimeException('Serviço não encontrado.');
+    if ($l['audit'] === 'ok') return serv_audit_salvar($id, ['as200' => $l['as200'] ?? '', 'as80' => $l['as80'] ?? '', 'tocos' => $l['tocos'] ?? '', 'audit' => '', 'obs' => $l['audit_obs']], $quem);
+    $tp = serv_tipos($l);
+    return serv_audit_salvar($id, ['as200' => (string)$tp['as200'], 'as80' => (string)$tp['as80'], 'tocos' => (string)$tp['tocos'], 'audit' => 'ok', 'obs' => $l['audit_obs']], $quem);
 }

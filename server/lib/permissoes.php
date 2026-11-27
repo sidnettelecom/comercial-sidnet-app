@@ -31,6 +31,7 @@ const PERM_ARVORE = [
         'serv.lanc' => ['Lançar serviço feito', []],
         'serv.pag' => ['Lançar pagamento', []],
         'serv.cad' => ['Equipes, obras e preços', []],
+        'serv.audit' => ['Auditar serviços (conferir com a medição e separar AS200, AS80 e tocos)', []],
     ]],
     'aluguel' => ['Controle de aluguel', [
         'aluguel.ver' => ['Ver o aluguel (quanto falta, ano a ano)', []],

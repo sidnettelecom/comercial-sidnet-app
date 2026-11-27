@@ -138,7 +138,7 @@ const PERM_ACOES = [
     'rh_lanc_salvar' => 'rh.lanc', 'rh_lanc_excluir' => 'rh.lanc', 'rh_func_salvar' => 'rh.func', 'rh_func_ativo' => 'rh.func', 'rh_pagar' => 'rh.fecha', 'rh_sobre_salvar' => 'rh.lanc',
     'recibos_cpf' => 'recibos', 'recibos_ixc' => 'recibos.ixc', 'audit_ok' => 'recibos.audit',
     'colab_buscar' => 'cfg.colab', 'colab_salvar' => 'cfg.colab', 'colab_unir' => 'cfg.colab', 'colab_mostrar' => 'cfg.colab',
-    'serv_servico' => 'serv.lanc', 'serv_pagamento' => 'serv.pag', 'serv_excluir' => 'serv',
+    'serv_servico' => 'serv.lanc', 'serv_pagamento' => 'serv.pag', 'serv_excluir' => 'serv', 'serv_audit' => 'serv.audit', 'serv_audit_ok' => 'serv.audit',
     'serv_equipe_salvar' => 'serv.cad', 'serv_equipe_ativo' => 'serv.cad', 'serv_obra_salvar' => 'serv.cad', 'serv_obra_concluir' => 'serv.cad', 'serv_precos_salvar' => 'serv.cad',
     'aluguel_salvar' => 'aluguel.cad', 'aluguel_ipca' => 'aluguel.cad', 'aluguel_bc' => 'aluguel.cad',
 ];
@@ -763,6 +763,11 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 registrar($quem, 'excluiu lançamento de serviço em execução', "#$id {$lx['equipe']} " . ($lx['k'] === 's' ? 'serviço' : 'pagamento') . ' ' . rh_dt($lx['data']) . ' R$ ' . brl($lx['valor']));
                 $msg = ($lx['k'] === 's' ? 'Serviço' : 'Pagamento') . ' de ' . rh_dt($lx['data']) . ' (' . rh_rs((float)$lx['valor']) . ') excluído.';
             }
+        } elseif ($a === 'serv_audit' || $a === 'serv_audit_ok') {
+            $la = $a === 'serv_audit_ok' ? serv_audit_ok($id, $quem) : serv_audit_salvar($id, (array)($_POST['au'] ?? []), $quem);
+            $sa = SERV_AUDIT[$la['audit']][0];
+            registrar($quem, 'auditou serviço em execução', "#$id {$la['equipe']} " . rh_dt($la['data']) . " $sa" . ($la['audit_obs'] !== '' ? ': ' . $la['audit_obs'] : ''));
+            $msg = 'Serviço de ' . rh_dt($la['data']) . ' (' . $la['equipe'] . ', ' . rh_rs((float)$la['valor']) . '): ' . mb_strtolower($sa) . '.';
         } elseif ($a === 'serv_equipe_salvar') {
             $eid = serv_equipe_salvar((array)($_POST['e'] ?? []), $id);
             $ee = serv_equipe($eid);
@@ -1174,6 +1179,14 @@ td.r,th.r{text-align:right}
 @media print{.lado,.noprint,main>.msg{display:none!important}body.dentro{display:block;background:#fff}body.dentro main{padding:0}
   @page{size:A4;margin:0}.rfolhas{display:block;overflow:visible}.rfolha{box-shadow:none;zoom:1!important;break-after:page}.rfolha:last-child{break-after:auto}}
 .serv-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:14px}
+.kpis.k5{grid-template-columns:repeat(5,minmax(0,1fr))}@media (max-width:800px){.kpis.k5{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.serv-tp{text-decoration:none;color:inherit}.serv-tp.sel{outline:2px solid var(--brand)}
+.tps{margin-top:4px}.tp{display:inline-block;font-size:11px;font-weight:700;padding:2px 7px;border-radius:8px;margin:2px 4px 0 0;background:var(--bg);border:1px solid var(--line);white-space:nowrap}
+.tp.auto{border-style:dashed}.tp-as200{background:#dbeafe;color:#1e40af}.tp-as80{background:#ede9fe;color:#5b21b6}.tp-tocos{background:#dcfce7;color:#166534}.tp-sem{background:#fef3c7;color:#92400e}
+td.aud{min-width:150px}td.aud>*{margin-bottom:3px}.chk{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12.5px;font-weight:700;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line);background:var(--surface);color:var(--muted);cursor:pointer}
+.chk span{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:5px;border:1.5px solid var(--muted);font-size:11px;color:transparent}
+.chk.on{background:var(--ok-bg);border-color:var(--ok);color:var(--ok)}.chk.on span{background:var(--ok);border-color:var(--ok);color:#fff}
+tr.aud-ok td{background:color-mix(in srgb,var(--ok-bg) 45%,transparent)}tr.aud-sel td{background:color-mix(in srgb,var(--brand) 8%,transparent)}
 .serv-eq{display:grid;gap:10px}.serv-eq .quem{font-size:15px}.serv-eq .tot{font-size:26px;font-weight:800}.serv-eq .tot.er{color:var(--er)}.serv-eq .tot.ok{color:var(--ok)}
 .al-linha{display:grid;gap:8px}.al-ref{margin:4px 0 0;padding:10px 12px;border-radius:12px;background:color-mix(in srgb,#2563eb 7%,var(--surface));font-size:14px}.al-barra{height:12px;border-radius:6px;background:var(--line);overflow:hidden}.al-barra i{display:block;height:100%;background:linear-gradient(90deg,#2563eb,#0891b2)}
 .al-anos tr.al-agora td,.rec tr.al-agora td{background:color-mix(in srgb,#2563eb 8%,var(--surface))}.al-tot td{border-top:2px solid var(--line)}td.ok-t{color:var(--ok)}td.nw{white-space:nowrap}
@@ -3079,25 +3092,71 @@ th.c,td.c{text-align:center}
     $fe = (int)($_GET['e'] ?? 0);
     $fo = (int)($_GET['o'] ?? 0);
     $fs = in_array($_GET['s'] ?? '', ['aberto', 'parte', 'pago'], true) ? (string)$_GET['s'] : '';
-    $lsL = array_reverse(array_filter($lsL, fn($l) => (!$fe || (int)$l['equipe_id'] === $fe) && (!$fo || (int)$l['obra_id'] === $fo) && (!$fs || $l['sit'] === $fs)));
+    $fa = in_array($_GET['a'] ?? '', ['falta', 'ok', 'div'], true) ? (string)$_GET['a'] : '';
+    $ft = in_array($_GET['t'] ?? '', ['as200', 'as80', 'tocos', 'sem'], true) ? (string)$_GET['t'] : '';
+    foreach ($lsL as &$l) $l['tp'] = serv_tipos($l);
+    unset($l);
+    $lsL = array_reverse(array_filter($lsL, fn($l) => (!$fe || (int)$l['equipe_id'] === $fe) && (!$fo || (int)$l['obra_id'] === $fo) && (!$fs || $l['sit'] === $fs)
+        && (!$fa || ($fa === 'falta' ? $l['audit'] === '' : $l['audit'] === $fa)) && (!$ft || $l['tp'][$ft] > 0)));
     $SIT = ['aberto' => ['Em aberto', 'q'], 'parte' => ['Pago em parte', 'q'], 'pago' => ['Quitado', 'ok']];
+    $podeAud = $pode('serv.audit');
+    $totT = serv_tipos_totais($lsL);
+    $nConf = count(array_filter($lsL, fn($l) => $l['audit'] === 'ok'));
+    $nDiv = count(array_filter($lsL, fn($l) => $l['audit'] === 'div'));
+    $qsL = http_build_query(array_filter(['p' => 'serv_lista', 'e' => $fe, 'o' => $fo, 's' => $fs, 'a' => $fa, 't' => $ft]));
+    $audId = $podeAud ? (int)($_GET['aud'] ?? 0) : 0;
+    $audL = $audId ? (array_values(array_filter($lsL, fn($l) => (int)$l['id'] === $audId))[0] ?? null) : null;
+    $nq = fn(float $v) => $v > 0 ? serv_num($v) : '';
 ?>
-  <div class="topo"><div><h1>Serviços lançados</h1><p class="small">Todos os serviços, do mais novo para o mais velho. O pagamento abate primeiro o serviço mais antigo da equipe, então dá para ver o que já está quitado e o que está em aberto.</p></div>
+  <div class="topo"><div><h1>Serviços lançados</h1><p class="small">Todos os serviços, do mais novo para o mais velho. O pagamento abate primeiro o serviço mais antigo da equipe, então dá para ver o que já está quitado e o que está em aberto. Na auditoria, confira cada serviço com a medição da terceirizada e marque conferido.</p></div>
     <?php if ($pode('serv.lanc')): ?><a class="bt pri" href="?p=serv_lancar&amp;k=s">+ Lançar serviço feito</a><?php endif ?></div>
+  <div class="kpis k5">
+    <?php foreach (['as200' => 'Cabo AS200', 'as80' => 'Cabo AS80', 'tocos' => 'Tocos / postes de eucalipto', 'sem' => 'Metros sem tipo'] as $k => $tt): $r = $totT[$k]; $un = $k === 'tocos' ? ' un' : ' m'; ?>
+    <a class="kpi serv-tp<?= $ft === $k ? ' sel' : '' ?>" href="?<?= h(http_build_query(array_filter(['p' => 'serv_lista', 'e' => $fe, 'o' => $fo, 's' => $fs, 'a' => $fa, 't' => $ft === $k ? '' : $k]))) ?>"><span><?= $tt ?></span><b<?= $k === 'sem' && $r['qtd'] > 0 ? ' class="q"' : '' ?>><?= serv_num($r['qtd']) . $un ?></b>
+      <small><?= $k === 'sem' ? ($r['qtd'] > 0 ? 'separe na auditoria (' . $r['n'] . ' serviço' . ($r['n'] === 1 ? '' : 's') . ')' : 'tudo separado') : ($r['valor'] > 0 ? rh_rs($r['valor']) . ' · ' : '') . 'conferido ' . serv_num($r['conf']) . $un ?></small></a>
+    <?php endforeach ?>
+    <div class="kpi"><span>Auditoria</span><b class="<?= $nConf === count($lsL) && $lsL ? 'ok' : '' ?>"><?= $nConf ?> de <?= count($lsL) ?></b><small>conferidos<?= $nDiv ? ' · <b class="er" style="font-size:inherit">' . $nDiv . ' diverge' . ($nDiv > 1 ? 'm' : '') . '</b>' : '' ?></small></div>
+  </div>
+  <?php if ($audL): $tpA = $audL['tp']; ?>
+  <form method="post" action="?<?= h($qsL) ?>" class="card" id="form-aud"><?= csrf_campo() ?><input type="hidden" name="acao" value="serv_audit"><input type="hidden" name="id" value="<?= $audId ?>">
+    <h2>Auditar serviço</h2>
+    <p class="small" style="margin:0 0 10px"><b><?= h(rh_dt($audL['data'])) ?> · <?= h($audL['equipe']) ?></b> · <?= h(serv_oque($audL)) ?> · <?= h(serv_qtd($audL)) ?> = <b><?= rh_rs((float)$audL['valor']) ?></b><br>
+      Confira com a medição da terceirizada e separe o que foi feito.<?= $tpA['manual'] ? '' : ' Os números abaixo foram sugeridos pelo texto da descrição: corrija se precisar.' ?></p>
+    <div class="rec-form">
+      <label>Cabo AS200 (metros)<input name="au[as200]" inputmode="decimal" value="<?= $nq($tpA['as200']) ?>" placeholder="0"></label>
+      <label>Cabo AS80 (metros)<input name="au[as80]" inputmode="decimal" value="<?= $nq($tpA['as80']) ?>" placeholder="0"></label>
+      <label>Tocos / postes de eucalipto (unidades)<input name="au[tocos]" inputmode="decimal" value="<?= $nq($tpA['tocos']) ?>" placeholder="0"></label>
+      <label>Auditoria<select name="au[audit]"><?php foreach (SERV_AUDIT as $k => [$t]): ?><option value="<?= $k ?>" <?= $k === ($audL['audit'] === '' ? 'ok' : $audL['audit']) ? 'selected' : '' ?>><?= $t ?></option><?php endforeach ?></select></label>
+      <label class="larga">O que diverge / observação<input name="au[obs]" maxlength="300" value="<?= h($audL['audit_obs']) ?>" placeholder="Ex.: a medição da FIBRA STAR dá 6.500 m, não 7.000"></label>
+      <div class="larga row"><button class="pri">Salvar auditoria</button><a href="?<?= h($qsL) ?>">Cancelar</a></div>
+    </div>
+  </form>
+  <?php endif ?>
   <div class="card">
     <form method="get" class="row"><input type="hidden" name="p" value="serv_lista">
       <select name="e" aria-label="Equipe" data-auto><option value="0">Todas as equipes</option><?php foreach ($eqL as $id => $e): ?><option value="<?= (int)$id ?>" <?= $id === $fe ? 'selected' : '' ?>><?= h($e['nome']) ?></option><?php endforeach ?></select>
       <select name="o" aria-label="Obra" data-auto><option value="0">Todas as obras</option><?php foreach ($obL as $id => $o): ?><option value="<?= (int)$id ?>" <?= $id === $fo ? 'selected' : '' ?>><?= h($o['nome']) ?></option><?php endforeach ?></select>
-      <select name="s" aria-label="Situação" data-auto><option value="">Todas as situações</option><?php foreach ($SIT as $k => [$t]): ?><option value="<?= $k ?>" <?= $k === $fs ? 'selected' : '' ?>><?= $t ?></option><?php endforeach ?></select><noscript><button>Filtrar</button></noscript></form>
+      <select name="s" aria-label="Situação" data-auto><option value="">Todas as situações</option><?php foreach ($SIT as $k => [$t]): ?><option value="<?= $k ?>" <?= $k === $fs ? 'selected' : '' ?>><?= $t ?></option><?php endforeach ?></select>
+      <select name="a" aria-label="Auditoria" data-auto><option value="">Auditoria: todos</option><?php foreach (['falta' => 'Falta conferir', 'ok' => 'Conferidos', 'div' => 'Divergentes'] as $k => $t): ?><option value="<?= $k ?>" <?= $k === $fa ? 'selected' : '' ?>><?= $t ?></option><?php endforeach ?></select>
+      <select name="t" aria-label="Tipo" data-auto><option value="">Todos os tipos</option><?php foreach (['as200' => 'Cabo AS200', 'as80' => 'Cabo AS80', 'tocos' => 'Tocos / postes', 'sem' => 'Metros sem tipo'] as $k => $t): ?><option value="<?= $k ?>" <?= $k === $ft ? 'selected' : '' ?>><?= $t ?></option><?php endforeach ?></select><noscript><button>Filtrar</button></noscript></form>
     <div class="tw" style="margin-top:10px"><table class="rec">
-      <thead><tr><th>Data</th><th>Equipe</th><th>O que foi feito</th><th>Obra</th><th class="r">Qtd × valor</th><th class="r">Total</th><th>Situação</th><th>Lançado por</th></tr></thead>
-      <?php foreach ($lsL as $l): ?>
-      <tr><td class="n"><?= h(rh_dt($l['data'])) ?></td><td><a href="?p=serv_extrato&amp;e=<?= (int)$l['equipe_id'] ?>"><b><?= h($l['equipe']) ?></b></a></td><td><?= h(serv_oque($l)) ?></td><td><?= h($l['obra'] ?: '—') ?></td>
+      <thead><tr><th>Data</th><th>Equipe</th><th>O que foi feito</th><th>Obra</th><th class="r">Qtd × valor</th><th class="r">Total</th><th>Situação</th><th>Auditoria</th><th>Lançado por</th></tr></thead>
+      <?php foreach ($lsL as $l): $tp = $l['tp']; $chips = []; foreach (['as200' => 'AS200', 'as80' => 'AS80', 'tocos' => 'TOCOS', 'sem' => 'SEM TIPO'] as $k => $t) if ($tp[$k] > 0) $chips[] = '<span class="tp tp-' . $k . ($tp['manual'] ? '' : ' auto') . '">' . $t . ' ' . serv_num($tp[$k]) . ($k === 'tocos' ? ' un' : ' m') . '</span>'; ?>
+      <tr<?= $l['audit'] === 'ok' ? ' class="aud-ok"' : ($audId === (int)$l['id'] ? ' class="aud-sel"' : '') ?>><td class="n"><?= h(rh_dt($l['data'])) ?></td><td><a href="?p=serv_extrato&amp;e=<?= (int)$l['equipe_id'] ?>"><b><?= h($l['equipe']) ?></b></a></td>
+        <td><?= h(serv_oque($l)) ?><?= $chips ? '<div class="tps">' . implode('', $chips) . (!$tp['manual'] ? ' <span class="small" title="Sugerido pelo texto da descrição. Ajuste na auditoria.">sugerido</span>' : '') . '</div>' : '' ?></td><td><?= h($l['obra'] ?: '—') ?></td>
         <td class="n r small"><?= h(serv_qtd($l)) ?></td><td class="n r"><b><?= rh_rs((float)$l['valor']) ?></b></td>
-        <td><span class="pill <?= $SIT[$l['sit']][1] ?>"><?= $SIT[$l['sit']][0] ?></span><?= $l['sit'] === 'parte' ? '<br><span class="small">falta ' . rh_rs($l['falta']) . '</span>' : '' ?></td><td class="small"><?= h($l['lancado_nome']) ?></td></tr>
+        <td><span class="pill <?= $SIT[$l['sit']][1] ?>"><?= $SIT[$l['sit']][0] ?></span><?= $l['sit'] === 'parte' ? '<br><span class="small">falta ' . rh_rs($l['falta']) . '</span>' : '' ?></td>
+        <td class="aud"><?php if ($podeAud): ?><form method="post" action="?<?= h($qsL) ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="serv_audit_ok"><input type="hidden" name="id" value="<?= (int)$l['id'] ?>">
+          <button class="chk<?= $l['audit'] === 'ok' ? ' on' : '' ?>" title="<?= $l['audit'] === 'ok' ? 'Desmarcar' : 'Marcar como conferido' ?>" aria-pressed="<?= $l['audit'] === 'ok' ? 'true' : 'false' ?>"><span aria-hidden="true">✓</span> <?= $l['audit'] === 'ok' ? 'Conferido' : 'Conferir' ?></button></form>
+          <?php else: ?><span class="pill <?= SERV_AUDIT[$l['audit']][1] ?>"><?= SERV_AUDIT[$l['audit']][0] ?></span><?php endif ?>
+          <?php if ($l['audit'] === 'div'): ?><div><span class="pill er">Diverge</span></div><?php endif ?>
+          <?php if ($l['audit_obs'] !== ''): ?><div class="small" style="max-width:220px"><?= h($l['audit_obs']) ?></div><?php endif ?>
+          <?php if ($l['audit'] !== '' && $l['audit_em'] !== ''): ?><div class="small"><?= h(rh_dt(substr($l['audit_em'], 0, 10))) ?> · <?= h(mb_strtoupper($l['audit_por'])) ?></div><?php endif ?>
+          <?php if ($podeAud): ?><a class="small" href="?<?= h($qsL) ?>&amp;aud=<?= (int)$l['id'] ?>#form-aud">Separar / divergência</a><?php endif ?></td>
+        <td class="small"><?= h($l['lancado_nome']) ?></td></tr>
       <?php endforeach ?>
-      <?php if (!$lsL): ?><tr><td colspan="8" class="small">Nenhum serviço<?= $fe || $fo || $fs ? ' com esse filtro' : ' lançado ainda' ?>.</td></tr><?php else: ?>
-      <tfoot><tr><td colspan="5">Total da lista (<?= count($lsL) ?>)</td><td class="n r"><?= rh_rs(array_sum(array_map(fn($l) => (float)$l['valor'], $lsL))) ?></td><td class="n small" colspan="2">falta <?= rh_rs(array_sum(array_column($lsL, 'falta'))) ?></td></tr></tfoot><?php endif ?>
+      <?php if (!$lsL): ?><tr><td colspan="9" class="small">Nenhum serviço<?= $fe || $fo || $fs || $fa || $ft ? ' com esse filtro' : ' lançado ainda' ?>.</td></tr><?php else: ?>
+      <tfoot><tr><td colspan="5">Total da lista (<?= count($lsL) ?>)</td><td class="n r"><?= rh_rs(array_sum(array_map(fn($l) => (float)$l['valor'], $lsL))) ?></td><td class="n small">falta <?= rh_rs(array_sum(array_column($lsL, 'falta'))) ?></td><td class="n small" colspan="2">conferido <?= rh_rs(array_sum(array_map(fn($l) => $l['audit'] === 'ok' ? (float)$l['valor'] : 0, $lsL))) ?></td></tr></tfoot><?php endif ?>
     </table></div>
   </div>
 
