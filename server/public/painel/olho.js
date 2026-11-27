@@ -56,6 +56,7 @@ document.querySelectorAll('[data-imprimir]').forEach(function(b){
     var o=sel.options[sel.selectedIndex],fechado=sel.value==='0',un=o.getAttribute('data-un')||'',pv=parseFloat(o.getAttribute('data-valor')||'')||0;
     f.querySelectorAll('.so-qtd').forEach(function(l){l.hidden=fechado});
     f.querySelectorAll('.so-fechado').forEach(function(l){l.hidden=!fechado});
+    f.querySelectorAll('.so-cabo').forEach(function(l){l.hidden=fechado||un.toLowerCase().indexOf('metro')!==0});
     q.required=!fechado;v.required=fechado;
     if(!fechado){f.querySelector('.so-qtd span').textContent='Valor por '+un+' R$';q.placeholder='quantos ('+un+')';u.placeholder=pv?pv.toFixed(2).replace('.',','):'0,00'}
     var t=fechado?num(v.value):num(q.value)*(num(u.value)||pv);

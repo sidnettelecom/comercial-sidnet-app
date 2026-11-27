@@ -71,6 +71,22 @@ function serv_tabela(): void
     foreach (['as200' => 'REAL', 'as80' => 'REAL', 'tocos' => 'REAL', 'audit' => "TEXT NOT NULL DEFAULT ''", 'audit_obs' => "TEXT NOT NULL DEFAULT ''",
         'audit_por' => "TEXT NOT NULL DEFAULT ''", 'audit_em' => "TEXT NOT NULL DEFAULT ''"] as $c => $t)
         if (!in_array($c, $cols, true)) db()->exec("ALTER TABLE serv_lanc ADD COLUMN $c $t");
+    // tipos de cabo (o admin cadastra) e o cabo de cada serviço; split = separação gravada na auditoria (JSON), NULL = vale a sugestão
+    $novoCabo = !db()->query("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'serv_cabos'")->fetchColumn();
+    db()->exec('CREATE TABLE IF NOT EXISTS serv_cabos (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL UNIQUE, ativo INTEGER NOT NULL DEFAULT 1)');
+    if ($novoCabo) foreach (['AS200', 'AS80'] as $c) db()->prepare('INSERT OR IGNORE INTO serv_cabos (nome) VALUES (?)')->execute([$c]);
+    $cols = array_column(db()->query('PRAGMA table_info(serv_lanc)')->fetchAll(), 'name');
+    if (!in_array('cabo_id', $cols, true)) db()->exec('ALTER TABLE serv_lanc ADD COLUMN cabo_id INTEGER NOT NULL DEFAULT 0');
+    if (!in_array('split', $cols, true)) {
+        db()->exec('ALTER TABLE serv_lanc ADD COLUMN split TEXT');
+        // auditoria antiga (colunas as200/as80/tocos) passa para o split
+        $ids = array_flip(array_map(fn($c) => $c['nome'], serv_cabos()));
+        $up = db()->prepare('UPDATE serv_lanc SET split = ? WHERE id = ?');
+        foreach (db()->query('SELECT id, as200, as80, tocos FROM serv_lanc WHERE as200 IS NOT NULL OR as80 IS NOT NULL OR tocos IS NOT NULL') as $r) {
+            $cb = array_filter([($ids['AS200'] ?? 0) => (float)$r['as200'], ($ids['AS80'] ?? 0) => (float)$r['as80']], fn($m, $k) => $k && $m > 0, ARRAY_FILTER_USE_BOTH);
+            $up->execute([json_encode(['cabos' => (object)$cb, 'tocos' => (float)$r['tocos']]), $r['id']]);
+        }
+    }
     if ($novo) {
         $q = db()->prepare('INSERT OR IGNORE INTO serv_precos (nome, unidade) VALUES (?,?)');
         foreach (SERV_PRECOS_INICIAIS as $p) $q->execute($p);
@@ -180,6 +196,36 @@ function serv_precos_salvar(array $lista, array $novo): int
     return $n;
 }
 
+function serv_cabos(bool $soAtivos = false): array
+{
+    return db()->query('SELECT * FROM serv_cabos' . ($soAtivos ? ' WHERE ativo = 1' : '') . ' ORDER BY id')->fetchAll(PDO::FETCH_UNIQUE);
+}
+
+/** Grava os tipos de cabo: $lista = [id => ['nome', 'ativo']], mais $novo (nome). */
+function serv_cabos_salvar(array $lista, string $novo): int
+{
+    $n = 0;
+    $up = db()->prepare('UPDATE serv_cabos SET nome = ?, ativo = ? WHERE id = ?');
+    $nomes = [];
+    foreach ($lista as $id => $c) {
+        $nome = mb_strtoupper(serv_texto((string)($c['nome'] ?? ''), 40));
+        if ($nome === '') throw new RuntimeException('Todo cabo precisa de nome.');
+        if (isset($nomes[$nome])) throw new RuntimeException("O cabo $nome está repetido.");
+        $nomes[$nome] = 1;
+        $up->execute([$nome, empty($c['ativo']) ? 0 : 1, (int)$id]);
+        $n += $up->rowCount();
+    }
+    $nome = mb_strtoupper(serv_texto($novo, 40));
+    if ($nome !== '') {
+        $q = db()->prepare('SELECT 1 FROM serv_cabos WHERE nome = ?');
+        $q->execute([$nome]);
+        if ($q->fetchColumn()) throw new RuntimeException("O cabo $nome já está cadastrado.");
+        db()->prepare('INSERT INTO serv_cabos (nome) VALUES (?)')->execute([$nome]);
+        $n++;
+    }
+    return $n;
+}
+
 // ---------- lançamentos ----------
 
 /**
@@ -197,6 +243,8 @@ function serv_servico_salvar(array $in, string $quem, int $id = 0): int
     $obra = (int)($in['obra_id'] ?? 0);
     if ($obra && !isset(serv_obras()[$obra])) throw new RuntimeException('Essa obra não existe mais.');
     $desc = serv_texto((string)($in['descricao'] ?? ''), 200);
+    $cabo = (int)($in['cabo_id'] ?? 0);
+    if ($cabo && !isset(serv_cabos()[$cabo])) throw new RuntimeException('Esse tipo de cabo não existe mais.');
     $pid = (int)($in['preco_id'] ?? 0);
     if ($pid) {
         $pr = serv_precos()[$pid] ?? null;
@@ -215,13 +263,16 @@ function serv_servico_salvar(array $in, string $quem, int $id = 0): int
         if ($valor === '' || (float)$valor <= 0) throw new RuntimeException('Preencha o valor do serviço.');
         if ($desc === '') throw new RuntimeException('Escreva o que foi feito (valor fechado precisa de descrição).');
     }
+    if (!$pid || !str_starts_with(mb_strtolower((string)serv_precos()[$pid]['unidade']), 'metro')) $cabo = 0; // cabo só em serviço por metro
     if ($id) {
-        db()->prepare('UPDATE serv_lanc SET equipe_id = ?, data = ?, obra_id = ?, preco_id = ?, qtd = ?, unitario = ?, valor = ?, descricao = ? WHERE id = ?')
-            ->execute([$e['id'], $data, $obra, $pid, $qtd, $unit, $valor, $desc, $id]);
+        // mudou cabo, serviço ou metros: a separação da auditoria volta a ser a sugerida
+        $mudou = (int)$antes['cabo_id'] !== $cabo || (int)$antes['preco_id'] !== $pid || abs((float)$antes['qtd'] - $qtd) > 0.001;
+        db()->prepare('UPDATE serv_lanc SET equipe_id = ?, data = ?, obra_id = ?, preco_id = ?, qtd = ?, unitario = ?, valor = ?, descricao = ?, cabo_id = ?' . ($mudou ? ', split = NULL' : '') . ' WHERE id = ?')
+            ->execute([$e['id'], $data, $obra, $pid, $qtd, $unit, $valor, $desc, $cabo, $id]);
         return $id;
     }
-    db()->prepare("INSERT INTO serv_lanc (equipe_id, k, data, obra_id, preco_id, qtd, unitario, valor, descricao, lancado_por) VALUES (?,'s',?,?,?,?,?,?,?,?)")
-        ->execute([$e['id'], $data, $obra, $pid, $qtd, $unit, $valor, $desc, $quem]);
+    db()->prepare("INSERT INTO serv_lanc (equipe_id, k, data, obra_id, preco_id, qtd, unitario, valor, descricao, cabo_id, lancado_por) VALUES (?,'s',?,?,?,?,?,?,?,?,?)")
+        ->execute([$e['id'], $data, $obra, $pid, $qtd, $unit, $valor, $desc, $cabo, $quem]);
     return (int)db()->lastInsertId();
 }
 
@@ -268,8 +319,8 @@ function serv_excluir(int $id): ?array
 function serv_lancamentos(int $eid = 0): array
 {
     $sql = "SELECT l.*, e.nome AS equipe, COALESCE(o.nome, '') AS obra, COALESCE(o.rede, '') AS rede,
-            COALESCE(p.nome, '') AS servico, COALESCE(p.unidade, '') AS unidade, COALESCE(g.nome, l.lancado_por) AS lancado_nome
-        FROM serv_lanc l JOIN serv_equipes e ON e.id = l.equipe_id
+            COALESCE(p.nome, '') AS servico, COALESCE(p.unidade, '') AS unidade, COALESCE(g.nome, l.lancado_por) AS lancado_nome, COALESCE(c.nome, '') AS cabo
+        FROM serv_lanc l JOIN serv_equipes e ON e.id = l.equipe_id LEFT JOIN serv_cabos c ON c.id = l.cabo_id
         LEFT JOIN serv_obras o ON o.id = l.obra_id LEFT JOIN serv_precos p ON p.id = l.preco_id
         LEFT JOIN gestores g ON g.usuario = l.lancado_por" . ($eid ? ' WHERE l.equipe_id = ?' : '') . ' ORDER BY l.data, l.id';
     $q = db()->prepare($sql);
@@ -340,7 +391,7 @@ function serv_qtd(array $l): string
     $u = $l['unidade'];
     if ($q != 1 && $u !== '' && !preg_match('/[sç]$|ão$/u', $u)) $u .= 's';
     elseif ($q != 1 && str_ends_with($u, 'ão')) $u = mb_substr($u, 0, -2) . 'ões';
-    return serv_num($q) . ' ' . $u . ' × ' . rh_rs((float)$l['unitario']);
+    return serv_num($q) . ' ' . $u . (($l['cabo'] ?? '') !== '' ? ' de ' . $l['cabo'] : '') . ' × ' . rh_rs((float)$l['unitario']);
 }
 
 /** Pagamentos feitos no mês (todas as equipes), para a tela Recibos */
@@ -354,95 +405,124 @@ function serv_pagamentos_do_mes(string $mes): array
 // ---------- auditoria (conferir com a medição da terceirizada) ----------
 
 const SERV_AUDIT = ['' => ['Falta conferir', 'q'], 'ok' => ['Conferido', 'ok'], 'div' => ['Diverge', 'er']];
-const SERV_TIPOS = ['as200' => ['Cabo AS200', 'm'], 'as80' => ['Cabo AS80', 'm'], 'tocos' => ['Tocos / postes de eucalipto', 'un']];
+
+function serv_un_metro(array $l): bool
+{
+    return str_starts_with(mb_strtolower((string)($l['unidade'] ?? '')), 'metro');
+}
+
+/** "AS200" -> regex que aceita "AS200", "AS 200", "AS-200" */
+function serv_cabo_regex(string $nome): string
+{
+    $partes = preg_split('/(?<=\pL)(?=\d)|(?<=\d)(?=\pL)|[\s-]+/u', mb_strtoupper(trim($nome)), -1, PREG_SPLIT_NO_EMPTY);
+    return implode('\s*-?\s*', array_map(fn($x) => preg_quote($x, '/'), $partes));
+}
 
 /**
- * Sugere a separação pelo texto: "300 METROS AS200 + 400 MT AS80" -> as200 300, as80 400;
- * só "AS200" no texto -> todos os metros em AS200; serviço cobrado por poste -> tocos.
- * @return array{as200: float, as80: float, tocos: float}
+ * Sugere a separação: cabo escolhido no lançamento -> todos os metros nele; sem cabo escolhido, pelo texto
+ * ("300 METROS AS200 + 400 MT AS80"; só "AS200" no texto -> tudo em AS200); serviço cobrado por poste -> tocos.
+ * @return array{cabos: array<int, float>, tocos: float}
  */
 function serv_tipo_sugerir(array $l): array
 {
-    $r = ['as200' => 0.0, 'as80' => 0.0, 'tocos' => 0.0];
+    $r = ['cabos' => [], 'tocos' => 0.0];
     if (($l['k'] ?? 's') !== 's') return $r;
     $qtd = (float)$l['qtd'];
     $un = mb_strtolower((string)($l['unidade'] ?? ''));
-    $txt = mb_strtoupper(($l['servico'] ?? '') . ' ' . ($l['descricao'] ?? ''));
     if (str_starts_with($un, 'poste') || str_starts_with($un, 'toco')) {
         $r['tocos'] = $qtd;
         return $r;
     }
     if (!str_starts_with($un, 'metro')) return $r;
-    $tem = ['as200' => (bool)preg_match('/\bAS\s*-?\s*200\b/u', $txt), 'as80' => (bool)preg_match('/\bAS\s*-?\s*80\b/u', $txt)];
-    // número colado no tipo: "400MT AS200", "300 METROS DE AS80"
-    preg_match_all('/(\d{1,3}(?:\.\d{3})+|\d+)\s*(?:M|MT|MTS|METRO|METROS)?\s*(?:DE\s+)?(?:CABO\s+)?AS\s*-?\s*(200|80)\b/u', $txt, $m, PREG_SET_ORDER);
-    foreach ($m as [, $n, $t]) $r['as' . $t] += serv_qtd_ler($n);
-    if ($m) return $r;
-    if ($tem['as200'] && !$tem['as80']) $r['as200'] = $qtd;
-    elseif ($tem['as80'] && !$tem['as200']) $r['as80'] = $qtd;
+    if ((int)($l['cabo_id'] ?? 0)) {
+        $r['cabos'][(int)$l['cabo_id']] = $qtd;
+        return $r;
+    }
+    $txt = mb_strtoupper(($l['servico'] ?? '') . ' ' . ($l['descricao'] ?? ''));
+    $tem = [];
+    foreach (serv_cabos() as $id => $c) {
+        $rx = serv_cabo_regex($c['nome']);
+        if ($rx === '' || !preg_match('/(?<![\pL\d])' . $rx . '(?![\pL\d])/u', $txt)) continue;
+        $tem[] = $id;
+        // número colado no cabo: "400MT AS200", "300 METROS DE AS80"
+        if (preg_match_all('/(\d{1,3}(?:\.\d{3})+|\d+)\s*(?:M|MT|MTS|METRO|METROS)?\s*(?:DE\s+)?(?:CABO\s+)?' . $rx . '(?![\pL\d])/u', $txt, $m))
+            foreach ($m[1] as $n) $r['cabos'][$id] = ($r['cabos'][$id] ?? 0) + serv_qtd_ler($n);
+    }
+    if (!$r['cabos'] && count($tem) === 1) $r['cabos'][$tem[0]] = $qtd;
     return $r;
 }
 
-/**
- * Separação valendo para o serviço: a gravada na auditoria ou, se não tem, a sugestão pelo texto.
- * Também devolve 'manual' (true = gravada à mão) e 'sem' (metros sem tipo).
- */
+/** Separação valendo: a gravada na auditoria ou a sugerida. Mais 'sem' (metros sem cabo) e 'manual'. */
 function serv_tipos(array $l): array
 {
-    $manual = $l['as200'] !== null || $l['as80'] !== null || $l['tocos'] !== null;
-    $r = $manual ? ['as200' => (float)$l['as200'], 'as80' => (float)$l['as80'], 'tocos' => (float)$l['tocos']] : serv_tipo_sugerir($l);
-    $metros = str_starts_with(mb_strtolower((string)$l['unidade']), 'metro') ? (float)$l['qtd'] : 0.0;
-    $r['sem'] = max(0.0, round($metros - $r['as200'] - $r['as80'], 2));
+    $sp = ($l['split'] ?? null) !== null ? json_decode((string)$l['split'], true) : null;
+    $manual = is_array($sp);
+    $r = $manual ? ['cabos' => array_map('floatval', (array)($sp['cabos'] ?? [])), 'tocos' => (float)($sp['tocos'] ?? 0)] : serv_tipo_sugerir($l);
+    $r['cabos'] = array_filter($r['cabos'], fn($m) => $m > 0);
+    $r['sem'] = serv_un_metro($l) ? max(0.0, round((float)$l['qtd'] - array_sum($r['cabos']), 2)) : 0.0;
     $r['manual'] = $manual;
     return $r;
 }
 
-/** Totais da lista: [tipo => ['qtd', 'valor', 'conf']] (valor rateado pela quantidade quando o serviço mistura tipos) */
+/** Totais da lista: ['c<id>' / 'tocos' / 'sem' => ['qtd', 'valor', 'conf', 'n']] (valor rateado pelos metros quando o serviço mistura cabos) */
 function serv_tipos_totais(array $ls): array
 {
     $t = [];
-    foreach ([...array_keys(SERV_TIPOS), 'sem'] as $k) $t[$k] = ['qtd' => 0.0, 'valor' => 0.0, 'conf' => 0.0, 'n' => 0];
+    $add = function (string $k, float $q, float $v, bool $ok) use (&$t) {
+        $t[$k] ??= ['qtd' => 0.0, 'valor' => 0.0, 'conf' => 0.0, 'n' => 0];
+        $t[$k]['qtd'] += $q;
+        $t[$k]['valor'] += $v;
+        if ($ok) $t[$k]['conf'] += $q;
+        $t[$k]['n']++;
+    };
     foreach ($ls as $l) {
         if ($l['k'] !== 's') continue;
-        $tp = serv_tipos($l);
+        $tp = $l['tp'] ?? serv_tipos($l);
         $base = (float)$l['qtd'] > 0 ? (float)$l['valor'] / (float)$l['qtd'] : 0.0;
-        foreach (['as200', 'as80', 'tocos', 'sem'] as $k) {
-            if ($tp[$k] <= 0) continue;
-            $t[$k]['qtd'] += $tp[$k];
-            $t[$k]['valor'] += $k === 'tocos' && !str_starts_with(mb_strtolower((string)$l['unidade']), 'poste') ? 0 : $tp[$k] * $base;
-            if ($l['audit'] === 'ok') $t[$k]['conf'] += $tp[$k];
-            $t[$k]['n']++;
-        }
+        $ok = $l['audit'] === 'ok';
+        $metro = serv_un_metro($l);
+        foreach ($tp['cabos'] as $cid => $m) $add('c' . $cid, $m, $metro ? $m * $base : 0, $ok);
+        if ($tp['tocos'] > 0) $add('tocos', $tp['tocos'], $metro ? 0 : $tp['tocos'] * $base, $ok);
+        if ($tp['sem'] > 0) $add('sem', $tp['sem'], $tp['sem'] * $base, $ok);
     }
     return $t;
 }
 
-/** Grava a auditoria de um serviço. $in: as200, as80, tocos (em branco = volta para a sugestão), audit ('', ok, div), obs. */
+/** Grava a auditoria de um serviço. $in: cabo[id] (metros), tocos (tudo em branco = volta para a sugestão), audit ('', ok, div), obs. */
 function serv_audit_salvar(int $id, array $in, string $quem): array
 {
     $l = serv_lanc_um($id);
     if (!$l || $l['k'] !== 's') throw new RuntimeException('Serviço não encontrado.');
-    $num = function (string $c) use ($in): ?float {
-        $v = trim((string)($in[$c] ?? ''));
-        return $v === '' ? null : serv_qtd_ler($v);
-    };
-    $v = ['as200' => $num('as200'), 'as80' => $num('as80'), 'tocos' => $num('tocos')];
-    if (count(array_filter($v, fn($x) => $x !== null)) > 0) $v = array_map(fn($x) => $x ?? 0.0, $v); // preencheu um: os outros valem zero
+    $cb = [];
+    $algum = false;
+    foreach ((array)($in['cabo'] ?? []) as $cid => $v) {
+        if (trim((string)$v) === '') continue;
+        $algum = true;
+        if (($m = serv_qtd_ler((string)$v)) > 0) $cb[(int)$cid] = $m;
+    }
+    $tocos = trim((string)($in['tocos'] ?? ''));
+    $algum = $algum || $tocos !== '';
+    $split = $algum ? json_encode(['cabos' => (object)$cb, 'tocos' => serv_qtd_ler($tocos)]) : null;
     $a = array_key_exists($in['audit'] ?? '', SERV_AUDIT) ? (string)$in['audit'] : '';
     $obs = serv_texto((string)($in['obs'] ?? ''), 300);
     if ($a === 'div' && $obs === '') throw new RuntimeException('Escreva o que diverge da medição da terceirizada.');
-    db()->prepare('UPDATE serv_lanc SET as200 = ?, as80 = ?, tocos = ?, audit = ?, audit_obs = ?, audit_por = ?, audit_em = ? WHERE id = ?')
-        ->execute([$v['as200'], $v['as80'], $v['tocos'], $a, $obs, $a === '' ? '' : $quem, $a === '' ? '' : date('Y-m-d H:i:s'), $id]);
+    db()->prepare('UPDATE serv_lanc SET split = ?, audit = ?, audit_obs = ?, audit_por = ?, audit_em = ? WHERE id = ?')
+        ->execute([$split, $a, $obs, $a === '' ? '' : $quem, $a === '' ? '' : date('Y-m-d H:i:s'), $id]);
     return serv_lanc_um($id);
 }
 
-/** Marca/desmarca conferido com um clique (guarda a separação sugerida, para não mudar depois) */
+/** Marca/desmarca conferido com um clique (ao conferir, guarda a separação que estava valendo, para não mudar depois) */
 function serv_audit_ok(int $id, string $quem): array
 {
-    $ls = array_values(array_filter(serv_lancamentos(), fn($x) => (int)$x['id'] === $id));
-    $l = $ls[0] ?? null;
+    $l = array_values(array_filter(serv_lancamentos(), fn($x) => (int)$x['id'] === $id))[0] ?? null;
     if (!$l || $l['k'] !== 's') throw new RuntimeException('Serviço não encontrado.');
-    if ($l['audit'] === 'ok') return serv_audit_salvar($id, ['as200' => $l['as200'] ?? '', 'as80' => $l['as80'] ?? '', 'tocos' => $l['tocos'] ?? '', 'audit' => '', 'obs' => $l['audit_obs']], $quem);
-    $tp = serv_tipos($l);
-    return serv_audit_salvar($id, ['as200' => (string)$tp['as200'], 'as80' => (string)$tp['as80'], 'tocos' => (string)$tp['tocos'], 'audit' => 'ok', 'obs' => $l['audit_obs']], $quem);
+    $novo = $l['audit'] === 'ok' ? '' : 'ok';
+    $split = $l['split'];
+    if ($novo === 'ok') {
+        $tp = serv_tipos($l);
+        $split = json_encode(['cabos' => (object)$tp['cabos'], 'tocos' => $tp['tocos']]);
+    }
+    db()->prepare('UPDATE serv_lanc SET split = ?, audit = ?, audit_por = ?, audit_em = ? WHERE id = ?')
+        ->execute([$split, $novo, $novo === '' ? '' : $quem, $novo === '' ? '' : date('Y-m-d H:i:s'), $id]);
+    return serv_lanc_um($id);
 }
