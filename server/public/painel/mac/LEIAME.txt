@@ -1,0 +1,7 @@
+Bibliotecas para ler o MAC pela foto da etiqueta (mac-foto.js). Ficam aqui no servidor porque o painel
+só carrega arquivos dele mesmo (Content-Security-Policy). O navegador só baixa quando alguém toca em "Foto".
+
+tesseract.min.js, worker.min.js        tesseract.js 5.1.1 (OCR)            Apache-2.0  https://github.com/naptha/tesseract.js
+tesseract-core-*-lstm.wasm.js          tesseract.js-core 5.1.1             Apache-2.0  https://github.com/naptha/tesseract.js-core
+eng.traineddata.gz                     @tesseract.js-data/eng 4.0.0_best_int  Apache-2.0  https://github.com/tesseract-ocr/tessdata
+zxing.min.js                           @zxing/library 0.21.3 (código de barras/QR quando o navegador não tem leitor)  Apache-2.0
