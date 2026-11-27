@@ -41,7 +41,8 @@ session_name('painel_app');
 session_start(['cookie_httponly' => true, 'cookie_secure' => conexao_https(), 'cookie_samesite' => 'Strict', 'use_strict_mode' => true]);
 header('X-Frame-Options: DENY');
 header('Cache-Control: no-store');
-header("Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
+// script-src 'wasm-unsafe-eval' e img-src blob: são para ler o MAC pela foto da etiqueta (mac-foto.js: OCR em WebAssembly e prévia da foto)
+header("Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'");
 
 $cfg = config();
 $DEST = nome_destino();                                          // "IXC" ou "CRM"
@@ -1219,6 +1220,7 @@ th.c,td.c{text-align:center}
 </style>
 <style>.senha-box{position:relative;display:block}.senha-box input{width:100%;box-sizing:border-box;padding-right:48px}.olho{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:40px;height:40px;border:0!important;background:transparent!important;box-shadow:none!important;color:#475569;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;padding:0}.olho:hover{background:#eef2ff}.olho .risco{display:none}.olho[aria-pressed="true"] .risco{display:inline}</style>
 <script src="/painel/olho.js?v=6" defer></script>
+<script src="/painel/mac-foto.js?v=1" defer></script>
 </head>
 <body class="<?= $logado ? 'dentro' : 'fora' ?>">
 <?php if ($logado):
