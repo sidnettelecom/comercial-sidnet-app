@@ -139,7 +139,7 @@ const PERM_ACOES = [
     'recibos_cpf' => 'recibos', 'recibos_ixc' => 'recibos.ixc', 'audit_ok' => 'recibos.audit',
     'colab_buscar' => 'cfg.colab', 'colab_salvar' => 'cfg.colab', 'colab_unir' => 'cfg.colab', 'colab_mostrar' => 'cfg.colab',
     'serv_servico' => 'serv.lanc', 'serv_pagamento' => 'serv.pag', 'serv_excluir' => 'serv', 'serv_audit' => 'serv.audit', 'serv_audit_ok' => 'serv.audit',
-    'serv_equipe_salvar' => 'serv.cad', 'serv_equipe_ativo' => 'serv.cad', 'serv_obra_salvar' => 'serv.cad', 'serv_obra_concluir' => 'serv.cad', 'serv_precos_salvar' => 'serv.cad',
+    'serv_equipe_salvar' => 'serv.cad', 'serv_equipe_ativo' => 'serv.cad', 'serv_obra_salvar' => 'serv.cad', 'serv_obra_concluir' => 'serv.cad', 'serv_precos_salvar' => 'serv.cad', 'serv_cabos_salvar' => 'serv.cad',
     'aluguel_salvar' => 'aluguel.cad', 'aluguel_ipca' => 'aluguel.cad', 'aluguel_bc' => 'aluguel.cad',
 ];
 $recForm = null; // formulário de O.S de recolhimento para mostrar de novo (erro ou "Buscar nome")
@@ -739,6 +739,17 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($mid === '') throw new RuntimeException('Digite o número da conta modelo.');
             $mx = rixc_modelo($mid);
             $msg = 'Conta modelo #' . $mid . ' achada no IXC. O portal vai copiar: ' . ($mx ? implode(', ', array_map(fn($k, $v) => "$k = $v", array_keys($mx), $mx)) : 'nada (confira com o suporte)') . '.';
+        } elseif (($a === 'serv_servico' || $a === 'serv_pagamento') && ($eid = (int)($_POST['l']['id'] ?? 0))) {
+            $servForm = (array)($_POST['l'] ?? []);
+            $antes = serv_lanc_um($eid);
+            if (!$antes) throw new RuntimeException('Esse lançamento não existe mais.');
+            $a === 'serv_servico' ? serv_servico_salvar($servForm, $quem, $eid) : serv_pagamento_salvar($servForm, $quem, $eid);
+            $ll = array_values(array_filter(serv_lancamentos(), fn($x) => (int)$x['id'] === $eid))[0];
+            registrar($quem, 'corrigiu lançamento de serviço em execução', "#$eid antes: {$antes['equipe']} " . rh_dt($antes['data']) . ' R$ ' . brl($antes['valor']) . ' · ' . $antes['descricao'] . " | agora: {$ll['equipe']} " . rh_dt($ll['data']) . ' R$ ' . brl($ll['valor']) . ' · ' . $ll['descricao']);
+            $msg = ($ll['k'] === 's' ? 'Serviço' : 'Pagamento') . ' corrigido: ' . $ll['equipe'] . ', ' . rh_dt($ll['data']) . ', ' . rh_rs((float)$ll['valor']) . ($ll['k'] === 's' && (int)$ll['preco_id'] ? ' (' . serv_qtd($ll) . ')' : '') . '.';
+            $servForm = null;
+            $volta = (string)($_POST['volta'] ?? '');
+            if (preg_match('/^p=serv_(lista|extrato)\b/', $volta)) { $_GET = []; parse_str($volta, $_GET); } else $_GET = ['p' => 'serv_lista'];
         } elseif ($a === 'serv_servico') {
             $servForm = (array)($_POST['l'] ?? []);
             $lid = serv_servico_salvar($servForm, $quem);
@@ -747,7 +758,7 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             registrar($quem, 'lançou serviço em execução', "#$lid {$ll['equipe']} " . serv_oque($ll) . ' R$ ' . brl($ll['valor']));
             $sd = serv_saldos()[(int)$ll['equipe_id']];
             $msg = "Lançado: {$ll['equipe']}, " . rh_rs((float)$ll['valor']) . ($ll['k'] === 's' && (int)$ll['preco_id'] ? ' (' . serv_qtd($ll) . ')' : '') . '. Falta pagar para a equipe: ' . rh_rs($sd['falta']) . '.';
-            $servForm = ['equipe_id' => $ll['equipe_id'], 'obra_id' => $ll['obra_id'], 'preco_id' => $ll['preco_id'], 'data' => $ll['data']]; // o próximo já vem com a mesma equipe e obra
+            $servForm = ['equipe_id' => $ll['equipe_id'], 'obra_id' => $ll['obra_id'], 'preco_id' => $ll['preco_id'], 'data' => $ll['data'], 'cabo_id' => $ll['cabo_id']]; // o próximo já vem com a mesma equipe e obra
         } elseif ($a === 'serv_pagamento') {
             $servForm = (array)($_POST['l'] ?? []);
             $lid = serv_pagamento_salvar($servForm, $quem);
@@ -790,6 +801,10 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 registrar($quem, $oo['concluida'] ? 'concluiu obra de serviços' : 'reabriu obra de serviços', "#$id {$oo['nome']}");
                 $msg = $oo['concluida'] ? "{$oo['nome']} marcada como concluída (some da lista de lançamentos)." : "{$oo['nome']} voltou para em execução.";
             }
+        } elseif ($a === 'serv_cabos_salvar') {
+            $n = serv_cabos_salvar((array)($_POST['cb'] ?? []), (string)($_POST['cb_novo'] ?? ''));
+            registrar($quem, 'salvou tipos de cabo de serviços', implode(', ', array_map(fn($c) => $c['nome'] . ($c['ativo'] ? '' : ' (sem usar)'), serv_cabos())));
+            $msg = 'Tipos de cabo salvos.';
         } elseif ($a === 'serv_precos_salvar') {
             $n = serv_precos_salvar((array)($_POST['pr'] ?? []), (array)($_POST['novo'] ?? []));
             registrar($quem, 'salvou tabela de preços de serviços', "$n linha(s)");
@@ -1179,10 +1194,10 @@ td.r,th.r{text-align:right}
 @media print{.lado,.noprint,main>.msg{display:none!important}body.dentro{display:block;background:#fff}body.dentro main{padding:0}
   @page{size:A4;margin:0}.rfolhas{display:block;overflow:visible}.rfolha{box-shadow:none;zoom:1!important;break-after:page}.rfolha:last-child{break-after:auto}}
 .serv-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:14px}
-.kpis.k5{grid-template-columns:repeat(5,minmax(0,1fr))}@media (max-width:800px){.kpis.k5{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.kpis.serv-kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}@media (max-width:800px){.kpis.serv-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .serv-tp{text-decoration:none;color:inherit}.serv-tp.sel{outline:2px solid var(--brand)}
 .tps{margin-top:4px}.tp{display:inline-block;font-size:11px;font-weight:700;padding:2px 7px;border-radius:8px;margin:2px 4px 0 0;background:var(--bg);border:1px solid var(--line);white-space:nowrap}
-.tp.auto{border-style:dashed}.tp-as200{background:#dbeafe;color:#1e40af}.tp-as80{background:#ede9fe;color:#5b21b6}.tp-tocos{background:#dcfce7;color:#166534}.tp-sem{background:#fef3c7;color:#92400e}
+.tp.auto{border-style:dashed}.tp-c0{background:#dbeafe;color:#1e40af}.tp-c1{background:#ede9fe;color:#5b21b6}.tp-c2{background:#cffafe;color:#155e75}.tp-c3{background:#fce7f3;color:#9d174d}.tp-tocos{background:#dcfce7;color:#166534}.tp-sem{background:#fef3c7;color:#92400e}
 td.aud{min-width:150px}td.aud>*{margin-bottom:3px}.chk{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12.5px;font-weight:700;padding:6px 12px;border-radius:10px;border:1.5px solid var(--line);background:var(--surface);color:var(--muted);cursor:pointer}
 .chk span{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:5px;border:1.5px solid var(--muted);font-size:11px;color:transparent}
 .chk.on{background:var(--ok-bg);border-color:var(--ok);color:var(--ok)}.chk.on span{background:var(--ok);border-color:var(--ok);color:#fff}
@@ -1203,7 +1218,7 @@ th.c,td.c{text-align:center}
 @media print{.lado,.noprint{display:none!important}}
 </style>
 <style>.senha-box{position:relative;display:block}.senha-box input{width:100%;box-sizing:border-box;padding-right:48px}.olho{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:40px;height:40px;border:0!important;background:transparent!important;box-shadow:none!important;color:#475569;display:flex;align-items:center;justify-content:center;border-radius:8px;cursor:pointer;padding:0}.olho:hover{background:#eef2ff}.olho .risco{display:none}.olho[aria-pressed="true"] .risco{display:inline}</style>
-<script src="/painel/olho.js?v=5" defer></script>
+<script src="/painel/olho.js?v=6" defer></script>
 </head>
 <body class="<?= $logado ? 'dentro' : 'fora' ?>">
 <?php if ($logado):
@@ -1215,7 +1230,7 @@ th.c,td.c{text-align:center}
     . $grupo('recolhimento', 'Recolhimento', [['recolhimentos', 'Recolhimentos', $pode('rec.lista')], ['rec_teste', 'Teste de equipamentos', $pode('rec.teste')], ['rec_comissao', 'Comissão', $pode('rec.com')]])
     . $grupo('instalacao', 'Instalação', [['instalacoes', 'Instalações concluídas', $pode('inst.lista')], ['inst_analise', 'Análise da instalação', $pode('inst.analise')], ['inst_rank', 'Melhores técnicos', $pode('inst.rank')], ['inst_comissao', 'Comissões', $pode('inst.com')]])
     . $grupo('rh', 'RH', [['rh_lancar', 'Lançamentos', $pode('rh.lanc')], ['rh_fecha', 'Fechamento do mês', $pode('rh.fecha')], ['rh_func', 'Funcionários', $pode('rh.func')], ['rh_cfg', 'Feriados e valores', $admin]])
-    . $grupo('serv', 'Serviços em execução', [['serv', 'Saldos', $pode('serv.saldo'), ['serv', 'serv_extrato']], ['serv_lancar', 'Lançar', $pode('serv.lanc') || $pode('serv.pag')], ['serv_lista', 'Serviços lançados', $pode('serv.saldo')], ['serv_cad', 'Equipes, obras e preços', $pode('serv.cad')]])
+    . $grupo('serv', 'Serviços em execução', [['serv', 'Saldos', $pode('serv.saldo'), ['serv', 'serv_extrato']], ['serv_lancar', 'Lançar', $pode('serv.lanc') || $pode('serv.pag')], ['serv_lista', 'Serviços lançados', $pode('serv.saldo')], ['serv_cad', 'Equipes, obras, cabos e preços', $pode('serv.cad')]])
     . ($pode('aluguel.ver') ? $aba('aluguel', 'Controle de aluguel') : '')
     . $grupo('recibos', 'Recibos', [['recibos', 'Gerar recibos', (bool)array_filter(array_keys(RECIBO_ORIGENS), fn($o) => $pode('recibos.' . $o))], ['auditoria', 'Auditoria', $pode('recibos.audit')]])
     . $grupo('config', 'Configurações', [['config', 'Permissões', $admin], ['gestores', 'Gestores', $pode('cfg.gest')], ['vendedores', 'Usuários', $pode('cfg.users')], ['planos', 'Planos', $pode('cfg.planos')], ['colab', 'Colaboradores do IXC', $pode('cfg.colab')], ['rixc', 'Contas a pagar no IXC', $admin && destino() === 'ixc']]) ?></nav>
@@ -3077,7 +3092,7 @@ th.c,td.c{text-align:center}
         <td class="n r ok"><?= $l['k'] === 'p' ? '− ' . rh_rs((float)$l['valor']) : '' ?></td>
         <td class="n r"><b><?= rh_rs($l['saldo']) ?></b></td>
         <td class="noprint"><div class="acoes"><?php if ($l['k'] === 'p' && $pode('recibos.serv')): ?><a class="bt" href="?p=recibos&amp;f=1&amp;mes=<?= h(substr($l['data'], 0, 7)) ?>&amp;o[]=serv&amp;g=1&amp;s[]=<?= h(urlencode(recibo_chave($eqX['nome']))) ?>" title="Recibo dos pagamentos do mês para a equipe assinar">Recibo</a><?php endif ?>
-          <?php if ($pode($l['k'] === 's' ? 'serv.lanc' : 'serv.pag')): ?><form method="post" action="<?= $linkX ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$l['id'] ?>"><button class="del" name="acao" value="serv_excluir" title="Excluir este lançamento (lançado por <?= h($l['lancado_nome']) ?>)">Excluir</button></form><?php endif ?></div></td></tr>
+          <?php if ($pode($l['k'] === 's' ? 'serv.lanc' : 'serv.pag')): ?><a class="bt" href="?p=serv_lancar&amp;edit=<?= (int)$l['id'] ?>&amp;volta=<?= h(urlencode(ltrim(html_entity_decode($linkX), "?"))) ?>">Editar</a><form method="post" action="<?= $linkX ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$l['id'] ?>"><button class="del" name="acao" value="serv_excluir" title="Excluir este lançamento (lançado por <?= h($l['lancado_nome']) ?>)">Excluir</button></form><?php endif ?></div></td></tr>
       <?php endforeach ?>
       <?php if (!$lsX): ?><tr><td colspan="7" class="small">Nada lançado para esta equipe ainda.</td></tr><?php endif ?>
     </table></div>
@@ -3093,14 +3108,21 @@ th.c,td.c{text-align:center}
     $fo = (int)($_GET['o'] ?? 0);
     $fs = in_array($_GET['s'] ?? '', ['aberto', 'parte', 'pago'], true) ? (string)$_GET['s'] : '';
     $fa = in_array($_GET['a'] ?? '', ['falta', 'ok', 'div'], true) ? (string)$_GET['a'] : '';
-    $ft = in_array($_GET['t'] ?? '', ['as200', 'as80', 'tocos', 'sem'], true) ? (string)$_GET['t'] : '';
+    $cbL = serv_cabos();
+    $ft = preg_match('/^(c\d+|tocos|sem)$/', (string)($_GET['t'] ?? '')) ? (string)$_GET['t'] : '';
+    $temTipo = fn(array $tp, string $k) => $k === 'tocos' || $k === 'sem' ? $tp[$k] > 0 : isset($tp['cabos'][(int)substr($k, 1)]);
     foreach ($lsL as &$l) $l['tp'] = serv_tipos($l);
     unset($l);
     $lsL = array_reverse(array_filter($lsL, fn($l) => (!$fe || (int)$l['equipe_id'] === $fe) && (!$fo || (int)$l['obra_id'] === $fo) && (!$fs || $l['sit'] === $fs)
-        && (!$fa || ($fa === 'falta' ? $l['audit'] === '' : $l['audit'] === $fa)) && (!$ft || $l['tp'][$ft] > 0)));
+        && (!$fa || ($fa === 'falta' ? $l['audit'] === '' : $l['audit'] === $fa)) && (!$ft || $temTipo($l['tp'], $ft))));
     $SIT = ['aberto' => ['Em aberto', 'q'], 'parte' => ['Pago em parte', 'q'], 'pago' => ['Quitado', 'ok']];
     $podeAud = $pode('serv.audit');
     $totT = serv_tipos_totais($lsL);
+    // cartões: um por cabo ativo (e os inativos que aparecem na lista), mais tocos e sem tipo
+    $TIPOS = [];
+    foreach ($cbL as $cid => $c) if ($c['ativo'] || isset($totT['c' . $cid])) $TIPOS['c' . $cid] = ['Cabo ' . $c['nome'], ' m', $c['nome']];
+    $TIPOS += ['tocos' => ['Tocos / postes de eucalipto', ' un', 'TOCOS'], 'sem' => ['Metros sem cabo', ' m', 'SEM CABO']];
+    $zero = ['qtd' => 0.0, 'valor' => 0.0, 'conf' => 0.0, 'n' => 0];
     $nConf = count(array_filter($lsL, fn($l) => $l['audit'] === 'ok'));
     $nDiv = count(array_filter($lsL, fn($l) => $l['audit'] === 'div'));
     $qsL = http_build_query(array_filter(['p' => 'serv_lista', 'e' => $fe, 'o' => $fo, 's' => $fs, 'a' => $fa, 't' => $ft]));
@@ -3110,10 +3132,10 @@ th.c,td.c{text-align:center}
 ?>
   <div class="topo"><div><h1>Serviços lançados</h1><p class="small">Todos os serviços, do mais novo para o mais velho. O pagamento abate primeiro o serviço mais antigo da equipe, então dá para ver o que já está quitado e o que está em aberto. Na auditoria, confira cada serviço com a medição da terceirizada e marque conferido.</p></div>
     <?php if ($pode('serv.lanc')): ?><a class="bt pri" href="?p=serv_lancar&amp;k=s">+ Lançar serviço feito</a><?php endif ?></div>
-  <div class="kpis k5">
-    <?php foreach (['as200' => 'Cabo AS200', 'as80' => 'Cabo AS80', 'tocos' => 'Tocos / postes de eucalipto', 'sem' => 'Metros sem tipo'] as $k => $tt): $r = $totT[$k]; $un = $k === 'tocos' ? ' un' : ' m'; ?>
+  <div class="kpis serv-kpis">
+    <?php foreach ($TIPOS as $k => [$tt, $un]): $r = $totT[$k] ?? $zero; ?>
     <a class="kpi serv-tp<?= $ft === $k ? ' sel' : '' ?>" href="?<?= h(http_build_query(array_filter(['p' => 'serv_lista', 'e' => $fe, 'o' => $fo, 's' => $fs, 'a' => $fa, 't' => $ft === $k ? '' : $k]))) ?>"><span><?= $tt ?></span><b<?= $k === 'sem' && $r['qtd'] > 0 ? ' class="q"' : '' ?>><?= serv_num($r['qtd']) . $un ?></b>
-      <small><?= $k === 'sem' ? ($r['qtd'] > 0 ? 'separe na auditoria (' . $r['n'] . ' serviço' . ($r['n'] === 1 ? '' : 's') . ')' : 'tudo separado') : ($r['valor'] > 0 ? rh_rs($r['valor']) . ' · ' : '') . 'conferido ' . serv_num($r['conf']) . $un ?></small></a>
+      <small><?= $k === 'sem' ? ($r['qtd'] > 0 ? 'separe na auditoria (' . $r['n'] . ' serviço' . ($r['n'] === 1 ? '' : 's') . ')' : 'todos com cabo') : ($r['valor'] > 0 ? rh_rs($r['valor']) . ' · ' : '') . 'conferido ' . serv_num($r['conf']) . $un ?></small></a>
     <?php endforeach ?>
     <div class="kpi"><span>Auditoria</span><b class="<?= $nConf === count($lsL) && $lsL ? 'ok' : '' ?>"><?= $nConf ?> de <?= count($lsL) ?></b><small>conferidos<?= $nDiv ? ' · <b class="er" style="font-size:inherit">' . $nDiv . ' diverge' . ($nDiv > 1 ? 'm' : '') . '</b>' : '' ?></small></div>
   </div>
@@ -3121,10 +3143,10 @@ th.c,td.c{text-align:center}
   <form method="post" action="?<?= h($qsL) ?>" class="card" id="form-aud"><?= csrf_campo() ?><input type="hidden" name="acao" value="serv_audit"><input type="hidden" name="id" value="<?= $audId ?>">
     <h2>Auditar serviço</h2>
     <p class="small" style="margin:0 0 10px"><b><?= h(rh_dt($audL['data'])) ?> · <?= h($audL['equipe']) ?></b> · <?= h(serv_oque($audL)) ?> · <?= h(serv_qtd($audL)) ?> = <b><?= rh_rs((float)$audL['valor']) ?></b><br>
-      Confira com a medição da terceirizada e separe o que foi feito.<?= $tpA['manual'] ? '' : ' Os números abaixo foram sugeridos pelo texto da descrição: corrija se precisar.' ?></p>
+      Confira com a medição da terceirizada e separe o que foi feito.<?= $tpA['manual'] ? '' : ((int)$audL['cabo_id'] ? ' Os metros já vêm no cabo escolhido no lançamento: corrija se a medição mostrar outra coisa.' : ' Os números abaixo foram sugeridos pelo texto da descrição: corrija se precisar.') ?></p>
     <div class="rec-form">
-      <label>Cabo AS200 (metros)<input name="au[as200]" inputmode="decimal" value="<?= $nq($tpA['as200']) ?>" placeholder="0"></label>
-      <label>Cabo AS80 (metros)<input name="au[as80]" inputmode="decimal" value="<?= $nq($tpA['as80']) ?>" placeholder="0"></label>
+      <?php foreach ($cbL as $cid => $c): if (!$c['ativo'] && !isset($tpA['cabos'][$cid])) continue; ?>
+      <label>Cabo <?= h($c['nome']) ?> (metros)<input name="au[cabo][<?= (int)$cid ?>]" inputmode="decimal" value="<?= $nq($tpA['cabos'][$cid] ?? 0) ?>" placeholder="0"></label><?php endforeach ?>
       <label>Tocos / postes de eucalipto (unidades)<input name="au[tocos]" inputmode="decimal" value="<?= $nq($tpA['tocos']) ?>" placeholder="0"></label>
       <label>Auditoria<select name="au[audit]"><?php foreach (SERV_AUDIT as $k => [$t]): ?><option value="<?= $k ?>" <?= $k === ($audL['audit'] === '' ? 'ok' : $audL['audit']) ? 'selected' : '' ?>><?= $t ?></option><?php endforeach ?></select></label>
       <label class="larga">O que diverge / observação<input name="au[obs]" maxlength="300" value="<?= h($audL['audit_obs']) ?>" placeholder="Ex.: a medição da FIBRA STAR dá 6.500 m, não 7.000"></label>
@@ -3138,12 +3160,12 @@ th.c,td.c{text-align:center}
       <select name="o" aria-label="Obra" data-auto><option value="0">Todas as obras</option><?php foreach ($obL as $id => $o): ?><option value="<?= (int)$id ?>" <?= $id === $fo ? 'selected' : '' ?>><?= h($o['nome']) ?></option><?php endforeach ?></select>
       <select name="s" aria-label="Situação" data-auto><option value="">Todas as situações</option><?php foreach ($SIT as $k => [$t]): ?><option value="<?= $k ?>" <?= $k === $fs ? 'selected' : '' ?>><?= $t ?></option><?php endforeach ?></select>
       <select name="a" aria-label="Auditoria" data-auto><option value="">Auditoria: todos</option><?php foreach (['falta' => 'Falta conferir', 'ok' => 'Conferidos', 'div' => 'Divergentes'] as $k => $t): ?><option value="<?= $k ?>" <?= $k === $fa ? 'selected' : '' ?>><?= $t ?></option><?php endforeach ?></select>
-      <select name="t" aria-label="Tipo" data-auto><option value="">Todos os tipos</option><?php foreach (['as200' => 'Cabo AS200', 'as80' => 'Cabo AS80', 'tocos' => 'Tocos / postes', 'sem' => 'Metros sem tipo'] as $k => $t): ?><option value="<?= $k ?>" <?= $k === $ft ? 'selected' : '' ?>><?= $t ?></option><?php endforeach ?></select><noscript><button>Filtrar</button></noscript></form>
+      <select name="t" aria-label="Tipo" data-auto><option value="">Todos os tipos</option><?php foreach ($TIPOS as $k => [$t]): ?><option value="<?= $k ?>" <?= $k === $ft ? 'selected' : '' ?>><?= $t ?></option><?php endforeach ?></select><noscript><button>Filtrar</button></noscript></form>
     <div class="tw" style="margin-top:10px"><table class="rec">
       <thead><tr><th>Data</th><th>Equipe</th><th>O que foi feito</th><th>Obra</th><th class="r">Qtd × valor</th><th class="r">Total</th><th>Situação</th><th>Auditoria</th><th>Lançado por</th></tr></thead>
-      <?php foreach ($lsL as $l): $tp = $l['tp']; $chips = []; foreach (['as200' => 'AS200', 'as80' => 'AS80', 'tocos' => 'TOCOS', 'sem' => 'SEM TIPO'] as $k => $t) if ($tp[$k] > 0) $chips[] = '<span class="tp tp-' . $k . ($tp['manual'] ? '' : ' auto') . '">' . $t . ' ' . serv_num($tp[$k]) . ($k === 'tocos' ? ' un' : ' m') . '</span>'; ?>
+      <?php foreach ($lsL as $l): $tp = $l['tp']; $chips = []; $ci = 0; foreach ($TIPOS as $k => [, $un, $t]) { $q = $k === 'tocos' || $k === 'sem' ? $tp[$k] : ($tp['cabos'][(int)substr($k, 1)] ?? 0); $cor = $k[0] === 'c' ? 'tp-c' . ($ci++ % 4) : 'tp-' . $k; if ($q > 0) $chips[] = '<span class="tp ' . $cor . ($tp['manual'] || ($k[0] === 'c' && (int)$l['cabo_id']) ? '' : ' auto') . '">' . h($t) . ' ' . serv_num($q) . $un . '</span>'; } $sug = !$tp['manual'] && !(int)$l['cabo_id']; ?>
       <tr<?= $l['audit'] === 'ok' ? ' class="aud-ok"' : ($audId === (int)$l['id'] ? ' class="aud-sel"' : '') ?>><td class="n"><?= h(rh_dt($l['data'])) ?></td><td><a href="?p=serv_extrato&amp;e=<?= (int)$l['equipe_id'] ?>"><b><?= h($l['equipe']) ?></b></a></td>
-        <td><?= h(serv_oque($l)) ?><?= $chips ? '<div class="tps">' . implode('', $chips) . (!$tp['manual'] ? ' <span class="small" title="Sugerido pelo texto da descrição. Ajuste na auditoria.">sugerido</span>' : '') . '</div>' : '' ?></td><td><?= h($l['obra'] ?: '—') ?></td>
+        <td><?= h(serv_oque($l)) ?><?= $chips ? '<div class="tps">' . implode('', $chips) . ($sug ? ' <span class="small" title="Sugerido pelo texto da descrição. Ajuste na auditoria ou escolha o cabo em Editar.">sugerido</span>' : '') . '</div>' : '' ?></td><td><?= h($l['obra'] ?: '—') ?></td>
         <td class="n r small"><?= h(serv_qtd($l)) ?></td><td class="n r"><b><?= rh_rs((float)$l['valor']) ?></b></td>
         <td><span class="pill <?= $SIT[$l['sit']][1] ?>"><?= $SIT[$l['sit']][0] ?></span><?= $l['sit'] === 'parte' ? '<br><span class="small">falta ' . rh_rs($l['falta']) . '</span>' : '' ?></td>
         <td class="aud"><?php if ($podeAud): ?><form method="post" action="?<?= h($qsL) ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="acao" value="serv_audit_ok"><input type="hidden" name="id" value="<?= (int)$l['id'] ?>">
@@ -3153,7 +3175,7 @@ th.c,td.c{text-align:center}
           <?php if ($l['audit_obs'] !== ''): ?><div class="small" style="max-width:220px"><?= h($l['audit_obs']) ?></div><?php endif ?>
           <?php if ($l['audit'] !== '' && $l['audit_em'] !== ''): ?><div class="small"><?= h(rh_dt(substr($l['audit_em'], 0, 10))) ?> · <?= h(mb_strtoupper($l['audit_por'])) ?></div><?php endif ?>
           <?php if ($podeAud): ?><a class="small" href="?<?= h($qsL) ?>&amp;aud=<?= (int)$l['id'] ?>#form-aud">Separar / divergência</a><?php endif ?></td>
-        <td class="small"><?= h($l['lancado_nome']) ?></td></tr>
+        <td class="small"><?= h($l['lancado_nome']) ?><?php if ($pode('serv.lanc')): ?><br><a href="?p=serv_lancar&amp;edit=<?= (int)$l['id'] ?>&amp;volta=<?= h(urlencode($qsL)) ?>">Editar</a><?php endif ?></td></tr>
       <?php endforeach ?>
       <?php if (!$lsL): ?><tr><td colspan="9" class="small">Nenhum serviço<?= $fe || $fo || $fs || $fa || $ft ? ' com esse filtro' : ' lançado ainda' ?>.</td></tr><?php else: ?>
       <tfoot><tr><td colspan="5">Total da lista (<?= count($lsL) ?>)</td><td class="n r"><?= rh_rs(array_sum(array_map(fn($l) => (float)$l['valor'], $lsL))) ?></td><td class="n small">falta <?= rh_rs(array_sum(array_column($lsL, 'falta'))) ?></td><td class="n small" colspan="2">conferido <?= rh_rs(array_sum(array_map(fn($l) => $l['audit'] === 'ok' ? (float)$l['valor'] : 0, $lsL))) ?></td></tr></tfoot><?php endif ?>
@@ -3161,6 +3183,15 @@ th.c,td.c{text-align:center}
   </div>
 
 <?php elseif ($p === 'serv_lancar'):
+    $edL = serv_lanc_um((int)($_GET['edit'] ?? $servForm['id'] ?? 0));
+    if ($edL && !$pode($edL['k'] === 's' ? 'serv.lanc' : 'serv.pag')) $edL = null;
+    if ($edL) {
+        $_GET['k'] = $edL['k'];
+        $servForm ??= ['id' => $edL['id'], 'equipe_id' => $edL['equipe_id'], 'data' => $edL['data'], 'obra_id' => $edL['obra_id'], 'preco_id' => $edL['preco_id'],
+            'qtd' => (int)$edL['preco_id'] ? serv_num((float)$edL['qtd']) : '', 'unitario' => (int)$edL['preco_id'] ? brl($edL['unitario']) : '', 'valor' => (int)$edL['preco_id'] ? '' : brl($edL['valor']),
+            'forma' => $edL['forma'], 'descricao' => $edL['descricao'], 'cabo_id' => $edL['cabo_id']];
+    }
+    $voltaL = preg_match('/^p=serv_(lista|extrato)\b/', (string)($_GET['volta'] ?? $_POST['volta'] ?? '')) ? (string)($_GET['volta'] ?? $_POST['volta']) : 'p=serv_lista';
     $kL = ($_GET['k'] ?? '') === 'p' ? 'p' : 's';
     if ($kL === 's' && !$pode('serv.lanc')) $kL = 'p';
     if ($kL === 'p' && !$pode('serv.pag')) $kL = 's';
@@ -3168,21 +3199,29 @@ th.c,td.c{text-align:center}
     $sdL = serv_saldos();
     $eSel = (int)($servForm['equipe_id'] ?? ($_GET['e'] ?? 0));
     $vL = fn(string $k, string $pad = '') => h((string)($servForm[$k] ?? $pad));
-    $prL = serv_precos(true);
+    $prL = array_filter(serv_precos(), fn($pr, $id) => $pr['ativo'] || $id === (int)($servForm['preco_id'] ?? 0), ARRAY_FILTER_USE_BOTH);
     $pSel = (int)($servForm['preco_id'] ?? array_key_first($prL) ?? 0);
 ?>
+  <?php if ($edL): ?>
+  <div class="topo"><div><h1>Corrigir <?= $kL === 's' ? 'serviço' : 'pagamento' ?></h1><p class="small">Lançado por <?= h(mb_strtoupper($edL['lancado_por'])) ?> em <?= h(rh_dt(substr($edL['lancado_em'], 0, 10))) ?>. A correção fica registrada no histórico (antes e depois).<?= $kL === 's' && $edL['split'] !== null ? ' Se mudar o cabo, o serviço ou a quantidade, a separação da auditoria volta a ser a automática.' : '' ?></p></div>
+    <a class="bt" href="?<?= h($voltaL) ?>">← Voltar</a></div>
+  <?php else: ?>
   <div class="topo"><div><h1>Serviços em execução · Lançar</h1><p class="small">Lance o serviço assim que ele for feito, para não esquecer. Na hora de acertar, lance o pagamento (pode ser parcial): ele desconta do que falta pagar.</p></div>
     <a class="bt" href="?p=serv">← Saldos</a></div>
+  <?php endif ?>
   <?php if (!$eqL): ?><div class="msg">Ainda não tem equipe cadastrada. <?= $pode('serv.cad') ? 'Cadastre primeiro em <a href="?p=serv_cad">Equipes, obras e preços</a>.' : 'Peça ao admin para cadastrar.' ?></div>
   <?php else: ?>
   <form method="post" action="?p=serv_lancar&amp;k=<?= $kL ?>" class="card" id="form-serv"><?= csrf_campo() ?>
-    <nav class="rh-tipos" aria-label="O que lançar"><?php if ($pode('serv.lanc')): ?><a href="?p=serv_lancar&amp;k=s<?= $eSel ? '&amp;e=' . $eSel : '' ?>"<?= $kL === 's' ? ' aria-current="page"' : '' ?>>Serviço feito</a><?php endif ?><?php if ($pode('serv.pag')): ?><a href="?p=serv_lancar&amp;k=p<?= $eSel ? '&amp;e=' . $eSel : '' ?>"<?= $kL === 'p' ? ' aria-current="page"' : '' ?>>Pagamento</a><?php endif ?></nav>
+    <?php if ($edL): ?><input type="hidden" name="l[id]" value="<?= (int)$edL['id'] ?>"><input type="hidden" name="volta" value="<?= h($voltaL) ?>"><?php else: ?>
+    <nav class="rh-tipos" aria-label="O que lançar"><?php if ($pode('serv.lanc')): ?><a href="?p=serv_lancar&amp;k=s<?= $eSel ? '&amp;e=' . $eSel : '' ?>"<?= $kL === 's' ? ' aria-current="page"' : '' ?>>Serviço feito</a><?php endif ?><?php if ($pode('serv.pag')): ?><a href="?p=serv_lancar&amp;k=p<?= $eSel ? '&amp;e=' . $eSel : '' ?>"<?= $kL === 'p' ? ' aria-current="page"' : '' ?>>Pagamento</a><?php endif ?></nav><?php endif ?>
     <div class="rec-form" style="margin-top:12px"<?= $kL === 's' ? ' data-serv' : '' ?>>
       <label>Equipe<select name="l[equipe_id]" required><option value="">escolha</option><?php foreach ($eqL as $id => $e): if ($kL === 's' && !$e['ativo'] && $id !== $eSel) continue; ?><option value="<?= (int)$id ?>" <?= $id === $eSel ? 'selected' : '' ?>><?= h($e['nome']) ?><?= $kL === 'p' ? ' · falta ' . rh_rs($sdL[$id]['falta']) : '' ?></option><?php endforeach ?></select></label>
       <label>Data<input type="date" name="l[data]" value="<?= $vL('data', date('Y-m-d')) ?>" required></label>
       <?php if ($kL === 's'): ?>
-      <label>Obra / local<select name="l[obra_id]"><option value="0">sem obra</option><?php foreach (serv_obras(true) as $id => $o): ?><option value="<?= (int)$id ?>" <?= $id === (int)($servForm['obra_id'] ?? 0) ? 'selected' : '' ?>><?= h($o['nome'] . ' · ' . (SERV_REDES[$o['rede']] ?? '')) ?></option><?php endforeach ?></select></label>
+      <label>Obra / local<select name="l[obra_id]"><option value="0">sem obra</option><?php foreach (array_filter(serv_obras(), fn($o, $id) => !$o['concluida'] || $id === (int)($servForm['obra_id'] ?? 0), ARRAY_FILTER_USE_BOTH) as $id => $o): ?><option value="<?= (int)$id ?>" <?= $id === (int)($servForm['obra_id'] ?? 0) ? 'selected' : '' ?>><?= h($o['nome'] . ' · ' . (SERV_REDES[$o['rede']] ?? '')) ?></option><?php endforeach ?></select></label>
       <label>Serviço<select name="l[preco_id]"><?php foreach ($prL as $id => $pr): ?><option value="<?= (int)$id ?>" data-un="<?= h($pr['unidade']) ?>" data-valor="<?= h($pr['valor']) ?>" <?= $id === $pSel ? 'selected' : '' ?>><?= h($pr['nome']) ?> (por <?= h($pr['unidade']) ?><?= $pr['valor'] !== '' ? ', R$ ' . h(brl($pr['valor'])) : '' ?>)</option><?php endforeach ?><option value="0" data-un="" <?= $pSel === 0 ? 'selected' : '' ?>>Valor fechado (digita o total)</option></select></label>
+      <?php $cbF = array_filter(serv_cabos(), fn($c, $id) => $c['ativo'] || $id === (int)($servForm['cabo_id'] ?? 0), ARRAY_FILTER_USE_BOTH); ?>
+      <label class="so-cabo">Cabo lançado<select name="l[cabo_id]"><option value="0">não informar / mais de um</option><?php foreach ($cbF as $id => $c): ?><option value="<?= (int)$id ?>" <?= $id === (int)($servForm['cabo_id'] ?? 0) ? 'selected' : '' ?>><?= h($c['nome']) ?></option><?php endforeach ?></select></label>
       <label class="so-qtd">Quantidade<input name="l[qtd]" value="<?= $vL('qtd') ?>" placeholder="ex.: 1.500" inputmode="decimal"></label>
       <label class="so-qtd"><span>Valor por unidade R$</span><input name="l[unitario]" value="<?= $vL('unitario') ?>" placeholder="da tabela" inputmode="decimal"></label>
       <label class="so-fechado">Valor do serviço R$ (valor fechado)<input name="l[valor]" value="<?= $vL('valor') ?>" placeholder="0,00" inputmode="decimal"></label>
@@ -3195,7 +3234,8 @@ th.c,td.c{text-align:center}
       <?php endif ?>
     </div>
     <div class="row" style="margin-top:10px">
-      <?php if ($kL === 's'): ?><button class="pri" name="acao" value="serv_servico">Lançar serviço</button><span class="small" data-serv-total>Com serviço da tabela: total = quantidade × valor por unidade (em branco, usa o preço da tabela). Com valor fechado: digita o total.</span>
+      <?php if ($edL): ?><button class="pri" name="acao" value="<?= $kL === 's' ? 'serv_servico' : 'serv_pagamento' ?>">Salvar correção</button><a href="?<?= h($voltaL) ?>">Cancelar</a>
+      <?php elseif ($kL === 's'): ?><button class="pri" name="acao" value="serv_servico">Lançar serviço</button><span class="small" data-serv-total>Com serviço da tabela: total = quantidade × valor por unidade (em branco, usa o preço da tabela). Com valor fechado: digita o total.</span>
       <?php else: ?><button class="pri" name="acao" value="serv_pagamento">Lançar pagamento</button><span class="small">Pode ser parcial. Se for mais do que falta, a diferença fica como crédito (adiantamento) da equipe.</span><?php endif ?>
     </div>
   </form>
@@ -3211,7 +3251,7 @@ th.c,td.c{text-align:center}
     $x = (int)($_GET['obra'] ?? 0);
     $editO = isset($obC[$x]) ? $obC[$x] + ['id' => $x] : null;
 ?>
-  <div class="topo"><div><h1>Equipes, obras e preços</h1><p class="small">Cadastros usados nos lançamentos de serviços em execução. Os preços só preenchem o lançamento sozinhos: dá para mudar o valor em cada serviço.</p></div></div>
+  <div class="topo"><div><h1>Equipes, obras, cabos e preços</h1><p class="small">Cadastros usados nos lançamentos de serviços em execução. Os preços só preenchem o lançamento sozinhos: dá para mudar o valor em cada serviço.</p></div></div>
   <div class="serv-cad">
     <div class="card"><h2>Equipes / prestadores</h2>
       <div class="tw"><table class="rec" style="min-width:0"><thead><tr><th>Nome</th><th>Contato / PIX</th><th class="r">Falta pagar</th><th></th></tr></thead>
@@ -3237,6 +3277,14 @@ th.c,td.c{text-align:center}
       </form>
     </div>
   </div>
+  <form method="post" action="?p=serv_cad" class="card" id="form-cabos"><?= csrf_campo() ?><input type="hidden" name="acao" value="serv_cabos_salvar">
+    <h2>Tipos de cabo</h2><p class="small" style="margin:0 0 8px">Os cabos que as equipes lançam. No lançamento do serviço por metro você escolhe o cabo, e a auditoria já separa os metros nele. Desmarcando "usar", o cabo some da lista de lançamento (os lançamentos antigos continuam).</p>
+    <div class="tw"><table class="rec" style="min-width:0"><thead><tr><th>Cabo</th><th>Usar</th></tr></thead>
+    <?php foreach (serv_cabos() as $id => $c): ?><tr><td><input name="cb[<?= (int)$id ?>][nome]" value="<?= h($c['nome']) ?>" maxlength="40" aria-label="Cabo" style="width:100%;text-transform:uppercase"></td><td><input type="checkbox" name="cb[<?= (int)$id ?>][ativo]" value="1" <?= $c['ativo'] ? 'checked' : '' ?> aria-label="Usar"></td></tr><?php endforeach ?>
+    <tr><td><input name="cb_novo" maxlength="40" placeholder="+ cabo novo, ex.: AS120 6FO" aria-label="Cabo novo" style="width:100%;text-transform:uppercase"></td><td></td></tr>
+    </table></div>
+    <div class="row" style="margin-top:10px"><button class="pri">Salvar cabos</button></div>
+  </form>
   <form method="post" action="?p=serv_cad" class="card"><?= csrf_campo() ?><input type="hidden" name="acao" value="serv_precos_salvar">
     <h2>Tabela de preços</h2><p class="small" style="margin:0 0 8px">Preço sugerido de cada serviço. No lançamento, quantidade × preço; se uma equipe cobra diferente, é só trocar o valor na hora de lançar. Desmarcando "usar", o serviço some da lista de lançamento (os lançamentos antigos continuam).</p>
     <div class="tw"><table class="rec"><thead><tr><th>Serviço</th><th>Cobra por</th><th class="r">Valor R$</th><th>Usar</th></tr></thead>
