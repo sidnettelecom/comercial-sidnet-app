@@ -186,10 +186,12 @@ function serv_precos_salvar(array $lista, array $novo): int
  * Lança um serviço feito. $in: equipe_id, data, obra_id, preco_id (0 = valor fechado), qtd, unitario, valor, descricao.
  * Com preço da tabela: valor = qtd × unitário (unitário em branco = o da tabela).
  */
-function serv_servico_salvar(array $in, string $quem): int
+function serv_servico_salvar(array $in, string $quem, int $id = 0): int
 {
+    $antes = $id ? serv_lanc_um($id) : null;
+    if ($id && (!$antes || $antes['k'] !== 's')) throw new RuntimeException('Esse serviço não existe mais.');
     $e = serv_equipe((int)($in['equipe_id'] ?? 0));
-    if (!$e || !$e['ativo']) throw new RuntimeException('Escolha a equipe.');
+    if (!$e || (!$e['ativo'] && (int)($antes['equipe_id'] ?? 0) !== (int)$e['id'])) throw new RuntimeException('Escolha a equipe.');
     $data = rh_data_ok((string)($in['data'] ?? ''));
     if ($data === '') throw new RuntimeException('Preencha a data.');
     $obra = (int)($in['obra_id'] ?? 0);
@@ -213,14 +215,20 @@ function serv_servico_salvar(array $in, string $quem): int
         if ($valor === '' || (float)$valor <= 0) throw new RuntimeException('Preencha o valor do serviço.');
         if ($desc === '') throw new RuntimeException('Escreva o que foi feito (valor fechado precisa de descrição).');
     }
+    if ($id) {
+        db()->prepare('UPDATE serv_lanc SET equipe_id = ?, data = ?, obra_id = ?, preco_id = ?, qtd = ?, unitario = ?, valor = ?, descricao = ? WHERE id = ?')
+            ->execute([$e['id'], $data, $obra, $pid, $qtd, $unit, $valor, $desc, $id]);
+        return $id;
+    }
     db()->prepare("INSERT INTO serv_lanc (equipe_id, k, data, obra_id, preco_id, qtd, unitario, valor, descricao, lancado_por) VALUES (?,'s',?,?,?,?,?,?,?,?)")
         ->execute([$e['id'], $data, $obra, $pid, $qtd, $unit, $valor, $desc, $quem]);
     return (int)db()->lastInsertId();
 }
 
 /** Lança um pagamento. $in: equipe_id, data, valor, forma, descricao. Pode ser maior que o saldo (vira crédito/adiantamento). */
-function serv_pagamento_salvar(array $in, string $quem): int
+function serv_pagamento_salvar(array $in, string $quem, int $id = 0): int
 {
+    if ($id && (serv_lanc_um($id)['k'] ?? '') !== 'p') throw new RuntimeException('Esse pagamento não existe mais.');
     $e = serv_equipe((int)($in['equipe_id'] ?? 0));
     if (!$e) throw new RuntimeException('Escolha a equipe.');
     $data = rh_data_ok((string)($in['data'] ?? ''));
@@ -228,6 +236,11 @@ function serv_pagamento_salvar(array $in, string $quem): int
     $valor = dinheiro((string)($in['valor'] ?? ''));
     if ($valor === '' || (float)$valor <= 0) throw new RuntimeException('Preencha o valor pago.');
     $forma = in_array($in['forma'] ?? '', SERV_FORMAS, true) ? (string)$in['forma'] : 'Outro';
+    if ($id) {
+        db()->prepare('UPDATE serv_lanc SET equipe_id = ?, data = ?, valor = ?, forma = ?, descricao = ? WHERE id = ?')
+            ->execute([$e['id'], $data, $valor, $forma, serv_texto((string)($in['descricao'] ?? ''), 200), $id]);
+        return $id;
+    }
     db()->prepare("INSERT INTO serv_lanc (equipe_id, k, data, valor, forma, descricao, lancado_por) VALUES (?,'p',?,?,?,?,?)")
         ->execute([$e['id'], $data, $valor, $forma, serv_texto((string)($in['descricao'] ?? ''), 200), $quem]);
     return (int)db()->lastInsertId();

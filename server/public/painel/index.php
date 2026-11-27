@@ -739,6 +739,17 @@ if ($logado && $_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($mid === '') throw new RuntimeException('Digite o número da conta modelo.');
             $mx = rixc_modelo($mid);
             $msg = 'Conta modelo #' . $mid . ' achada no IXC. O portal vai copiar: ' . ($mx ? implode(', ', array_map(fn($k, $v) => "$k = $v", array_keys($mx), $mx)) : 'nada (confira com o suporte)') . '.';
+        } elseif (($a === 'serv_servico' || $a === 'serv_pagamento') && ($eid = (int)($_POST['l']['id'] ?? 0))) {
+            $servForm = (array)($_POST['l'] ?? []);
+            $antes = serv_lanc_um($eid);
+            if (!$antes) throw new RuntimeException('Esse lançamento não existe mais.');
+            $a === 'serv_servico' ? serv_servico_salvar($servForm, $quem, $eid) : serv_pagamento_salvar($servForm, $quem, $eid);
+            $ll = array_values(array_filter(serv_lancamentos(), fn($x) => (int)$x['id'] === $eid))[0];
+            registrar($quem, 'corrigiu lançamento de serviço em execução', "#$eid antes: {$antes['equipe']} " . rh_dt($antes['data']) . ' R$ ' . brl($antes['valor']) . ' · ' . $antes['descricao'] . " | agora: {$ll['equipe']} " . rh_dt($ll['data']) . ' R$ ' . brl($ll['valor']) . ' · ' . $ll['descricao']);
+            $msg = ($ll['k'] === 's' ? 'Serviço' : 'Pagamento') . ' corrigido: ' . $ll['equipe'] . ', ' . rh_dt($ll['data']) . ', ' . rh_rs((float)$ll['valor']) . ($ll['k'] === 's' && (int)$ll['preco_id'] ? ' (' . serv_qtd($ll) . ')' : '') . '.';
+            $servForm = null;
+            $volta = (string)($_POST['volta'] ?? '');
+            if (preg_match('/^p=serv_(lista|extrato)\b/', $volta)) { $_GET = []; parse_str($volta, $_GET); } else $_GET = ['p' => 'serv_lista'];
         } elseif ($a === 'serv_servico') {
             $servForm = (array)($_POST['l'] ?? []);
             $lid = serv_servico_salvar($servForm, $quem);
@@ -3077,7 +3088,7 @@ th.c,td.c{text-align:center}
         <td class="n r ok"><?= $l['k'] === 'p' ? '− ' . rh_rs((float)$l['valor']) : '' ?></td>
         <td class="n r"><b><?= rh_rs($l['saldo']) ?></b></td>
         <td class="noprint"><div class="acoes"><?php if ($l['k'] === 'p' && $pode('recibos.serv')): ?><a class="bt" href="?p=recibos&amp;f=1&amp;mes=<?= h(substr($l['data'], 0, 7)) ?>&amp;o[]=serv&amp;g=1&amp;s[]=<?= h(urlencode(recibo_chave($eqX['nome']))) ?>" title="Recibo dos pagamentos do mês para a equipe assinar">Recibo</a><?php endif ?>
-          <?php if ($pode($l['k'] === 's' ? 'serv.lanc' : 'serv.pag')): ?><form method="post" action="<?= $linkX ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$l['id'] ?>"><button class="del" name="acao" value="serv_excluir" title="Excluir este lançamento (lançado por <?= h($l['lancado_nome']) ?>)">Excluir</button></form><?php endif ?></div></td></tr>
+          <?php if ($pode($l['k'] === 's' ? 'serv.lanc' : 'serv.pag')): ?><a class="bt" href="?p=serv_lancar&amp;edit=<?= (int)$l['id'] ?>&amp;volta=<?= h(urlencode(ltrim(html_entity_decode($linkX), "?"))) ?>">Editar</a><form method="post" action="<?= $linkX ?>" class="in"><?= csrf_campo() ?><input type="hidden" name="id" value="<?= (int)$l['id'] ?>"><button class="del" name="acao" value="serv_excluir" title="Excluir este lançamento (lançado por <?= h($l['lancado_nome']) ?>)">Excluir</button></form><?php endif ?></div></td></tr>
       <?php endforeach ?>
       <?php if (!$lsX): ?><tr><td colspan="7" class="small">Nada lançado para esta equipe ainda.</td></tr><?php endif ?>
     </table></div>
@@ -3153,7 +3164,7 @@ th.c,td.c{text-align:center}
           <?php if ($l['audit_obs'] !== ''): ?><div class="small" style="max-width:220px"><?= h($l['audit_obs']) ?></div><?php endif ?>
           <?php if ($l['audit'] !== '' && $l['audit_em'] !== ''): ?><div class="small"><?= h(rh_dt(substr($l['audit_em'], 0, 10))) ?> · <?= h(mb_strtoupper($l['audit_por'])) ?></div><?php endif ?>
           <?php if ($podeAud): ?><a class="small" href="?<?= h($qsL) ?>&amp;aud=<?= (int)$l['id'] ?>#form-aud">Separar / divergência</a><?php endif ?></td>
-        <td class="small"><?= h($l['lancado_nome']) ?></td></tr>
+        <td class="small"><?= h($l['lancado_nome']) ?><?php if ($pode('serv.lanc')): ?><br><a href="?p=serv_lancar&amp;edit=<?= (int)$l['id'] ?>&amp;volta=<?= h(urlencode($qsL)) ?>">Editar</a><?php endif ?></td></tr>
       <?php endforeach ?>
       <?php if (!$lsL): ?><tr><td colspan="9" class="small">Nenhum serviço<?= $fe || $fo || $fs || $fa || $ft ? ' com esse filtro' : ' lançado ainda' ?>.</td></tr><?php else: ?>
       <tfoot><tr><td colspan="5">Total da lista (<?= count($lsL) ?>)</td><td class="n r"><?= rh_rs(array_sum(array_map(fn($l) => (float)$l['valor'], $lsL))) ?></td><td class="n small">falta <?= rh_rs(array_sum(array_column($lsL, 'falta'))) ?></td><td class="n small" colspan="2">conferido <?= rh_rs(array_sum(array_map(fn($l) => $l['audit'] === 'ok' ? (float)$l['valor'] : 0, $lsL))) ?></td></tr></tfoot><?php endif ?>
@@ -3161,6 +3172,15 @@ th.c,td.c{text-align:center}
   </div>
 
 <?php elseif ($p === 'serv_lancar'):
+    $edL = serv_lanc_um((int)($_GET['edit'] ?? $servForm['id'] ?? 0));
+    if ($edL && !$pode($edL['k'] === 's' ? 'serv.lanc' : 'serv.pag')) $edL = null;
+    if ($edL) {
+        $_GET['k'] = $edL['k'];
+        $servForm ??= ['id' => $edL['id'], 'equipe_id' => $edL['equipe_id'], 'data' => $edL['data'], 'obra_id' => $edL['obra_id'], 'preco_id' => $edL['preco_id'],
+            'qtd' => (int)$edL['preco_id'] ? serv_num((float)$edL['qtd']) : '', 'unitario' => (int)$edL['preco_id'] ? brl($edL['unitario']) : '', 'valor' => (int)$edL['preco_id'] ? '' : brl($edL['valor']),
+            'forma' => $edL['forma'], 'descricao' => $edL['descricao']];
+    }
+    $voltaL = preg_match('/^p=serv_(lista|extrato)\b/', (string)($_GET['volta'] ?? $_POST['volta'] ?? '')) ? (string)($_GET['volta'] ?? $_POST['volta']) : 'p=serv_lista';
     $kL = ($_GET['k'] ?? '') === 'p' ? 'p' : 's';
     if ($kL === 's' && !$pode('serv.lanc')) $kL = 'p';
     if ($kL === 'p' && !$pode('serv.pag')) $kL = 's';
@@ -3168,20 +3188,26 @@ th.c,td.c{text-align:center}
     $sdL = serv_saldos();
     $eSel = (int)($servForm['equipe_id'] ?? ($_GET['e'] ?? 0));
     $vL = fn(string $k, string $pad = '') => h((string)($servForm[$k] ?? $pad));
-    $prL = serv_precos(true);
+    $prL = array_filter(serv_precos(), fn($pr, $id) => $pr['ativo'] || $id === (int)($servForm['preco_id'] ?? 0), ARRAY_FILTER_USE_BOTH);
     $pSel = (int)($servForm['preco_id'] ?? array_key_first($prL) ?? 0);
 ?>
+  <?php if ($edL): ?>
+  <div class="topo"><div><h1>Corrigir <?= $kL === 's' ? 'serviço' : 'pagamento' ?></h1><p class="small">Lançado por <?= h(mb_strtoupper($edL['lancado_por'])) ?> em <?= h(rh_dt(substr($edL['lancado_em'], 0, 10))) ?>. A correção fica registrada no histórico (antes e depois).<?= $kL === 's' && $edL['as200'] !== null ? ' Se mudar a quantidade, confira também a separação AS200 / AS80 / tocos na auditoria.' : '' ?></p></div>
+    <a class="bt" href="?<?= h($voltaL) ?>">← Voltar</a></div>
+  <?php else: ?>
   <div class="topo"><div><h1>Serviços em execução · Lançar</h1><p class="small">Lance o serviço assim que ele for feito, para não esquecer. Na hora de acertar, lance o pagamento (pode ser parcial): ele desconta do que falta pagar.</p></div>
     <a class="bt" href="?p=serv">← Saldos</a></div>
+  <?php endif ?>
   <?php if (!$eqL): ?><div class="msg">Ainda não tem equipe cadastrada. <?= $pode('serv.cad') ? 'Cadastre primeiro em <a href="?p=serv_cad">Equipes, obras e preços</a>.' : 'Peça ao admin para cadastrar.' ?></div>
   <?php else: ?>
   <form method="post" action="?p=serv_lancar&amp;k=<?= $kL ?>" class="card" id="form-serv"><?= csrf_campo() ?>
-    <nav class="rh-tipos" aria-label="O que lançar"><?php if ($pode('serv.lanc')): ?><a href="?p=serv_lancar&amp;k=s<?= $eSel ? '&amp;e=' . $eSel : '' ?>"<?= $kL === 's' ? ' aria-current="page"' : '' ?>>Serviço feito</a><?php endif ?><?php if ($pode('serv.pag')): ?><a href="?p=serv_lancar&amp;k=p<?= $eSel ? '&amp;e=' . $eSel : '' ?>"<?= $kL === 'p' ? ' aria-current="page"' : '' ?>>Pagamento</a><?php endif ?></nav>
+    <?php if ($edL): ?><input type="hidden" name="l[id]" value="<?= (int)$edL['id'] ?>"><input type="hidden" name="volta" value="<?= h($voltaL) ?>"><?php else: ?>
+    <nav class="rh-tipos" aria-label="O que lançar"><?php if ($pode('serv.lanc')): ?><a href="?p=serv_lancar&amp;k=s<?= $eSel ? '&amp;e=' . $eSel : '' ?>"<?= $kL === 's' ? ' aria-current="page"' : '' ?>>Serviço feito</a><?php endif ?><?php if ($pode('serv.pag')): ?><a href="?p=serv_lancar&amp;k=p<?= $eSel ? '&amp;e=' . $eSel : '' ?>"<?= $kL === 'p' ? ' aria-current="page"' : '' ?>>Pagamento</a><?php endif ?></nav><?php endif ?>
     <div class="rec-form" style="margin-top:12px"<?= $kL === 's' ? ' data-serv' : '' ?>>
       <label>Equipe<select name="l[equipe_id]" required><option value="">escolha</option><?php foreach ($eqL as $id => $e): if ($kL === 's' && !$e['ativo'] && $id !== $eSel) continue; ?><option value="<?= (int)$id ?>" <?= $id === $eSel ? 'selected' : '' ?>><?= h($e['nome']) ?><?= $kL === 'p' ? ' · falta ' . rh_rs($sdL[$id]['falta']) : '' ?></option><?php endforeach ?></select></label>
       <label>Data<input type="date" name="l[data]" value="<?= $vL('data', date('Y-m-d')) ?>" required></label>
       <?php if ($kL === 's'): ?>
-      <label>Obra / local<select name="l[obra_id]"><option value="0">sem obra</option><?php foreach (serv_obras(true) as $id => $o): ?><option value="<?= (int)$id ?>" <?= $id === (int)($servForm['obra_id'] ?? 0) ? 'selected' : '' ?>><?= h($o['nome'] . ' · ' . (SERV_REDES[$o['rede']] ?? '')) ?></option><?php endforeach ?></select></label>
+      <label>Obra / local<select name="l[obra_id]"><option value="0">sem obra</option><?php foreach (array_filter(serv_obras(), fn($o, $id) => !$o['concluida'] || $id === (int)($servForm['obra_id'] ?? 0), ARRAY_FILTER_USE_BOTH) as $id => $o): ?><option value="<?= (int)$id ?>" <?= $id === (int)($servForm['obra_id'] ?? 0) ? 'selected' : '' ?>><?= h($o['nome'] . ' · ' . (SERV_REDES[$o['rede']] ?? '')) ?></option><?php endforeach ?></select></label>
       <label>Serviço<select name="l[preco_id]"><?php foreach ($prL as $id => $pr): ?><option value="<?= (int)$id ?>" data-un="<?= h($pr['unidade']) ?>" data-valor="<?= h($pr['valor']) ?>" <?= $id === $pSel ? 'selected' : '' ?>><?= h($pr['nome']) ?> (por <?= h($pr['unidade']) ?><?= $pr['valor'] !== '' ? ', R$ ' . h(brl($pr['valor'])) : '' ?>)</option><?php endforeach ?><option value="0" data-un="" <?= $pSel === 0 ? 'selected' : '' ?>>Valor fechado (digita o total)</option></select></label>
       <label class="so-qtd">Quantidade<input name="l[qtd]" value="<?= $vL('qtd') ?>" placeholder="ex.: 1.500" inputmode="decimal"></label>
       <label class="so-qtd"><span>Valor por unidade R$</span><input name="l[unitario]" value="<?= $vL('unitario') ?>" placeholder="da tabela" inputmode="decimal"></label>
@@ -3195,7 +3221,8 @@ th.c,td.c{text-align:center}
       <?php endif ?>
     </div>
     <div class="row" style="margin-top:10px">
-      <?php if ($kL === 's'): ?><button class="pri" name="acao" value="serv_servico">Lançar serviço</button><span class="small" data-serv-total>Com serviço da tabela: total = quantidade × valor por unidade (em branco, usa o preço da tabela). Com valor fechado: digita o total.</span>
+      <?php if ($edL): ?><button class="pri" name="acao" value="<?= $kL === 's' ? 'serv_servico' : 'serv_pagamento' ?>">Salvar correção</button><a href="?<?= h($voltaL) ?>">Cancelar</a>
+      <?php elseif ($kL === 's'): ?><button class="pri" name="acao" value="serv_servico">Lançar serviço</button><span class="small" data-serv-total>Com serviço da tabela: total = quantidade × valor por unidade (em branco, usa o preço da tabela). Com valor fechado: digita o total.</span>
       <?php else: ?><button class="pri" name="acao" value="serv_pagamento">Lançar pagamento</button><span class="small">Pode ser parcial. Se for mais do que falta, a diferença fica como crédito (adiantamento) da equipe.</span><?php endif ?>
     </div>
   </form>
