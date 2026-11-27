@@ -30,7 +30,7 @@ final class Ixc
     }
 
     /** Chamada à API. $listar = true usa o cabeçalho "ixcsoft: listar" (consulta). $id = alterar (PUT) esse registro. */
-    private function chamar(string $tabela, array $corpo, bool $listar, string $id = ''): array
+    private function chamar(string $tabela, array $corpo, bool $listar, string $id = '', string $metodo = ''): array
     {
         if (!preg_match('/^[a-z0-9_]+$/', $tabela) || ($id !== '' && !ctype_digit($id))) {
             throw new ErroCrm('Tabela do IXC inválida.');
@@ -42,7 +42,7 @@ final class Ixc
         $ch = curl_init($this->base . '/' . $tabela . ($id !== '' ? '/' . $id : ''));
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_CUSTOMREQUEST => $id !== '' ? 'PUT' : 'POST',
+            CURLOPT_CUSTOMREQUEST => $metodo !== '' ? $metodo : ($id !== '' ? 'PUT' : 'POST'),
             CURLOPT_POSTFIELDS => json_encode($corpo, JSON_UNESCAPED_UNICODE),
             CURLOPT_HTTPHEADER => $cab,
             CURLOPT_CONNECTTIMEOUT => 15,
@@ -107,6 +107,16 @@ final class Ixc
         $j = $this->chamar($tabela, array_merge(self::datas_para_gravar($atual), self::limpar($mudar)), false, $id);
         if (($j['type'] ?? '') !== 'success') {
             throw new ErroCrm('O IXC não aceitou a alteração (' . $tabela . ' #' . $id . '): ' . self::texto($j['message'] ?? 'sem mensagem'));
+        }
+    }
+
+    /** Exclui um registro (DELETE). Só usado pela ferramenta do servidor, com confirmação. */
+    public function excluir(string $tabela, string $id): void
+    {
+        if (!ctype_digit($id)) throw new ErroCrm('ID inválido.');
+        $j = $this->chamar($tabela, [], false, $id, 'DELETE');
+        if (($j['type'] ?? '') !== 'success') {
+            throw new ErroCrm('O IXC não aceitou a exclusão (' . $tabela . ' #' . $id . '): ' . self::texto($j['message'] ?? 'sem mensagem'));
         }
     }
 

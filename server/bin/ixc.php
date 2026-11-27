@@ -13,6 +13,7 @@
  *   php server/bin/ixc.php arrumar-apagar 18718 [21/11/2026]   põe status_auditoria e comunicado = N e a data (emissão e
  *        vencimento; sem data = hoje) numa conta a pagar lançada pelo portal
  *        (as lançadas antes desta correção ficavam escondidas na tela do IXC)
+ *   php server/bin/ixc.php excluir-apagar 18718   exclui no IXC uma conta a pagar lançada pelo portal (pede confirmação; só se não tiver pagamento)
  */
 declare(strict_types=1);
 
@@ -57,6 +58,18 @@ try {
                 echo "  $k: ainda não preenchido no config.php\n";
             }
         }
+        exit(0);
+    }
+    if ($cmd === 'excluir-apagar') {
+        $id = $argv[2] ?? '';
+        $r = ctype_digit($id) ? ixc()->um('fn_apagar', 'id', $id) : null;
+        if (!$r) { fwrite(STDERR, "Use: php server/bin/ixc.php excluir-apagar <id da conta a pagar>\n"); exit(1); }
+        if (!str_contains((string)($r['obs'] ?? ''), 'PORTAL SIDNET')) { fwrite(STDERR, "A conta #$id não foi lançada pelo portal. Nada foi excluído.\n"); exit(1); }
+        if ((float)($r['valor_pago'] ?? 0) > 0 || (float)($r['valor_total_pago'] ?? 0) > 0) { fwrite(STDERR, "A conta #$id já tem pagamento. Nada foi excluído.\n"); exit(1); }
+        echo "Conta a pagar #$id: fornecedor {$r['id_fornecedor']}, valor {$r['valor']}, documento {$r['documento']}\nDigite EXCLUIR para apagar no IXC: ";
+        if (trim((string)fgets(STDIN)) !== 'EXCLUIR') { echo "Cancelado.\n"; exit(1); }
+        ixc()->excluir('fn_apagar', $id);
+        echo ixc()->um('fn_apagar', 'id', $id) ? "O IXC respondeu OK, mas a conta #$id ainda existe.\n" : "Conta a pagar #$id excluída do IXC.\n";
         exit(0);
     }
     if ($cmd === 'arrumar-apagar') {
